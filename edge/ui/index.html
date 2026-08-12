@@ -1,0 +1,223 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pugmark</title>
+<!-- No CDN, no webfont fetch, no tile server. Everything this page needs
+     is on disk, because a range office has no internet. -->
+<link rel="stylesheet" href="/ui/app.css">
+</head>
+<body>
+<div id="shell">
+
+  <header class="topbar">
+    <div class="brand">
+      <span class="mark">PUG<b>MARK</b></span>
+      <span class="place" id="reserveName">—</span>
+    </div>
+    <div class="spacer"></div>
+    <div class="runpill" id="runpill" hidden>
+      <span class="dot"></span>
+      <span class="cycle" id="runCycle">—</span>
+      <span class="count num" id="runCount">—</span>
+    </div>
+    <span class="offline" title="This node needs no network connection">Offline</span>
+  </header>
+
+  <div id="body">
+    <nav class="nav" id="nav" aria-label="Sections">
+      <div class="group">Cycle</div>
+      <a href="#run"     data-view="run">Run</a>
+      <a href="#triage"  data-view="triage">Triage</a>
+      <div class="group">Tigers</div>
+      <a href="#tigers"  data-view="tigers">Catalogue<span class="tally" id="tallyTigers"></span></a>
+      <a href="#review"  data-view="review">Review<span class="tally" id="tallyReview"></span></a>
+      <div class="group">Intelligence</div>
+      <a href="#map"     data-view="map">Map</a>
+      <a href="#alerts"  data-view="alerts">Alerts<span class="tally" id="tallyAlerts"></span></a>
+      <div class="group">Record</div>
+      <a href="#audit"   data-view="audit">Audit</a>
+      <a href="#ops"     data-view="ops">Ops</a>
+      <a href="#sync"    data-view="sync">Sync</a>
+    </nav>
+
+    <main>
+
+      <!-- ── RUN ─────────────────────────────────────────────────────── -->
+      <section class="view" id="v-run" data-view="run">
+        <div class="head">
+          <div class="eyebrow">Monitoring cycle</div>
+          <h1 id="runTitle">Run</h1>
+          <p>What the software understood from the card, before it acts on any
+             of it. Nothing is moved or changed until you confirm this screen.</p>
+        </div>
+        <div class="grid g4" id="runStats"></div>
+        <div class="hr"></div>
+        <div class="grid g2">
+          <div class="card pad">
+            <h2>Where timestamps came from</h2>
+            <p class="note">Camera clocks fail constantly. Each frame records which
+               source its time came from, and the original is always kept.</p>
+            <table id="tsTable"></table>
+          </div>
+          <div class="card pad">
+            <h2>Flagged at ingest</h2>
+            <p class="note">Problems are flagged, never fatal. A run completes
+               even when the cards are a mess.</p>
+            <table id="flagTable"></table>
+          </div>
+        </div>
+        <div class="hr"></div>
+        <div class="card pad">
+          <h2>Previous cycles</h2>
+          <table id="runsTable"></table>
+        </div>
+      </section>
+
+      <!-- ── TRIAGE ──────────────────────────────────────────────────── -->
+      <section class="view" id="v-triage" data-view="triage">
+        <div class="head">
+          <div class="eyebrow">Stage 2 · Triage</div>
+          <h1>Blank frames</h1>
+          <p>Blanks are moved to quarantine, never deleted. Everything on this
+             screen can be put back exactly as it was.</p>
+        </div>
+        <div class="grid g4" id="triageStats"></div>
+        <div class="toolbar" style="margin-top:var(--s5)">
+          <button class="primary" id="restoreBtn">Put every frame back</button>
+          <span class="note" id="restoreNote"></span>
+        </div>
+        <div class="card pad">
+          <h2>Lowest-confidence removals</h2>
+          <p class="note">Sorted by least confident first — if the system got
+             anything wrong, it is most likely to be at the top of this list.</p>
+          <table id="quarTable"></table>
+        </div>
+      </section>
+
+      <!-- ── TIGERS ──────────────────────────────────────────────────── -->
+      <section class="view" id="v-tigers" data-view="tigers">
+        <div class="head">
+          <div class="eyebrow">Catalogue</div>
+          <h1>Individuals</h1>
+          <p>Each tiger is shown by its own flank pattern. Left and right flanks
+             are different patterns and are catalogued separately — they are
+             never matched against each other.</p>
+        </div>
+        <div class="tigers" id="tigerGrid"></div>
+        <div id="tigerDetail"></div>
+      </section>
+
+      <!-- ── REVIEW ──────────────────────────────────────────────────── -->
+      <section class="view" id="v-review" data-view="review">
+        <div class="head">
+          <div class="eyebrow">Human decision</div>
+          <h1>Review queue</h1>
+          <p>Matches the software was not confident enough to make on its own.
+             Ordered so the ones that change the most images come first.</p>
+        </div>
+        <div id="reviewBody"></div>
+      </section>
+
+      <!-- ── MAP ─────────────────────────────────────────────────────── -->
+      <section class="view" id="v-map" data-view="map">
+        <div class="head">
+          <div class="eyebrow">Occupancy</div>
+          <h1>Home ranges</h1>
+          <p>Drawn from this cycle's captures. Overlap between ranges is a
+             management signal in itself, so overlapping ranges are shaded
+             rather than hidden.</p>
+        </div>
+        <div class="banner">
+          <b>Offline</b>
+          <span>This map is drawn from the reserve boundary and station
+            coordinates held on this machine. It does not fetch map tiles,
+            so it works at a range office with no connection.</span>
+        </div>
+        <div class="mapwrap">
+          <div id="mapSvg"></div>
+          <div class="maplegend">
+            <span><i style="background:#39412f"></i>Camera station</span>
+            <span><i style="background:#b8530a"></i>Installed this cycle</span>
+            <span><i style="background:#96181c"></i>Failed during this cycle</span>
+            <span><i style="background:#b8530a;opacity:.35"></i>Home range</span>
+          </div>
+        </div>
+        <div class="card pad" style="margin-top:var(--s5)">
+          <h2>Area occupied</h2>
+          <table id="occTable"></table>
+        </div>
+      </section>
+
+      <!-- ── ALERTS ──────────────────────────────────────────────────── -->
+      <section class="view" id="v-alerts" data-view="alerts">
+        <div class="head">
+          <div class="eyebrow">What changed this cycle</div>
+          <h1>Alerts</h1>
+          <p>Every alert states what changed, the evidence behind it, and how
+             well the cameras covered that tiger's range. An alert is never
+             more confident than the identification underneath it.</p>
+        </div>
+        <div class="toolbar">
+          <div class="seg" role="group" aria-label="Alert list">
+            <button id="tabRaised" aria-pressed="true">Raised</button>
+            <button id="tabSup" aria-pressed="false">Not raised</button>
+          </div>
+          <div class="spacer"></div>
+          <span class="note" id="alertNote"></span>
+        </div>
+        <div id="alertList"></div>
+      </section>
+
+      <!-- ── AUDIT ───────────────────────────────────────────────────── -->
+      <section class="view" id="v-audit" data-view="audit">
+        <div class="head">
+          <div class="eyebrow">Record</div>
+          <h1>Audit log</h1>
+          <p>Every automatic decision and every human correction, with the
+             threshold and model version in force at the time. This log can be
+             added to and never edited or deleted.</p>
+        </div>
+        <div class="toolbar">
+          <input id="auditQ" placeholder="Filter by action, entity or note"
+                 style="flex:1;padding:var(--s2) var(--s3);border:1px solid var(--line);
+                        border-radius:var(--r-ctl);font:inherit;background:var(--surface)">
+        </div>
+        <div class="card"><table class="log" id="auditTable"></table></div>
+      </section>
+
+      <!-- ── OPS ─────────────────────────────────────────────────────── -->
+      <section class="view" id="v-ops" data-view="ops">
+        <div class="head">
+          <div class="eyebrow">Health</div>
+          <h1>Operations</h1>
+          <p>A rising review rate or a falling match score is the earliest sign
+             the models no longer fit the data — new camera hardware, a new
+             season, a new reserve.</p>
+        </div>
+        <div class="card pad"><h2>Per cycle</h2><table id="driftTable"></table></div>
+        <div class="hr"></div>
+        <div class="grid g2">
+          <div class="card pad"><h2>Versions</h2><dl class="kv" id="verKv"></dl></div>
+          <div class="card pad"><h2>Thresholds in force</h2><dl class="kv" id="cfgKv"></dl></div>
+        </div>
+      </section>
+
+      <!-- ── SYNC ────────────────────────────────────────────────────── -->
+      <section class="view" id="v-sync" data-view="sync">
+        <div class="head">
+          <div class="eyebrow">Between nodes</div>
+          <h1>Sync</h1>
+          <p>This node works alone, permanently, with no central server. Sync
+             adds reach; it is never something this node waits on.</p>
+        </div>
+        <div id="syncBody"></div>
+      </section>
+
+    </main>
+  </div>
+</div>
+<script src="/ui/app.js"></script>
+</body>
+</html>

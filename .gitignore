@@ -1,0 +1,15 @@
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+data/pugmark.db
+data/pugmark.db-wal
+data/pugmark.db-shm
+data/quarantine/
+data/crops/
+data/restricted/
+data/weights/
+data/config.json
+*.log
+.DS_Store
+.vscode/settings.json
