@@ -28,10 +28,18 @@ QUARANTINE_DIR = DATA_DIR / "quarantine"
 CROPS_DIR = DATA_DIR / "crops"
 RESTRICTED_DIR = DATA_DIR / "restricted"
 WEIGHTS_DIR = DATA_DIR / "weights"
+UPLOADS_DIR = DATA_DIR / "uploads"
 CONFIG_PATH = DATA_DIR / "config.json"
 
 HOST = os.environ.get("PUGMARK_HOST", "127.0.0.1")
 PORT = int(os.environ.get("PUGMARK_PORT", "7860"))
+
+SYNC_SECRET = os.environ.get("PUGMARK_SYNC_SECRET", "")
+"""Shared HMAC key for signing sync bundles between trusted nodes. Not
+part of the Config dataclass on purpose: that object is serialised into
+runs.config and rendered on the Ops screen, and a secret has no business
+in either place. Empty by default -- sync refuses to build or apply a
+bundle rather than sign with a blank key."""
 
 
 @dataclass
@@ -48,6 +56,11 @@ class Ingest:
     """Bottom fraction of the frame that holds the camera's burned-in
     date/time strip. Read by OCR when EXIF is missing or reset."""
 
+    estimated_seconds_per_image: float = 0.05
+    """Stated assumption behind preflight's processing-time estimate --
+    scan and hash only, since triage's detector isn't built yet. Editable,
+    and shown next to the estimate so nobody mistakes it for measured."""
+
 
 @dataclass
 class Triage:
@@ -57,21 +70,48 @@ class Triage:
     filling 4% of the frame barely moves a global average but lights up
     several cells."""
 
-    stage_a_blank_threshold: float = 0.012
-    """Below this mean-absolute-cell-difference a frame is blank without
-    running the detector. Tune so false negatives are ZERO on validation,
-    then move further toward caution. A blank kept costs seconds of review;
-    an animal discarded is unrecoverable field data."""
+    stage_a_blank_threshold: float = 0.03
+    """The score is the MAXIMUM per-cell difference against the background
+    (edge/pipeline/triage.py::cell_score), not a mean or a percentile: a
+    16x16 grid has 256 cells, so a subject in a single cell is 1/256 of
+    the frame and would be outvoted by the other 255 under anything less
+    than the max. Below this score, a frame is blank without running the
+    detector.
+
+    This is the ONLY gate -- there used to be a second, derived
+    confidence threshold here too, and the two disagreed by 10x without
+    either number on screen ever admitting it (AUDIT_AND_REVISED_PLAN.md
+    P0-2/P0-3). One threshold, and the value shown is the value in force.
+
+    Tuned against tests/unit/test_triage_scoring.py's worst case (a
+    single lit cell at the lowest tested contrast, which scores 0.047)
+    with headroom to spare, since a synthetic worst case is not the same
+    as having actually measured this against labelled data -- that
+    measurement is P2-7 in the audit, not done yet. Tune so false
+    negatives are ZERO on real validation, then move further toward
+    caution. A blank kept costs seconds of review; an animal discarded is
+    unrecoverable field data."""
 
     stage_a_median_window: int = 60
+    """Cap on how many frames contribute to a station/night background.
+    Below this, every frame in the group is used; above it, an evenly
+    spaced sample across the whole (sorted) group is taken, so the cost
+    stays bounded on a very active station without the sample depending on
+    which frames happened to be processed first."""
+
+    stage_a_min_frames_for_background: int = 3
+    """Below this many frames in a station/night group, there is no
+    meaningful background to compare against -- a median of one or two
+    frames is mostly just the frame itself. Every frame in a group this
+    small stays pending rather than being scored against a background
+    that begs the question (CLAUDE.md rule 8: refusing to answer is a
+    valid output). AUDIT_AND_REVISED_PLAN.md P2-6."""
+
     stage_a_separate_night: bool = True
 
     detector_conf_threshold: float = 0.20
     """Deliberately low. Recall on contains-subject matters far more than
     precision — see the asymmetry above."""
-
-    quarantine_conf_threshold: float = 0.90
-    """Only quarantine when the system is confident it is blank."""
 
     seconds_per_manual_review: float = 3.0
     """Stated assumption behind the person-hours-saved figure. Editable,
@@ -80,7 +120,22 @@ class Triage:
 
 @dataclass
 class Identify:
-    t_high: float = 0.82           # >= : auto-assign
+    t_high: float = 0.95           # >= : auto-assign
+    """Deliberately conservative, not the original 0.82 guess. Measured
+    against tools/eval_identify.py's open-set genuine/impostor score
+    distributions (ATRW, held out by identity): at 0.82, 14.7% of novel
+    tigers -- ones the catalogue has never seen -- were wrongly
+    auto-accepted as a match to an existing entity (docs/RESULTS.md,
+    "Open-set separation and threshold calibration"). That corrupts the
+    catalogue in a way superseded_by can correct after the fact
+    (CLAUDE.md rule 5) but should not be relying on routinely. The
+    calibration there suggested ~0.946 as the point where impostor
+    auto-accept drops to ~1%; 0.95 rounds that up rather than down.
+    This trades away auto-accept convenience for catalogue safety on
+    purpose, and needs re-measuring against Pench's own data once any
+    exists -- see docs/RESULTS.md's own caution that this number comes
+    from Amur zoo tigers, not a validated Pench operating point."""
+
     t_low: float = 0.55            # >= : human review;  < : enrol provisional
     ensemble_embed_weight: float = 0.6
     top_k_candidates: int = 5
@@ -92,6 +147,23 @@ class Identify:
     enforce_side_separation: bool = True
     """Left and right flank patterns are DIFFERENT, not mirrored. Never
     score an L crop against an R catalogue. Turning this off is a bug."""
+
+    rect_body_depth_ratio: float = 0.6
+    """edge/pipeline/identify.py::rectify_flank(). A profile photograph
+    never shows the far shoulder+hip -- checked against 905 side-resolved
+    ATRW training crops, the opposite side is unlabelled in every single
+    one, so rectification cannot be a real 4-point quadrilateral warp.
+    Instead the near-side shoulder-hip line sets the body axis, and the
+    perpendicular (dorsal-ventral) extent is this fraction of that
+    line's length -- a stated anatomical approximation, not a measured
+    point. Tune against real crops once available; 0.6 is a starting
+    guess, not a fitted value."""
+
+    rect_margin_ratio: float = 0.15
+    """How far the rectified crop extends past the shoulder and the hip
+    along the body axis, as a fraction of the shoulder-hip distance --
+    enough to catch a little neck and rump stripe pattern beyond the two
+    anchor points, not so much that it pulls in background."""
 
 
 @dataclass
@@ -117,7 +189,11 @@ class Alerts:
     buffer_shift_km: float = 5.0
 
     min_events_for_centroid: int = 5
-    absence_cycles: int = 3
+    absence_cycles: int = 2
+    """'Regular across the previous K cycles' (blueprint default 3) needs
+    K+1 cycles of history to ever fire. The demo reserve runs 3 cycles
+    total, so K=2 is the largest value that can be demonstrated end to
+    end; a reserve with a longer run history should raise this."""
     absence_min_effort_coverage: float = 0.6
     """Below this, absence is NOT reported as absence. The system says
     'I could not see' instead of 'it is not there'. That distinction is
@@ -129,6 +205,15 @@ class Alerts:
     The tiger did not move; the camera arrived."""
 
     buffer_effort_ratio_damping: float = 0.5
+    buffer_effort_spike_ratio: float = 1.2
+    """Above this ratio of current-cycle to historical buffer-zone camera-
+    days, a buffer capture is weaker evidence -- more buffer cameras were
+    simply watching, not necessarily more tigers using the buffer -- so
+    rule strength is damped rather than taken at face value."""
+
+    default_cycle_days: int = 90
+    """Fallback cycle length used only when a reserve has too little run
+    history to infer one from actual gaps between runs (see effort.py)."""
 
     @property
     def core_shift_km(self) -> float:
@@ -195,7 +280,7 @@ class Config:
 
 
 def ensure_dirs() -> None:
-    for d in (DATA_DIR, QUARANTINE_DIR, CROPS_DIR, RESTRICTED_DIR, WEIGHTS_DIR):
+    for d in (DATA_DIR, QUARANTINE_DIR, CROPS_DIR, RESTRICTED_DIR, WEIGHTS_DIR, UPLOADS_DIR):
         d.mkdir(parents=True, exist_ok=True)
 
 

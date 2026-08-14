@@ -5,3 +5,28 @@ uvicorn[standard]>=0.29
 numpy>=1.26
 opencv-python-headless>=4.9
 pillow>=10.0
+python-multipart>=0.0.9
+
+# edge/pipeline/identify.py -- re-identification embedder. CPU-only wheels:
+# the deployment target has no GPU (CLAUDE.md), and this is inference-only
+# in the field. Training (tools/train_identify.py) is offline, on whatever
+# hardware is building the release, not on the range-office laptop.
+torch>=2.2
+torchvision>=0.17
+
+# edge/pipeline/detector.py -- Stage B (MegaDetector V6, MDV6-mit-yolov9-c).
+# omegaconf (BSD-3-Clause) and pyyaml (MIT) are the vendored yolo_mit
+# architecture's own config-loading dependencies -- see
+# edge/pipeline/vendor/yolo_mit/NOTICE.md for why this is vendored MIT
+# code rather than `pip install PytorchWildlife` (which pulls in
+# ultralytics, AGPL-3.0, unconditionally regardless of model variant).
+omegaconf>=2.3
+pyyaml>=6.0
+
+# edge/pipeline/keypoints.py -- the shoulder/hip regressor (AUDIT_AND_
+# REVISED_PLAN.md Task 4). Ultralytics YOLO11-pose, deliberately AGPL-3.0
+# -- the opposite licence decision from Stage B above, made on purpose,
+# not by inconsistency: this is a recorded trade of copyleft-on-source
+# for a working keypoint model, judged acceptable (arguably desirable)
+# for a government forest-department deployment. See docs/MODEL_CHOICES.md.
+ultralytics>=8.4

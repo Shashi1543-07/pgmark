@@ -8,7 +8,11 @@ Pugmark — automated camera-trap triage and individual tiger movement
 intelligence for Pench Tiger Reserve. Built for the Viksit Nagpur Hackathon
 2026 (Forest & Wildlife theme, 17–18 August). Full design in
 `docs/BLUEPRINT.md` — read §1 (landscape), §9 (alert engine) before making
-architectural decisions.
+architectural decisions. `docs/DATA.md` covers the three external data
+sources (ATRW, LILA camera-trap collections, iNaturalist) and what each is
+and is not for — read it before touching re-identification or Stage A
+evaluation. `docs/AUDIT_AND_REVISED_PLAN.md` is the record of what was
+found wrong in v0.1.1 and why the fixes look the way they do.
 
 Deployment target: **an ordinary laptop at a forest range office, with no
 GPU and no internet.** Every decision follows from that.
@@ -41,9 +45,17 @@ specific failure that is hard to detect later.
 5. **Corrections supersede, never overwrite.** Set `assignments.superseded_by`
    and insert a new row. The record of who thought what, when, on what
    evidence, must survive being corrected.
-6. **Left flank ≠ right flank.** A tiger's two flanks carry different,
-   unrelated patterns. Never score an `L` crop against an `R` catalogue.
-   Enforce it in the query, not in a comment.
+6. **The unit of matching is the entity, not the individual.** A tiger's
+   left and right flanks carry different, unrelated stripe patterns, and
+   in the wild it is rare to capture both sides of the same animal — so
+   one side of one tiger is an `entity` (`edge/db/migrations/0003_entities.sql`,
+   `docs/DATA.md` §1), and the catalogue is keyed on `(ind_id, side)`.
+   Match through `repo.catalogue_for_side()`, which raises on anything
+   other than `'L'`/`'R'` — never write a raw query that could silently
+   score an `L` crop against an `R` catalogue. A crop of a side never seen
+   for an individual (`repo.single_flank()`) is unresolvable — neither a
+   match nor evidence of a new tiger — and that is a first-class state,
+   not an absence.
 7. **Role gating is enforced server-side in `edge/app.py`**, never in the UI.
    A UI check is a suggestion; a server check is a control.
 8. **Refusing to answer is a valid output.** The quality gate that won't match
@@ -54,13 +66,39 @@ specific failure that is hard to detect later.
 ## Built vs not built
 
 Working end to end: data contract and migrations · run/preflight reporting ·
-triage accounting with reversible quarantine · individual catalogue · review
-queue · occupancy + offline SVG map · alert surface with suppressions ·
-append-only audit with role-gated location reads · ops/drift.
+motion prefilter (Stage A, two-pass, order-independent) with reversible
+quarantine · Stage B animal/person/vehicle detector (MegaDetector V6,
+MDV6-mit-yolov9-c, MIT-licensed — `edge/pipeline/detector.py`, see
+`docs/MODEL_CHOICES.md`), person frames blurred and routed to
+`persons_restricted` rather than the tiger pipeline · a trained 2-keypoint
+shoulder/hip regressor (Ultralytics YOLO11-pose, deliberately AGPL-3.0 —
+`edge/pipeline/keypoints.py`, see `docs/MODEL_CHOICES.md` for that
+licence trade-off recorded on purpose) · flank rectification, TriHard
+triplet-loss embedding, and side-catalogue matching
+(`edge/pipeline/identify.py`) · a full raw-photo-to-catalogue route and UI
+screen (`POST /api/identify/upload`, "Identify a photo" —
+`edge/pipeline/identify_upload.py`), landing real rows in the catalogue,
+review queue, and audit log · individual catalogue and entity model ·
+review queue · occupancy + offline SVG map · alert surface with
+suppressions, proven both end to end and from generated data alone
+(`tests/scenarios/`) · append-only audit with role-gated location reads ·
+GeoJSON/CSV/Camtrap DP exports · edge-to-edge sync bundles · ops/drift.
 
-Not built (interfaces defined, stubs honest): `edge/pipeline/` — the CV work
-(motion prefilter, detector, flank rectification, stripe matching) ·
-`edge/sync/` and `central/` · `edge/exports/` Camtrap DP.
+**A real, unfixed limitation in the keypoint regressor above: it does
+not determine true left/right flank side.** Every prediction is labelled
+"right_shoulder"/"right_hip" by convention, regardless of which flank is
+actually showing — confirmed empirically (`docs/RESULTS.md`'s "wild"
+evaluation: every held-out image came back side='R', none 'L'). On a
+real deployment, a genuine left-flank photo is silently compared against
+the right-side catalogue. This was the literal scope asked for ("near-side
+shoulder and hip only"), not a bug relative to it — but it means the
+catalogue-matching pipeline is not yet trustworthy for production use
+without a side classifier, which does not exist. See
+`edge/pipeline/keypoints.py`'s module docstring.
+
+Not built (interfaces defined, stubs honest): the central sync tier ·
+M-STrIPES integration (`edge/exports/mstripes.py` refuses and says why,
+on purpose).
 
 Do not make a stub claim to work. `/api/sync/status` returns `enabled: false`
 with a reason on purpose.
@@ -71,6 +109,14 @@ with a reason on purpose.
 suppressed. **They are the specification** — the engine in
 `edge/pipeline/alerts.py` is correct when it reproduces all eight from data
 rather than from the seed script's hardcoded rows.
+
+Two independent proofs of this exist and both must stay green:
+`tools/seed_demo.py` plus the live suite proves it end to end, through the
+real pipeline (ingest, triage, matching, occupancy). `python -m
+tests.scenarios.test_alert_scenarios` proves the engine alone, from a tiny
+synthetic reserve built directly against `edge/db/repo.py` — no images, no
+ingest, no triage — so a bug in `alerts.py` itself can never hide behind a
+coincidence in the demo seed's own data.
 
 | Scenario | Expected |
 |---|---|

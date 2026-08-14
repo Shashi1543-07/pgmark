@@ -6,7 +6,18 @@ produces anything, and so the alert engine has a fixture to develop against.
 It is NOT a substitute for evaluation. Everything here is synthetic and
 labelled as such in the UI. The scenarios are chosen deliberately: four
 genuine deviations, and four confounds that MUST be suppressed. Those eight
-cases are the specification the alert engine is written against.
+cases are the specification the alert engine is written against -- this
+script plants the underlying data (who was where, which cameras were
+working), and edge/pipeline/alerts.py + edge/effort.py derive the alerts
+from it. No alert text or number is written here.
+
+A handful of individuals' station ranges are hand-assigned (SCENARIO_HOME)
+rather than left to the generic nearest-station rule below. Two of them
+(PENCH-002, PENCH-007) must behave oppositely -- one keeps full camera
+coverage, the other loses its cameras entirely -- and the generic rule
+placed both close enough together that their ranges overlapped, which would
+have let one scenario corrupt the other. Pinning them to disjoint station
+groups is what makes both demonstrable at once.
 
     python -m tools.seed_demo [--reset]
 """
@@ -15,18 +26,22 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
-import math
 import random
 import sys
+from collections import Counter
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from edge import config           # noqa: E402
-from edge.db import repo          # noqa: E402
+from edge import config              # noqa: E402
+from edge import effort              # noqa: E402
+from edge.db import repo             # noqa: E402
+from edge.pipeline import alerts     # noqa: E402
+from edge.pipeline import occupancy  # noqa: E402
 
 RESERVE = "PENCH-MH"
+RESERVE_UTM_EPSG = 32644   # Pench: UTM 44N. Read by build_occupancy(); never hardcoded there.
 CENTER = (21.6500, 79.3000)
 RNG = random.Random(20260817)
 
@@ -42,6 +57,35 @@ NAMES = [
     "Bodhalzira", "Ambakhori", "Jamtara", "Surewani", "Nagalwadi",
     "Deolapar", "Paoni", "Salghat", "Kirangisarra", "Mahuli", "Ghatpendhari",
 ]
+
+# ── scenario wiring ──────────────────────────────────────────────────────
+# Every other individual gets its station range from the generic nearest-
+# neighbour rule in build_home(). These do not, because their scenarios
+# need specific, mutually non-interfering geometry.
+SCENARIO_HOME = {
+    "PENCH-002": ["PN-C-026", "PN-C-027", "PN-C-028", "PN-C-029"],  # stays fully covered
+    "PENCH-004": ["PN-C-014", "PN-C-016", "PN-C-017", "PN-C-020"],  # drifts to the buffer
+    "PENCH-005": ["PN-C-008", "PN-C-011", "PN-C-026", "PN-C-029"],  # spread wide: see FAR_STATION_FOR
+    "PENCH-007": ["PN-C-008", "PN-C-009", "PN-C-010", "PN-C-011"],  # cameras die, not the tiger
+    "PENCH-009": ["PN-C-020", "PN-C-021", "PN-C-022", "PN-C-023"],  # gets the new camera
+    "PENCH-011": ["PN-C-026", "PN-C-027", "PN-C-022", "PN-C-023"],  # finds a genuinely new station
+}
+NEW_STATION_FOR = {"PENCH-011": "PN-C-016"}   # pre-existing station, never in its own range
+FAR_STATION_FOR = {"PENCH-005": "PN-C-029"}   # one corner of its own (wide) home range: a real
+                                               # centroid shift with no station new to it, so this
+                                               # scenario tests the event-count confound in isolation
+INSTALLED_THIS_CYCLE = "PN-C-015"             # PENCH-009's "camera arrived, tiger didn't move"
+DEAD_FROM_DAY = 4                             # PENCH-007's cameras fail this far into the cycle
+
+# Single-flank individuals: the field-common case per the ATRW paper
+# (docs/DATA.md §1), not the zoo-shot exception -- roughly six of thirteen,
+# forced to one side consistently rather than left to an independent coin
+# flip per crop, which would make every individual multi-flank by cycle 3
+# almost by construction.
+SINGLE_FLANK_SIDE = {
+    "PENCH-001": "L", "PENCH-003": "R", "PENCH-005": "L",
+    "PENCH-007": "R", "PENCH-009": "L", "PENCH-011": "R",
+}
 
 
 def sid(n: int, zone: str) -> str:
@@ -77,35 +121,81 @@ def build_stations() -> list[dict]:
     return out
 
 
-def build_activity(stations: list[dict]) -> list[dict]:
+def build_home(stations: list[dict]) -> dict[str, list[dict]]:
+    """Every individual's stable home patch of stations: hand-assigned for
+    the scenario individuals, nearest-4-core-stations for everyone else.
+
+    PN-C-015 is excluded from the nearest-neighbour pool. It is only
+    installed for the final cycle (INSTALLED_THIS_CYCLE); a station that
+    does not exist yet cannot be part of anyone's established range.
+    """
+    by_id = {s["station_id"]: s for s in stations}
+    core = [s for s in stations if s["zone"] == "core" and s["station_id"] != INSTALLED_THIS_CYCLE]
+    ids = [f"PENCH-{i:03d}" for i in range(1, 12)] + ["PENCH-P-001", "PENCH-P-002"]
+    home: dict[str, list[dict]] = {}
+    for n, ind_id in enumerate(ids):
+        if ind_id in SCENARIO_HOME:
+            home[ind_id] = [by_id[s] for s in SCENARIO_HOME[ind_id]]
+            continue
+        base = core[(n * 3) % len(core)]
+        home[ind_id] = sorted(
+            core, key=lambda s: (s["lat"] - base["lat"]) ** 2 + (s["lon"] - base["lon"]) ** 2
+        )[:4]
+    return home
+
+
+def build_activity(stations: list[dict], killed_ids: set[str],
+                    final_cycle_start: datetime) -> list[dict]:
     """Camera uptime. This table is the whole reason the alert engine can
     tell 'the tiger is gone' from 'we were not looking'.
 
-    Two deliberate scenarios are planted here:
-      * PN-C-015 is installed only in the final cycle  -> its first capture
-        of any tiger must NOT raise a new-station alert.
-      * PN-C-008 and PN-C-009 die during the final cycle -> the tiger whose
-        range they cover must NOT raise an absence alert.
+    Two scenarios live here:
+      * INSTALLED_THIS_CYCLE goes live only at the start of the final
+        cycle -> a first capture there must NOT read as movement.
+      * killed_ids (PENCH-007's entire range) go dark partway through the
+        final cycle -> PENCH-007's absence must NOT be reported as such.
     """
     rows = []
     start_all = CYCLES[0][1] - timedelta(days=30)
-    last_start = CYCLES[-1][1]
     for s in stations:
         st = s["station_id"]
-        if st == "PN-C-015":
+        if st == INSTALLED_THIS_CYCLE:
             rows.append({"activity_id": hid("act", st, 1), "station_id": st,
-                         "start_date": last_start.isoformat(), "end_date": None,
+                         "start_date": final_cycle_start.isoformat(), "end_date": None,
                          "note": "installed"})
-        elif st in ("PN-C-008", "PN-C-009"):
+        elif st in killed_ids:
             rows.append({"activity_id": hid("act", st, 1), "station_id": st,
                          "start_date": start_all.isoformat(),
-                         "end_date": (last_start + timedelta(days=4)).isoformat(),
+                         "end_date": (final_cycle_start + timedelta(days=DEAD_FROM_DAY)).isoformat(),
                          "note": "battery dead"})
         else:
             rows.append({"activity_id": hid("act", st, 1), "station_id": st,
                          "start_date": start_all.isoformat(), "end_date": None,
                          "note": "installed"})
     return rows
+
+
+def patch_for(ind_id: str, home: dict, final: bool,
+              by_id: dict[str, dict], buffer_: list[dict]) -> list[dict]:
+    """The stations an individual is captured at this cycle. Cycles 1-2 use
+    the stable home patch unchanged; the final cycle carries the eight
+    scenarios, each a deliberate departure from that patch."""
+    patch = list(home[ind_id])
+    if not final:
+        return patch
+    if ind_id == "PENCH-004":                 # drifts toward the buffer: a real
+        return patch[:2] + buffer_[4:6]        # deviation, and the one that precedes conflict
+    if ind_id in ("PENCH-002", "PENCH-007"):   # one genuinely gone, one cameras-dead
+        return []
+    if ind_id == "PENCH-009":                  # turns up at the newly installed camera
+        return patch[:3] + [by_id[INSTALLED_THIS_CYCLE]]
+    if ind_id == "PENCH-011":                  # finds a station that was there all along
+        return patch + [by_id[NEW_STATION_FOR["PENCH-011"]]]
+    if ind_id == "PENCH-005":                  # a real-looking shift on too little data to trust
+        return [by_id[FAR_STATION_FOR["PENCH-005"]]]
+    if ind_id == "PENCH-P-001":                # newly enrolled, already in the buffer
+        return buffer_[0:2]
+    return patch
 
 
 def main(reset: bool = False) -> None:
@@ -130,22 +220,34 @@ def main(reset: bool = False) -> None:
     }
     repo.insert("reserves", {
         "reserve_id": RESERVE, "name": "Pench Tiger Reserve", "state": "Maharashtra",
-        "utm_epsg": 32644, "boundary_geojson": json.dumps(boundary),
+        "utm_epsg": RESERVE_UTM_EPSG, "boundary_geojson": json.dumps(boundary),
         "created_at": repo.now(),
     })
 
     stations = build_stations()
+    by_id = {s["station_id"]: s for s in stations}
     repo.insert_many("stations", stations)
-    repo.insert_many("station_activity", build_activity(stations))
+
+    home = build_home(stations)
+    killed_ids = {s["station_id"] for s in home["PENCH-007"]}
+    repo.insert_many("station_activity",
+                     build_activity(stations, killed_ids, CYCLES[-1][1]))
+
     core = [s for s in stations if s["zone"] == "core"]
     buffer_ = [s for s in stations if s["zone"] == "buffer"]
 
     # ── individuals: 11 confirmed, 2 provisional ────────────────────────
+    # Field names given by range staff once an individual is confirmed --
+    # provisional individuals (below) stay nameless until a human promotes
+    # them (repo.promote_individual()), same as PENCH-P-NNN never gets a
+    # real ind_id until then.
+    NAMES = ["Tara", "Maya", "Durga", "Sher", "Baghin", "Choti",
+             "Wagdoh", "Neelam", "Kesar", "Sultana", "Raja"]
     inds = []
     for i in range(1, 12):
         inds.append({
             "ind_id": f"PENCH-{i:03d}", "reserve_id": RESERVE,
-            "label": None, "provisional": 0,
+            "label": NAMES[i - 1], "provisional": 0,
             "sex": RNG.choice(["F", "M"]),
             "age_class": RNG.choice(["adult", "adult", "sub-adult"]),
             "first_seen": CYCLES[0][1].isoformat(),
@@ -161,16 +263,9 @@ def main(reset: bool = False) -> None:
         })
     repo.insert_many("individuals", inds)
 
-    # give every individual a stable home patch of stations
-    home: dict[str, list[dict]] = {}
-    for n, ind in enumerate(inds):
-        base = core[(n * 3) % len(core)]
-        near = sorted(core, key=lambda s: (s["lat"] - base["lat"]) ** 2
-                      + (s["lon"] - base["lon"]) ** 2)[:4]
-        home[ind["ind_id"]] = near
-
     runs, images, dets, crops, assigns = [], [], [], [], []
     events, image_events, quarantine = [], [], []
+    occ_acc: dict[tuple[str, str], Counter] = {}
 
     for ci, (label, start) in enumerate(CYCLES):
         run_id = f"run_{ci + 1:02d}"
@@ -191,32 +286,22 @@ def main(reset: bool = False) -> None:
         for ind in inds:
             if ind["provisional"] and not final:
                 continue
-            patch = list(home[ind["ind_id"]])
-
-            # PENCH-004 drifts toward the buffer in the final cycle: a real
-            # deviation, and the one that precedes conflict.
-            if final and ind["ind_id"] == "PENCH-004":
-                patch = patch[:2] + [buffer_[4], buffer_[5]]
-            # PENCH-007's cameras died: it must look absent but must NOT be
-            # reported absent.
-            if final and ind["ind_id"] == "PENCH-007":
-                patch = []
-            # PENCH-002 is genuinely gone, with full effort coverage.
-            if final and ind["ind_id"] == "PENCH-002":
-                patch = []
-            # PENCH-009 turns up at the newly installed camera: not movement.
-            if final and ind["ind_id"] == "PENCH-009":
-                patch = patch[:3] + [next(s for s in stations
-                                          if s["station_id"] == "PN-C-015")]
+            patch = patch_for(ind["ind_id"], home, final, by_id, buffer_)
 
             for st in patch:
-                for burst in range(RNG.randint(1, 3)):
+                # 2-3 bursts per station-visit, never fewer: the scenario
+                # individuals need a reliable minimum event count, and a
+                # tiger that used a station at all realistically triggers
+                # it more than once across a multi-week cycle.
+                n_bursts = 2 if (final and ind["ind_id"] == "PENCH-005") else RNG.randint(2, 3)
+                for burst in range(n_bursts):
                     when = start + timedelta(days=RNG.randint(1, 55),
                                              hours=RNG.randint(0, 23))
                     ev_id = hid("ev", run_id, ind["ind_id"], st["station_id"], burst)
                     events.append({"event_id": ev_id, "station_id": st["station_id"],
                                    "started_at": when.isoformat(),
                                    "ended_at": (when + timedelta(seconds=6)).isoformat()})
+                    occ_acc.setdefault((run_id, ind["ind_id"]), Counter())[st["station_id"]] += 1
                     for frame in range(3):     # a real 3-shot burst
                         img_id = hid("im", ev_id, frame)
                         night = RNG.random() < 0.62
@@ -254,7 +339,7 @@ def main(reset: bool = False) -> None:
                         })
                         if frame != 1:      # one usable flank crop per burst
                             continue
-                        side = RNG.choice(["L", "R"])
+                        side = SINGLE_FLANK_SIDE.get(ind["ind_id"]) or RNG.choice(["L", "R"])
                         quality = round(RNG.uniform(0.42, 0.95), 3)
                         crop_id = hid("cr", det_id)
                         crops.append({
@@ -301,7 +386,8 @@ def main(reset: bool = False) -> None:
                 "reason": "no subject detected" if stage == "B" else "no motion vs station background",
                 "conf": round(RNG.uniform(0.90, 0.999), 3),
                 "model_version": "camtrap-detector-compact@1.0.0",
-                "threshold": config.CONFIG.triage.quarantine_conf_threshold,
+                "threshold": config.CONFIG.triage.detector_conf_threshold if stage == "B"
+                            else config.CONFIG.triage.stage_a_blank_threshold,
                 "bytes": by, "restored_at": None,
             })
         # a handful of people, routed away from the wildlife pipeline
@@ -335,127 +421,68 @@ def main(reset: bool = False) -> None:
         {"image_id": i["image_id"], "blurred_path": f"restricted/{i['image_id']}.jpg",
          "access_count": 0} for i in images if i["status"] == "person"])
 
-    _occupancy_and_alerts(runs, inds, home, stations)
+    # Entities (one side of one tiger, blueprint §7.3) derive from
+    # assignments, so this only makes sense once assignments exist.
+    repo.rebuild_entities(RESERVE)
+
+    periods = effort.cycle_periods(runs, config.CONFIG.alerts.default_cycle_days)
+    repo.insert_many("occupancy", build_occupancy(runs, inds, occ_acc, by_id, periods))
+
+    alert_rows = alerts.generate_for_run(runs[-1]["run_id"])
+    repo.insert_many("alerts", alert_rows)
+
     _review_queue(crops, assigns, inds)
 
     repo.audit("seed.demo", actor="system", note="synthetic Pench dataset")
     print(f"seeded {len(runs)} runs · {len(images)} images · "
-          f"{len(inds)} individuals · {len(stations)} stations")
+          f"{len(inds)} individuals · {len(stations)} stations · "
+          f"{len(alert_rows)} alerts ({sum(1 for a in alert_rows if not a['suppressed'])} raised)")
 
 
-def _occupancy_and_alerts(runs, inds, home, stations) -> None:
-    """Occupancy per run, then the eight alert scenarios.
+def build_occupancy(runs: list[dict], inds: list[dict], occ_acc: dict, by_id: dict,
+                    periods: dict) -> list[dict]:
+    """Stage 4, computed from what was actually captured (occ_acc), never
+    from a second, independently-imagined patch. That second computation
+    is exactly what let PENCH-009's occupancy silently disagree with its
+    own capture data in the original version of this script -- the new
+    station never showed up as 'visited' because nothing here ever asked
+    the capture loop what it had done.
 
-    Four fire. Four are suppressed. The suppressed ones are the point: they
-    are what separates an actionable alert list from a noisy one.
+    The hull and its area come from edge/pipeline/occupancy.py: a real
+    minimum convex polygon, projected into the reserve's own UTM zone
+    before its area is measured -- not the bounding-span approximation
+    this used to be. station_set, centroid, event_count and effort_days
+    (from station_activity) are unchanged.
     """
-    by_id = {s["station_id"]: s for s in stations}
-    occ, alerts = [], []
-
+    min_hull = config.CONFIG.occupancy.min_stations_for_hull
+    out = []
     for run in runs:
-        final = run["run_id"] == runs[-1]["run_id"]
         for ind in inds:
-            if ind["provisional"] and not final:
-                continue
-            patch = list(home[ind["ind_id"]])
-            if final and ind["ind_id"] == "PENCH-004":
-                patch = patch[:2] + [s for s in stations if s["zone"] == "buffer"][4:6]
-            if final and ind["ind_id"] in ("PENCH-002", "PENCH-007"):
-                patch = []
-            if not patch:
-                occ.append({
+            if ind["first_seen"] > run["started_at"]:
+                continue  # not enrolled yet: no history, not even an absence
+            counter = occ_acc.get((run["run_id"], ind["ind_id"]))
+            if not counter:
+                out.append({
                     "run_id": run["run_id"], "ind_id": ind["ind_id"],
                     "station_set": "[]", "hull_wkt": None, "centroid_lat": None,
                     "centroid_lon": None, "area_km2": None, "event_count": 0,
-                    "effort_days": 0.0,
-                    "insufficient_reason": "no captures this cycle",
+                    "effort_days": 0.0, "insufficient_reason": "no captures this cycle",
                 })
                 continue
-            lats = [s["lat"] for s in patch]
-            lons = [s["lon"] for s in patch]
-            clat, clon = sum(lats) / len(lats), sum(lons) / len(lons)
-            span_km = (max(lats) - min(lats)) * 111.0
-            span_km2 = (max(lons) - min(lons)) * 111.0 * math.cos(math.radians(clat))
-            area = round(max(span_km * span_km2, 4.0), 1)
-            occ.append({
+            station_ids = sorted(counter)
+            total = sum(counter.values())
+            station_points = [(by_id[s]["lat"], by_id[s]["lon"], n) for s, n in counter.items()]
+            geo = occupancy.compute(station_points, RESERVE_UTM_EPSG, min_hull)
+            out.append({
                 "run_id": run["run_id"], "ind_id": ind["ind_id"],
-                "station_set": json.dumps([s["station_id"] for s in patch]),
-                "hull_wkt": "POLYGON((" + ", ".join(
-                    f"{s['lon']} {s['lat']}" for s in patch + [patch[0]]) + "))",
-                "centroid_lat": round(clat, 5), "centroid_lon": round(clon, 5),
-                "area_km2": area, "event_count": len(patch) * 2,
-                "effort_days": round(len(patch) * 57.0, 1),
-                "insufficient_reason": None if len(patch) >= 3 else "fewer than 3 stations",
+                "station_set": json.dumps(station_ids),
+                "hull_wkt": geo["hull_wkt"],
+                "centroid_lat": geo["centroid_lat"], "centroid_lon": geo["centroid_lon"],
+                "area_km2": geo["area_km2"], "event_count": total,
+                "effort_days": effort.station_days(station_ids, *periods[run["run_id"]]),
+                "insufficient_reason": geo["insufficient_reason"],
             })
-    repo.insert_many("occupancy", occ)
-
-    rid = runs[-1]["run_id"]
-    sill = by_id["PN-B-031"] if "PN-B-031" in by_id else \
-        [s for s in stations if s["zone"] == "buffer"][4]
-
-    def alert(ind, typ, sev, what, ev, conf, cov, sup=0, reason=None):
-        alerts.append({
-            "alert_id": hid("al", rid, ind, typ), "run_id": rid, "ind_id": ind,
-            "type": typ, "severity": sev, "what_changed": what,
-            "evidence": json.dumps(ev), "confidence": conf, "effort_coverage": cov,
-            "suppressed": sup, "suppress_reason": reason,
-            "acknowledged_by": None, "acknowledged_at": None,
-            "created_at": repo.now(),
-        })
-
-    # ── genuine ────────────────────────────────────────────────────────
-    alert("PENCH-004", "buffer_ward", "act",
-          f"First capture at {sill['name']} (buffer, {sill['village_dist_km']} km from "
-          "the nearest village). Core stations only across the previous 4 cycles.",
-          {"station_ids": [sill["station_id"]], "dates": ["2026-07-14"],
-           "prior_cycles_core_only": 4, "buffer_effort_ratio_vs_prior": 1.05},
-          0.86, 0.94)
-    alert("PENCH-004", "centroid_shift", "watch",
-          "Activity centroid moved 4.1 km south-west, past the 2.36 km core "
-          "threshold. Based on 8 events this cycle and 11 last cycle.",
-          {"shift_km": 4.1, "threshold_km": 2.36, "events_now": 8, "events_prior": 11},
-          0.79, 0.94)
-    alert("PENCH-002", "absence", "watch",
-          "Not captured this cycle after appearing in each of the previous 3. "
-          "Cameras covering its range were active throughout.",
-          {"prior_cycles_present": 3, "stations_active": 4, "effort_days": 228.0},
-          0.81, 0.97)
-    alert("PENCH-011", "new_station", "info",
-          "First capture at Khursapar, a station active since 2025 that this "
-          "individual had not used before.",
-          {"station_ids": ["PN-C-006"], "station_active_since": "2025-11-01"},
-          0.68, 0.92)
-
-    # ── suppressed: the whole argument for this system ─────────────────
-    alert("PENCH-007", "absence", "watch",
-          "Not captured this cycle after appearing in each of the previous 3.",
-          {"prior_cycles_present": 3, "stations_dead": ["PN-C-008", "PN-C-009"],
-           "effort_days": 8.0},
-          0.74, 0.31, sup=1,
-          reason="Insufficient survey effort in this individual's range "
-                 "(coverage 0.31). Cameras PN-C-008 and PN-C-009 failed on day 4. "
-                 "Absence cannot be assessed.")
-    alert("PENCH-009", "new_station", "info",
-          "First capture at PN-C-015.",
-          {"station_ids": ["PN-C-015"], "station_installed": "2026-07-01"},
-          0.62, 0.95, sup=1,
-          reason="Station PN-C-015 was installed this cycle. The tiger did not "
-                 "move; the camera arrived.")
-    alert("PENCH-005", "centroid_shift", "info",
-          "Activity centroid moved 3.8 km east.",
-          {"shift_km": 3.8, "events_now": 2, "min_events": 5},
-          0.41, 0.88, sup=1,
-          reason="Only 2 events this cycle, below the minimum of 5. A centroid "
-                 "from two captures is noise, not movement.")
-    alert("PENCH-P-001", "buffer_ward", "watch",
-          "Provisional individual captured at two buffer stations.",
-          {"station_ids": ["PN-B-028", "PN-B-033"], "id_confidence": 0.44},
-          0.44, 0.91, sup=1,
-          reason="Identity confidence is 0.44 and still awaiting human review. "
-                 "An alert cannot be more confident than the identification "
-                 "beneath it.")
-
-    repo.insert_many("alerts", alerts)
+    return out
 
 
 def _review_queue(crops, assigns, inds) -> None:
@@ -493,3 +520,4 @@ if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--reset", action="store_true")
     main(**vars(ap.parse_args()))
+

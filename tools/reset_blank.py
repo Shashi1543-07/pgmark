@@ -1,0 +1,63 @@
+"""Wipes the database down to an empty reserve + station skeleton -- no
+runs, no individuals, no alerts, no audit history. For hands-on manual
+testing of the real pipeline against real photos (see
+tools/build_manual_test_set.py for a folder to point Import Photos at),
+where tools/seed_demo.py's eight planted scenarios would otherwise sit in
+the way of seeing your own results.
+
+Keeps the reserve and its stations, because the UI needs a reserve to
+select and Stage 1 ingest needs stations to assign scanned folders to --
+without either, nothing in the software can be exercised at all. Reuses
+tools/seed_demo.py's own station geometry and activity windows so the
+map/occupancy screens still have somewhere real to draw and effort
+coverage has a real camera-days denominator, even with zero captures.
+
+    python -m tools.reset_blank
+"""
+from __future__ import annotations
+
+import json
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from edge import config                                            # noqa: E402
+from edge.db import repo                                           # noqa: E402
+from tools.seed_demo import RESERVE, RESERVE_UTM_EPSG, build_activity, build_stations  # noqa: E402
+
+
+def main() -> None:
+    config.ensure_dirs()
+    if config.DB_PATH.exists():
+        repo.close()
+        config.DB_PATH.unlink()
+        for suffix in ("-wal", "-shm"):
+            p = Path(str(config.DB_PATH) + suffix)
+            if p.exists():
+                p.unlink()
+    repo.migrate()
+
+    boundary = {
+        "type": "Polygon",
+        "coordinates": [[[79.20, 21.55], [79.40, 21.55],
+                         [79.40, 21.76], [79.20, 21.76], [79.20, 21.55]]],
+    }
+    repo.insert("reserves", {
+        "reserve_id": RESERVE, "name": "Pench Tiger Reserve", "state": "Maharashtra",
+        "utm_epsg": RESERVE_UTM_EPSG, "boundary_geojson": json.dumps(boundary),
+        "created_at": repo.now(),
+    })
+    stations = build_stations()
+    repo.insert_many("stations", stations)
+    repo.insert_many("station_activity", build_activity(stations, set(), datetime.now(timezone.utc)))
+
+    print(f"blank reserve ready: {RESERVE} -- {len(stations)} stations, "
+          f"0 runs, 0 individuals, 0 alerts")
+    print("point Import Photos at manual_test_photos/ "
+          "(python -m tools.build_manual_test_set if it doesn't exist yet)")
+
+
+if __name__ == "__main__":
+    main()

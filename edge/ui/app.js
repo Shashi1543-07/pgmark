@@ -17,7 +17,13 @@ async function api(path, opts) {
     ...opts,
     body: opts?.body ? JSON.stringify(opts.body) : undefined,
   });
-  if (!r.ok) throw new Error(`${r.status} ${path}`);
+  if (!r.ok) {
+    let detail = '';
+    try { const j = await r.json(); detail = j.detail || j.error || ''; } catch { /* no body */ }
+    const err = new Error(`${r.status} ${path}${detail ? `: ${detail}` : ''}`);
+    err.detail = detail;
+    throw err;
+  }
   return r.json();
 }
 
@@ -26,10 +32,16 @@ async function api(path, opts) {
    actually works — so the pattern is the identity marker everywhere and
    there are no avatars in this interface.
 
-   Until the pipeline produces real rectified crops these are generated
-   deterministically from the identifier, so the same tiger always shows the
-   same pattern. Swapping in the real crop is a one-line change and is
-   marked in the code so nobody mistakes this for a photograph. */
+   stripeRail() is the procedural fallback: generated deterministically
+   from the identifier, so the same tiger always shows the same pattern,
+   for individuals with no real photo on file (every seeded demo tiger --
+   the demo has no source images -- and anything not yet identified
+   through the real pipeline). flankThumb() is what call sites actually
+   use: it requests the real rectified crop from
+   /api/individuals/{id}/thumbnail (edge/pipeline/identify_upload.py
+   writes these once a real photo has gone through Stage 3) and falls
+   back to the procedural pattern on a 404, so nothing here ever claims a
+   photograph exists when it does not. */
 function stripeRail(id, cls = '') {
   let h = 2166136261;
   for (const ch of String(id)) { h ^= ch.charCodeAt(0); h = Math.imul(h, 16777619); }
@@ -50,6 +62,26 @@ function stripeRail(id, cls = '') {
     role="img" aria-label="Flank pattern for ${esc(id)}">
     <rect width="12" height="100" fill="#c98a44"/>
     <g fill="#20180f">${bands.join('')}</g></svg>`;
+}
+
+function flankThumb(id, cls = '') {
+  return `<span class="stripe-thumb ${cls}">
+    <img src="/api/individuals/${encodeURIComponent(id)}/thumbnail" class="real-crop"
+         alt="Flank photo for ${esc(id)}" loading="lazy"
+         onload="this.classList.add('loaded')" onerror="this.remove()">
+    ${stripeRail(id, cls)}
+  </span>`;
+}
+
+/* Same idea, keyed by crop_id instead of individual -- the review screen
+   shows the frame under review before it has been matched to anyone. */
+function cropThumb(cropId, fallbackId, cls = '') {
+  return `<span class="stripe-thumb ${cls}">
+    <img src="/api/crops/${encodeURIComponent(cropId)}/image" class="real-crop"
+         alt="Flank photo under review" loading="lazy"
+         onload="this.classList.add('loaded')" onerror="this.remove()">
+    ${stripeRail(fallbackId, cls)}
+  </span>`;
 }
 
 const meter = (v) => `<span class="meter" title="How well cameras covered this
@@ -73,6 +105,128 @@ function route() {
     else a.removeAttribute('aria-current');
   });
   RENDER[name]?.().catch((e) => console.error(name, e));
+  guideOnView(name);
+}
+
+/* ── guided walkthrough ───────────────────────────────────────────────────
+   A floating, step-by-step coach for someone who did not build this and
+   has no reason to already know what each tab means. Steps mirror the
+   real workflow order (scan -> confirm -> triage -> check what got
+   filtered -> identify a photo -> catalogue -> review queue), not the
+   left-nav's visual order, since Identify a photo is what actually
+   populates Tigers and has to come first. Advances itself when the
+   matching action actually happens (a scan completes, a folder gets
+   confirmed, triage finishes, a tab gets opened, a photo gets
+   identified) -- Back/Next/Skip always work too, so it never blocks
+   anyone who would rather explore on their own terms. */
+const GUIDE_STEPS = [
+  { id: 'scan', view: 'run', target: '#newRunToggle', title: 'Start here',
+    cta: 'Click "Scan a folder" below.',
+    body: 'Point it at a folder of camera-trap photos. Nothing is moved or changed until you confirm the next screen.' },
+  { id: 'confirm', view: 'run', target: '#nrConfirmBtn', title: 'Confirm the cameras',
+    cta: 'Assign each folder to a station, then click Confirm.',
+    body: 'Pick a station for each folder, or skip it. This is never guessed for you.' },
+  { id: 'triage', view: 'run', target: '#nrTriageBtn', title: 'Run triage',
+    cta: 'Click "Run triage".',
+    body: 'A fast pass clears the obvious blanks, then the real detector sorts everything left into animal, person, vehicle, or blank.' },
+  { id: 'blank', view: 'triage', target: 'a[data-view="triage"]', advanceOnView: true,
+    title: 'See what got filtered',
+    cta: 'Click "Blank Frames" in the left sidebar.',
+    body: 'Everything quarantined as empty shows up there. Nothing is ever deleted -- it can all be put back with one click.' },
+  { id: 'identify', view: 'identify', target: 'a[data-view="identify"]', title: 'Identify a tiger',
+    cta: 'Click "Identify" next to a frame on the triage results, or open "Identify a photo" in the sidebar.',
+    body: 'A bulk scan never matches tigers on its own -- Stage 3 looks at one photo at a time, on purpose. Either path enrols it as a new tiger, matches it to one already known, sends it for review, or refuses -- and always says why.' },
+  { id: 'tigers', view: 'tigers', target: 'a[data-view="tigers"]', advanceOnView: true,
+    title: 'Your catalogue builds here',
+    cta: 'Click "Tigers" in the left sidebar.',
+    body: 'Every tiger identified through the previous step appears there with its own real flank photo, not a placeholder.' },
+  { id: 'review', view: 'review', target: 'a[data-view="review"]', advanceOnView: true,
+    title: 'Uncertain matches',
+    cta: 'Click "Needs Review" in the left sidebar.',
+    body: 'Anything the matcher was not confident enough to decide alone waits there for a human call.' },
+  { id: 'explore', view: null, target: null, title: 'That is the core loop',
+    cta: 'Explore the rest whenever you like.',
+    body: 'Territories, Alerts, History, System Health and Share Data fill in as you process more cycles. No fixed order after this.' },
+];
+const GUIDE_KEY = 'pugmark_guide_v1';
+S.guide = { open: false, index: 0 };
+
+function guideLoad() {
+  try { return JSON.parse(localStorage.getItem(GUIDE_KEY) || 'null'); } catch { return null; }
+}
+function guideSave() {
+  try {
+    localStorage.setItem(GUIDE_KEY,
+      JSON.stringify({ index: S.guide.index, seen: true }));
+  } catch { /* private browsing or storage disabled -- guide still works this visit */ }
+}
+
+function guideMark(el, on) {
+  if (el) el.classList.toggle('guide-target', on);
+}
+
+function guideRender() {
+  const panel = $('#guide');
+  const prevStep = GUIDE_STEPS[S.guide._lastMarked ?? -1];
+  if (prevStep?.target) guideMark(document.querySelector(prevStep.target), false);
+
+  if (!S.guide.open) { panel.hidden = true; return; }
+  const step = GUIDE_STEPS[S.guide.index];
+  panel.hidden = false;
+  $('#guideStepLabel').textContent = `Step ${S.guide.index + 1} of ${GUIDE_STEPS.length}`;
+  $('#guideTitle').textContent = step.title;
+  $('#guideCta').textContent = step.cta || '';
+  $('#guideCta').hidden = !step.cta;
+  $('#guideBody').textContent = step.body;
+  $('#guideDots').innerHTML = GUIDE_STEPS.map((_, i) =>
+    `<span class="dot${i === S.guide.index ? ' on' : ''}"></span>`).join('');
+  $('#guideBack').disabled = S.guide.index === 0;
+  $('#guideNext').textContent = S.guide.index === GUIDE_STEPS.length - 1 ? 'Done' : 'Next';
+
+  if (step.target) guideMark(document.querySelector(step.target), true);
+  S.guide._lastMarked = S.guide.index;
+}
+
+function guideGo(index) {
+  S.guide.index = Math.max(0, Math.min(GUIDE_STEPS.length - 1, index));
+  S.guide.open = true;
+  guideSave();
+  guideRender();
+}
+
+// Called when a real action finishes. Only advances if the guide is
+// currently sitting on the step that action satisfies -- otherwise
+// someone skipping ahead or working out of order would get yanked
+// around by their own actions.
+function guideNotify(stepId) {
+  const cur = GUIDE_STEPS[S.guide.index];
+  if (!cur || cur.id !== stepId) return;
+  if (S.guide.index < GUIDE_STEPS.length - 1) guideGo(S.guide.index + 1);
+}
+
+function guideOnView(viewName) {
+  const cur = GUIDE_STEPS[S.guide.index];
+  if (cur && cur.view === viewName && cur.advanceOnView) guideNotify(cur.id);
+}
+
+function guideInit() {
+  const saved = guideLoad();
+  $('#guideBack').onclick = () => guideGo(S.guide.index - 1);
+  $('#guideNext').onclick = () => {
+    if (S.guide.index === GUIDE_STEPS.length - 1) { S.guide.open = false; guideSave(); guideRender(); return; }
+    guideGo(S.guide.index + 1);
+  };
+  $('#guideClose').onclick = () => { S.guide.open = false; guideSave(); guideRender(); };
+  $('#guideReopen').onclick = () => guideGo(saved ? S.guide.index : 0);
+
+  if (!saved) {
+    S.guide.index = 0;
+    S.guide.open = true;
+  } else {
+    S.guide.index = saved.index;
+    S.guide.open = false;   // seen before -- available via the reopen button, not forced open again
+  }
+  guideRender();
 }
 
 /* ── run ───────────────────────────────────────────────────────────────── */
@@ -83,6 +237,7 @@ RENDER.run = async () => {
   const c = S.run.counts;
 
   $('#runTitle').textContent = S.run.cycle_label || S.run.run_id;
+  $('#camtrapdpExport').href = `/api/runs/${S.run.run_id}/export/camtrapdp`;
   $('#runpill').hidden = false;
   $('#runCycle').textContent = S.run.cycle_label || '—';
   $('#runCount').textContent = `${nf(c.total)} frames`;
@@ -128,6 +283,301 @@ RENDER.run = async () => {
   t.textContent = hot || '';
   t.classList.toggle('hot', (a.act || 0) > 0);
 };
+
+/* ── new-run wizard ────────────────────────────────────────────────────────
+   Stage 1 (ingest) and Stage 2A (the motion prefilter) are both real code
+   now; this is the interface for them. Stage 2B (a detector) still isn't
+   built, so the wizard says so rather than pretending the run is finished. */
+S.newRun = { step: 'form' };
+
+$('#newRunToggle').addEventListener('click', () => {
+  const body = $('#newRunBody');
+  body.hidden = !body.hidden;
+  if (!body.hidden) nrRender();
+});
+
+const NR_STEPS = [['form', 'Scan'], ['preflight', 'Resolve'], ['confirmed', 'Confirm'],
+                   ['triaged', 'Prefilter']];
+
+function nrStepper(active) {
+  return `<div class="step">${NR_STEPS.map(([k, label]) =>
+    `<span class="${k === active ? 'on' : ''}">${esc(label)}</span>`).join('→')}</div>`;
+}
+
+async function nrRender() {
+  const el = $('#newRunBody');
+  const nr = S.newRun;
+
+  if (nr.step === 'form') {
+    el.innerHTML = `
+      <div class="hr"></div>
+      ${nrStepper('form')}
+      <p class="note">Points this node at a folder on disk and reports what it
+         understood. Nothing is moved and no station is guessed until you
+         confirm the next screen.</p>
+      <div class="grid g2" style="margin-top:var(--s3)">
+        <label class="field">Folder path
+          <div style="display:flex;gap:var(--s2)">
+            <input id="nrRoot" type="text" placeholder="E:\\CAMERA_TRAP\\2026_08\\RAW" style="flex:1">
+            <button type="button" id="nrBrowseBtn">Browse…</button>
+          </div>
+        </label>
+        <label class="field">Cycle label (optional)
+          <input id="nrCycle" type="text" placeholder="Phase-IV 2026 Cycle III">
+        </label>
+      </div>
+      <div id="nrBrowsePanel" hidden></div>
+      <div class="toolbar" style="margin-top:var(--s4)">
+        <button class="primary" id="nrScanBtn">Scan</button>
+        <span class="note" id="nrMsg"></span>
+      </div>`;
+    $('#nrScanBtn').onclick = nrScan;
+    $('#nrBrowseBtn').onclick = nrBrowseNative;
+    return;
+  }
+
+  if (nr.step === 'preflight') {
+    const p = nr.preflight;
+    el.innerHTML = `
+      ${nrStepper('preflight')}
+      <div class="grid g4">
+        ${[
+          ['Files found', nf(p.files_found), ''],
+          ['Will be ingested', nf(p.images_ingested),
+            p.duplicate_count ? `${nf(p.duplicate_count)} duplicate content skipped` : 'no duplicates'],
+          ['Corrupt or unreadable', nf(p.corrupt_count), 'counted, never crashed the scan'],
+          ['Estimated processing time', `${p.estimated_seconds}s`,
+            `at ${p.estimated_seconds_per_image_assumed}s/frame — an assumption, not a measurement`],
+        ].map(([k, v, s], i) => `<div class="card stat${i === 1 ? ' lead' : ''}">
+            <div class="k">${esc(k)}</div><div class="v">${esc(v)}</div>
+            <div class="sub">${esc(s)}</div></div>`).join('')}
+      </div>
+      ${Object.keys(p.mixed_camera_folders).length ? `
+        <div class="banner" style="margin-top:var(--s4)">
+          <b>Mixed camera bodies</b>
+          <span>${Object.keys(p.mixed_camera_folders).map(esc).join(', ')} contain frames from
+            more than one camera body — the SD cards were likely mixed up. Nothing was split
+            automatically; sort these by hand before relying on them.</span>
+        </div>` : ''}
+      ${p.unmatched_folders.length ? `
+        <div class="hr"></div>
+        <h2>Folders that need a station</h2>
+        <p class="note">Not close enough to any known station name to assign automatically.
+           Never guessed — pick a station for each, or skip the folder.</p>
+        <table>${table(['Folder', 'Assign to a station'], p.unmatched_folders.map((f) => [
+          `<td class="num">${esc(f)}</td>`,
+          `<td><select data-folder="${esc(f)}" class="sel">
+             <option value="">— choose —</option>
+             <option value="__skip__">Skip this folder</option>
+             ${nr.stations.map((s) =>
+               `<option value="${esc(s.station_id)}">${esc(s.name)} (${esc(s.station_id)})</option>`
+             ).join('')}
+           </select></td>`]))}</table>` : ''}
+      <div class="toolbar" style="margin-top:var(--s4)">
+        <button class="primary" id="nrConfirmBtn">Confirm</button>
+        <button id="nrCancelBtn">Start over</button>
+        <span class="note" id="nrMsg"></span>
+      </div>`;
+    $('#nrConfirmBtn').onclick = nrConfirm;
+    $('#nrCancelBtn').onclick = () => { S.newRun = { step: 'form' }; nrRender(); };
+    return;
+  }
+
+  if (nr.step === 'confirmed') {
+    const c = nr.confirmResult;
+    el.innerHTML = `
+      ${nrStepper('confirmed')}
+      <div class="grid g3">
+        ${[['Images assigned to a station', nf(c.resolved_images)],
+           ['Images skipped', nf(c.skipped_images)],
+           ['Bursts grouped into events', nf(c.events)]]
+          .map(([k, v]) => `<div class="card stat"><div class="k">${esc(k)}</div>
+            <div class="v">${esc(v)}</div></div>`).join('')}
+      </div>
+      <div class="toolbar" style="margin-top:var(--s4)">
+        <button class="primary" id="nrTriageBtn">Run triage</button>
+        <span class="note">Two passes: a fast motion prefilter clears the obvious blanks,
+          then the real detector looks at everything that's left and sorts it into
+          animal, person, vehicle, or blank.</span>
+      </div>`;
+    $('#nrTriageBtn').onclick = nrTriage;
+    return;
+  }
+
+  if (nr.step === 'triaged') {
+    const t = nr.triageResult;
+    el.innerHTML = `
+      ${nrStepper('triaged')}
+      <p class="note">Stage A — motion prefilter</p>
+      <div class="grid g4">
+        ${[['Quarantined — confidently blank', nf(t.quarantined)],
+           ['Passed to the detector', nf(t.awaiting_detector + t.subject + t.person + t.vehicle + t.blank_by_detector)],
+           ['Unreadable', nf(t.unreadable)],
+           ['Still without a station', nf(t.skipped_no_station)]]
+          .map(([k, v]) => `<div class="card stat"><div class="k">${esc(k)}</div>
+            <div class="v">${esc(v)}</div></div>`).join('')}
+      </div>
+      <p class="note" style="margin-top:var(--s4)">Stage B — the real detector</p>
+      <div class="grid g4">
+        ${[['Has an animal', nf(t.subject), 'ready for Identify a photo'],
+           ['Has a person', nf(t.person), 'blurred, routed off the tiger pipeline'],
+           ['Has a vehicle', nf(t.vehicle), ''],
+           ['Blank after all', nf(t.blank_by_detector), 'Stage A was not sure; Stage B was']]
+          .map(([k, v, s]) => `<div class="card stat"><div class="k">${esc(k)}</div>
+            <div class="v">${esc(v)}</div>${s ? `<div class="sub">${esc(s)}</div>` : ''}</div>`).join('')}
+      </div>
+      <p class="note" style="margin-top:var(--s3)">${esc(t.note)}</p>
+      ${t.skipped_no_station ? `<p class="note">${nf(t.skipped_no_station)} frame(s) from
+        skipped folders have no station and were left untouched — the motion prefilter has
+        no per-station history to compare them against.</p>` : ''}
+      ${t.subject ? `
+        <div class="hr"></div>
+        <h2>${nf(t.subject)} frame(s) have a real animal in them</h2>
+        <p class="note">A bulk scan never runs matching on its own — Stage 3 looks at one
+           photo at a time, on purpose. Click Identify next to a frame below to run it
+           through the catalogue right now, using the file already on this machine.</p>
+        <table>${table(['When', 'Station', 'Result'], nr.subjectImages.map((im) => [
+          `<td class="n">${esc((im.captured_at || '').slice(0, 16).replace('T', ' '))}</td>`,
+          `<td>${esc(im.station_name || im.station_id || '—')}</td>`,
+          `<td data-image="${esc(im.image_id)}"><button type="button" class="idRunImgBtn"
+             data-image="${esc(im.image_id)}">Identify</button></td>`,
+        ]))}</table>` : ''}
+      <div class="toolbar" style="margin-top:var(--s4)">
+        <button class="primary" id="nrDoneBtn">View this run</button>
+        <button id="nrAnotherBtn">Scan another folder</button>
+      </div>`;
+    $$('#newRunBody .idRunImgBtn').forEach((btn) => {
+      btn.onclick = () => nrIdentifyRunImage(nr.runId, btn.dataset.image, btn.parentElement);
+    });
+    $('#nrDoneBtn').onclick = async () => {
+      $('#newRunBody').hidden = true;
+      S.newRun = { step: 'form' };
+      await RENDER.run();
+    };
+    $('#nrAnotherBtn').onclick = () => { S.newRun = { step: 'form' }; nrRender(); };
+    return;
+  }
+}
+
+async function nrBrowseNative() {
+  const btn = $('#nrBrowseBtn');
+  btn.disabled = true;
+  const prevLabel = btn.textContent;
+  btn.textContent = 'Waiting for Explorer…';
+  try {
+    const r = await api('/api/fs/native-browse', { method: 'POST' });
+    if (r.available) {
+      if (r.path) $('#nrRoot').value = r.path;
+      return;   // cancelled with nothing picked: leave the field as it was
+    }
+  } catch { /* fall through to the in-page picker below */ }
+  finally {
+    btn.disabled = false;
+    btn.textContent = prevLabel;
+  }
+  nrBrowse(null);   // this Python install has no native dialog available
+}
+
+async function nrBrowse(path) {
+  const panel = $('#nrBrowsePanel');
+  panel.hidden = false;
+  panel.innerHTML = '<p class="note">Reading folder…</p>';
+  try {
+    const r = await api(`/api/fs/browse${path ? `?path=${encodeURIComponent(path)}` : ''}`);
+    panel.innerHTML = `
+      <div class="card pad" style="margin-top:var(--s2)">
+        <div class="toolbar" style="margin:0">
+          <b>${esc(r.path || 'Drives')}</b>
+          <div class="spacer"></div>
+          ${r.path ? '<button type="button" id="nrUseBtn">Use this folder</button>' : ''}
+          <button type="button" id="nrCloseBtn">Close</button>
+        </div>
+        <div class="hr"></div>
+        <div class="folderlist">
+          ${r.path ? `<button type="button" class="folderitem" data-path="${esc(r.parent || '')}">.. up</button>` : ''}
+          ${r.entries.map((e) => `<button type="button" class="folderitem" data-path="${esc(e.path)}">${esc(e.name)}</button>`).join('')}
+          ${r.entries.length ? '' : '<p class="note">No subfolders here.</p>'}
+        </div>
+      </div>`;
+    $$('#nrBrowsePanel .folderitem').forEach((b) => {
+      b.onclick = () => nrBrowse(b.dataset.path || null);
+    });
+    if (r.path) $('#nrUseBtn').onclick = () => { $('#nrRoot').value = r.path; panel.hidden = true; };
+    $('#nrCloseBtn').onclick = () => { panel.hidden = true; };
+  } catch (e) {
+    panel.innerHTML = `<p class="note">${esc(e.detail || 'Could not read that folder.')}</p>`;
+  }
+}
+
+async function nrScan() {
+  const root_path = $('#nrRoot').value.trim();
+  const cycle_label = $('#nrCycle').value.trim();
+  if (!root_path) { $('#nrMsg').textContent = 'Enter a folder path first.'; return; }
+  $('#nrScanBtn').disabled = true;
+  $('#nrMsg').textContent = 'Scanning…';
+  try {
+    const [pf, stations] = await Promise.all([
+      api('/api/runs', { method: 'POST',
+        body: { reserve_id: S.reserve.reserve_id, root_path, cycle_label: cycle_label || null } }),
+      api(`/api/stations?reserve_id=${S.reserve.reserve_id}`),
+    ]);
+    S.newRun = { step: 'preflight', runId: pf.run_id, preflight: pf, stations };
+    nrRender();
+    guideNotify('scan');
+  } catch (e) {
+    $('#nrScanBtn').disabled = false;
+    $('#nrMsg').textContent = e.detail || 'Could not scan that folder — check the path.';
+  }
+}
+
+async function nrConfirm() {
+  const nr = S.newRun;
+  const station_assignments = {};
+  const skip_folders = [];
+  $$('#newRunBody select[data-folder]').forEach((sel) => {
+    if (sel.value === '__skip__') skip_folders.push(sel.dataset.folder);
+    else if (sel.value) station_assignments[sel.dataset.folder] = sel.value;
+  });
+  $('#nrConfirmBtn').disabled = true;
+  try {
+    const c = await api(`/api/runs/${nr.runId}/confirm`,
+      { method: 'POST', body: { station_assignments, skip_folders } });
+    S.newRun = { ...nr, step: 'confirmed', confirmResult: c };
+    nrRender();
+    guideNotify('confirm');
+  } catch (e) {
+    $('#nrConfirmBtn').disabled = false;
+    $('#nrMsg').textContent = e.detail || 'Every folder needs a station or a skip.';
+  }
+}
+
+async function nrTriage() {
+  const nr = S.newRun;
+  $('#nrTriageBtn').disabled = true;
+  const t = await api(`/api/runs/${nr.runId}/triage/run`, { method: 'POST', body: {} });
+  const subjectImages = t.subject
+    ? await api(`/api/runs/${nr.runId}/images?status=subject`) : [];
+  S.newRun = { ...nr, step: 'triaged', triageResult: t, subjectImages };
+  nrRender();
+  guideNotify('triage');
+}
+
+async function nrIdentifyRunImage(runId, imageId, cell) {
+  cell.innerHTML = 'Identifying…';
+  try {
+    const r = await api(`/api/runs/${runId}/images/${imageId}/identify`,
+      { method: 'POST', body: { actor: 'field' } });
+    const [title] = DECISION_COPY[r.decision] || [r.decision, ''];
+    cell.innerHTML = r.ind_id
+      ? `${esc(title)} — <a href="#tigers" data-ind="${esc(r.ind_id)}">${esc(r.ind_id)}</a>`
+      : esc(title);
+    guideNotify('identify');
+    if (r.ind_id) { await RENDER.tigers?.(); }
+    if (r.queue_id) { await RENDER.review?.(); }
+  } catch (e) {
+    cell.innerHTML = `Failed: ${esc(e.message)}`;
+  }
+}
 
 /* ── triage ────────────────────────────────────────────────────────────── */
 RENDER.triage = async () => {
@@ -176,11 +626,14 @@ RENDER.tigers = async () => {
   $('#tallyTigers').textContent = S.tigers.length;
   $('#tigerGrid').innerHTML = S.tigers.map((t) => {
     const sides = (t.sides || '').split(',').filter(Boolean).sort();
+    const conf = t.mean_confidence != null ? `${Math.round(t.mean_confidence * 100)}%` : '—';
+    const lastSeen = (t.last_seen || '').slice(0, 10) || '—';
     return `<button class="tiger" data-ind="${esc(t.ind_id)}">
-      ${stripeRail(t.ind_id)}
+      ${flankThumb(t.ind_id)}
       <div>
-        <div class="id">${esc(t.ind_id)}</div>
-        <div class="meta">${nf(t.station_count)} stations · ${nf(t.crop_count)} confirmed frames</div>
+        <div class="id">${esc(t.ind_id)}${t.label ? ` · ${esc(t.label.toUpperCase())}` : ''}</div>
+        <div class="meta">${nf(t.crop_count)} sightings · ${nf(t.station_count)} cameras ·
+           ${conf} match confidence · last seen ${esc(lastSeen)}</div>
         <div class="sides">
           ${t.provisional ? '<span class="tag prov">Awaiting confirmation</span>' : ''}
           ${sides.map((s) => `<span class="tag">${s === 'L' ? 'Left flank' : 'Right flank'}</span>`).join('')}
@@ -199,9 +652,9 @@ $('#tigerGrid').addEventListener('click', async (e) => {
     <div class="hr"></div>
     <div class="card pad">
       <div class="pair">
-        ${stripeRail(t.ind_id, 'wide tall')}
+        ${flankThumb(t.ind_id, 'wide tall')}
         <div style="flex:1">
-          <h1>${esc(t.ind_id)}</h1>
+          <h1>${esc(t.ind_id)}${t.label ? ` · ${esc(t.label.toUpperCase())}` : ''}</h1>
           <p class="note">${esc(t.sex || 'sex unrecorded')} ·
              ${esc(t.age_class || 'age unrecorded')} ·
              first seen ${esc((t.first_seen || '').slice(0, 10))}</p>
@@ -225,6 +678,77 @@ $('#tigerGrid').addEventListener('click', async (e) => {
           `<td class="n">${(c.confidence ?? 0).toFixed(2)}</td>`]))}</table>
     </div>`;
   $('#tigerDetail').scrollIntoView({ behavior: 'smooth', block: 'start' });
+});
+
+/* ── identify: one photo, the full Stage 3 chain ──────────────────────────
+   POSTs multipart, so it bypasses the JSON-only api() helper and calls
+   fetch() directly -- letting the browser set its own multipart boundary
+   header rather than the JSON one api() always sends. */
+RENDER.identify = async () => {
+  $('#idResult').innerHTML = '';
+  $('#idMsg').textContent = '';
+};
+
+const DECISION_COPY = {
+  auto: ['Auto-matched', 'Confident enough to accept without review.'],
+  review: ['Sent for review', 'Not confident enough to accept on its own.'],
+  enroll: ['Enrolled as a new tiger', 'No existing entity of this flank scored close enough to call a match.'],
+  refuse: ['Could not be matched', 'The crop did not clear the quality gate.'],
+  no_animal_detected: ['No animal found', 'Stage B found nothing to identify in this photo.'],
+};
+
+function drawIdResult(r) {
+  const [title, sub] = DECISION_COPY[r.decision] || [r.decision, ''];
+  const candidates = (r.candidates || []).map((c) => `
+    <div class="pair" style="margin-top:var(--s2)">
+      ${flankThumb(c.ind_id)}
+      <div style="flex:1"><div class="k">${esc(c.ind_id)}</div>
+      <div class="e">score ${c.score.toFixed(3)}</div></div>
+    </div>`).join('');
+  $('#idResult').innerHTML = `
+    <div class="card pad">
+      <h2>${esc(title)}</h2>
+      <p class="note">${esc(sub)}</p>
+      <dl class="kv" style="margin-top:var(--s3)">
+        ${r.side ? `<dt>Flank</dt><dd>${r.side === 'L' ? 'Left' : 'Right'}</dd>` : ''}
+        ${r.quality != null ? `<dt>Crop quality</dt><dd>${r.quality.toFixed(2)}</dd>` : ''}
+        <dt>Reason</dt><dd>${esc(r.reason || '')}</dd>
+        ${r.ind_id ? `<dt>Individual</dt><dd><a href="#tigers">${esc(r.ind_id)}</a></dd>` : ''}
+        ${r.queue_id ? `<dt>Review queue</dt><dd><a href="#review">open in Review</a></dd>` : ''}
+      </dl>
+      ${candidates ? `<h2 style="margin-top:var(--s4)">Top candidates</h2>${candidates}` : ''}
+    </div>`;
+}
+
+$('#idSubmit').addEventListener('click', async () => {
+  const fileInput = $('#idFile');
+  const msg = $('#idMsg');
+  if (!fileInput.files.length) { msg.textContent = 'Choose a photo first.'; return; }
+
+  const form = new FormData();
+  form.append('file', fileInput.files[0]);
+  form.append('reserve_id', S.reserve.reserve_id);
+  form.append('actor', $('#idActor').value || 'field');
+
+  msg.textContent = 'Identifying…';
+  $('#idSubmit').disabled = true;
+  try {
+    const res = await fetch('/api/identify/upload', { method: 'POST', body: form });
+    if (!res.ok) {
+      const j = await res.json().catch(() => ({}));
+      throw new Error(j.detail || `${res.status}`);
+    }
+    const r = await res.json();
+    msg.textContent = '';
+    drawIdResult(r);
+    guideNotify('identify');
+    if (r.ind_id) { await RENDER.tigers?.(); }
+    if (r.queue_id) { await RENDER.review?.(); }
+  } catch (e) {
+    msg.textContent = `Failed: ${e.message}`;
+  } finally {
+    $('#idSubmit').disabled = false;
+  }
 });
 
 /* ── review ────────────────────────────────────────────────────────────── */
@@ -252,7 +776,7 @@ function drawReview() {
       <div class="card pad">
         <h2>Unidentified frame</h2>
         <div class="pair" style="margin-top:var(--s4)">
-          ${stripeRail(it.crop_id, 'wide tall')}
+          ${cropThumb(it.crop_id, it.crop_id, 'wide tall')}
           <div style="flex:1">
             <dl class="kv">
               <dt>Flank</dt><dd>${it.side === 'L' ? 'Left' : it.side === 'R' ? 'Right' : 'Unclear'}</dd>
@@ -270,7 +794,7 @@ function drawReview() {
         <h2 style="margin-bottom:var(--s3)">Candidates</h2>
         ${it.candidates.map((c, i) => `
           <button class="cand" data-pick="${i}" aria-pressed="${i === reviewPick}">
-            ${stripeRail(c.ind_id)}
+            ${flankThumb(c.ind_id)}
             <div style="flex:1">
               <div class="k">${esc(c.ind_id)} <kbd>${i + 1}</kbd></div>
               <div class="e">match ${c.score.toFixed(3)} · ${esc(c.evidence)}</div>
@@ -371,6 +895,9 @@ RENDER.map = async () => {
           font-family="Bahnschrift, sans-serif">BUFFER</text>
     ${hulls}${pins}</svg>`;
 
+  $('#occGeojson').href = `/api/runs/${S.run.run_id}/occupancy/export.geojson`;
+  $('#occCsv').href = `/api/runs/${S.run.run_id}/occupancy/export.csv`;
+
   $('#occTable').innerHTML = table(
     ['Tiger', 'Stations', 'Area km²', 'Events', 'Camera-days', 'Note'],
     occ.map((o) => [
@@ -397,7 +924,7 @@ RENDER.alerts = async () => {
 
   $('#alertList').innerHTML = d.items.length ? d.items.map((a) => `
     <article class="alert ${esc(a.severity)}${a.suppressed ? ' suppressed' : ''}">
-      ${stripeRail(a.ind_id)}
+      ${flankThumb(a.ind_id)}
       <div style="flex:1">
         <div style="display:flex;gap:var(--s3);align-items:baseline;flex-wrap:wrap">
           <span class="who">${esc(a.ind_id)}</span>
@@ -476,25 +1003,60 @@ RENDER.ops = async () => {
 
 /* ── sync ──────────────────────────────────────────────────────────────── */
 RENDER.sync = async () => {
-  const d = await api('/api/sync/status');
+  const d = await api(`/api/sync/status?reserve_id=${S.reserve.reserve_id}`);
+  const canBundle = d.bundle_sync_enabled;
   $('#syncBody').innerHTML = `
     <div class="card pad">
-      <h2>Status</h2>
+      <h2>This node</h2>
       <dl class="kv" style="margin-top:var(--s3)">
-        <dt>Sharing</dt><dd>${d.enabled ? 'On' : 'Off'}</dd>
-        <dt>Reason</dt><dd>${esc(d.reason)}</dd>
-        <dt>Last bundle</dt><dd>${esc(d.last_bundle || 'never')}</dd>
+        <dt>Node ID</dt><dd>${esc(d.node_id)}</dd>
+        <dt>Bundle sync</dt><dd>${canBundle ? 'Ready' : 'Off'}</dd>
+        ${canBundle ? '' : `<dt>Reason</dt><dd>${esc(d.bundle_sync_reason)}</dd>`}
+        <dt>Rows waiting to go out</dt><dd class="num">${d.pending_rows ?? '—'}</dd>
       </dl>
       <div class="hr"></div>
-      <p>Results leave this machine as a single signed file. It can travel over
-         a network when there is one, or on a USB drive when there is not.
+      <p>A bundle leaves this machine as a single signed file -- the runs and
+         images this node has written, nothing more. It can travel over a
+         network when there is one, or on a USB drive when there is not.
          Applying the same file twice changes nothing.</p>
       <div class="toolbar" style="margin-top:var(--s4)">
-        <button disabled>Write bundle to drive</button>
-        <button disabled>Apply a bundle</button>
-        <span class="note">Not available on this node — no central tier configured.</span>
+        ${canBundle
+          ? `<a class="btn primary" href="/api/sync/bundle?reserve_id=${S.reserve.reserve_id}" download>Write bundle to drive</a>`
+          : '<button disabled>Write bundle to drive</button>'}
+        <input type="file" id="syncApplyFile" accept="application/json" hidden>
+        <button id="syncApplyBtn" ${canBundle ? '' : 'disabled'}>Apply a bundle</button>
+        <span class="note" id="syncApplyNote"></span>
       </div>
+    </div>
+    <div class="hr"></div>
+    <div class="card pad">
+      <h2>Central tier</h2>
+      <dl class="kv" style="margin-top:var(--s3)">
+        <dt>Status</dt><dd>Off</dd>
+        <dt>Reason</dt><dd>${esc(d.central_tier_reason)}</dd>
+      </dl>
     </div>`;
+
+  $('#syncApplyBtn')?.addEventListener('click', () => $('#syncApplyFile').click());
+  $('#syncApplyFile')?.addEventListener('change', async () => {
+    const file = $('#syncApplyFile').files[0];
+    if (!file) return;
+    const fd = new FormData();
+    fd.append('file', file);
+    fd.append('actor', 'director');
+    $('#syncApplyNote').textContent = 'Applying…';
+    try {
+      const r = await fetch('/api/sync/bundle/apply', { method: 'POST', body: fd });
+      const stats = await r.json();
+      if (!r.ok) throw new Error(stats.detail || 'apply failed');
+      $('#syncApplyNote').textContent =
+        `${nf(stats.inserted)} new, ${nf(stats.unchanged)} already had, `
+        + `${nf(stats.conflict_resolved)} resolved by conflict.`;
+      RENDER.sync();
+    } catch (e) {
+      $('#syncApplyNote').textContent = e.message;
+    }
+  });
 };
 
 /* ── boot ──────────────────────────────────────────────────────────────── */
@@ -512,6 +1074,7 @@ RENDER.sync = async () => {
   $('#reserveName').textContent = S.reserve.name;
   await RENDER.run();
   await RENDER.review();
+  guideInit();
   window.addEventListener('hashchange', route);
   route();
 })();

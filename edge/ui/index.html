@@ -22,24 +22,26 @@
       <span class="cycle" id="runCycle">—</span>
       <span class="count num" id="runCount">—</span>
     </div>
+    <button class="guide-reopen" id="guideReopen" title="Replay the guided walkthrough">Guide</button>
     <span class="offline" title="This node needs no network connection">Offline</span>
   </header>
 
   <div id="body">
     <nav class="nav" id="nav" aria-label="Sections">
       <div class="group">Cycle</div>
-      <a href="#run"     data-view="run">Run</a>
-      <a href="#triage"  data-view="triage">Triage</a>
+      <a href="#run"     data-view="run">Import Photos</a>
+      <a href="#triage"  data-view="triage">Blank Frames</a>
       <div class="group">Tigers</div>
-      <a href="#tigers"  data-view="tigers">Catalogue<span class="tally" id="tallyTigers"></span></a>
-      <a href="#review"  data-view="review">Review<span class="tally" id="tallyReview"></span></a>
+      <a href="#tigers"  data-view="tigers">Tigers<span class="tally" id="tallyTigers"></span></a>
+      <a href="#identify" data-view="identify">Identify a photo</a>
+      <a href="#review"  data-view="review">Needs Review<span class="tally" id="tallyReview"></span></a>
       <div class="group">Intelligence</div>
-      <a href="#map"     data-view="map">Map</a>
+      <a href="#map"     data-view="map">Territories</a>
       <a href="#alerts"  data-view="alerts">Alerts<span class="tally" id="tallyAlerts"></span></a>
       <div class="group">Record</div>
-      <a href="#audit"   data-view="audit">Audit</a>
-      <a href="#ops"     data-view="ops">Ops</a>
-      <a href="#sync"    data-view="sync">Sync</a>
+      <a href="#audit"   data-view="audit">History</a>
+      <a href="#ops"     data-view="ops">System Health</a>
+      <a href="#sync"    data-view="sync">Share Data</a>
     </nav>
 
     <main>
@@ -47,11 +49,26 @@
       <!-- ── RUN ─────────────────────────────────────────────────────── -->
       <section class="view" id="v-run" data-view="run">
         <div class="head">
-          <div class="eyebrow">Monitoring cycle</div>
-          <h1 id="runTitle">Run</h1>
+          <div class="head-row">
+            <div class="eyebrow">Monitoring cycle</div>
+            <span class="flowstep">Guided flow — step 1 of 5</span>
+          </div>
+          <h1 id="runTitle">Import Photos</h1>
           <p>What the software understood from the card, before it acts on any
              of it. Nothing is moved or changed until you confirm this screen.</p>
+          <a class="btn" id="camtrapdpExport" download style="margin-top:var(--s3);display:inline-block">
+            Export this cycle as Camtrap DP</a>
         </div>
+        <div class="card pad" id="newRunCard">
+          <div class="toolbar" style="margin:0">
+            <h2 style="margin:0">Start a new run</h2>
+            <div class="spacer"></div>
+            <button id="newRunToggle">Scan a folder</button>
+          </div>
+          <div id="newRunBody" hidden></div>
+        </div>
+        <div class="hr"></div>
+
         <div class="grid g4" id="runStats"></div>
         <div class="hr"></div>
         <div class="grid g2">
@@ -78,7 +95,10 @@
       <!-- ── TRIAGE ──────────────────────────────────────────────────── -->
       <section class="view" id="v-triage" data-view="triage">
         <div class="head">
-          <div class="eyebrow">Stage 2 · Triage</div>
+          <div class="head-row">
+            <div class="eyebrow">Stage 2 · Triage</div>
+            <span class="flowstep">Guided flow — step 2 of 5</span>
+          </div>
           <h1>Blank frames</h1>
           <p>Blanks are moved to quarantine, never deleted. Everything on this
              screen can be put back exactly as it was.</p>
@@ -99,7 +119,10 @@
       <!-- ── TIGERS ──────────────────────────────────────────────────── -->
       <section class="view" id="v-tigers" data-view="tigers">
         <div class="head">
-          <div class="eyebrow">Catalogue</div>
+          <div class="head-row">
+            <div class="eyebrow">Catalogue</div>
+            <span class="flowstep">Guided flow — step 4 of 5</span>
+          </div>
           <h1>Individuals</h1>
           <p>Each tiger is shown by its own flank pattern. Left and right flanks
              are different patterns and are catalogued separately — they are
@@ -109,10 +132,67 @@
         <div id="tigerDetail"></div>
       </section>
 
+      <!-- ── IDENTIFY ────────────────────────────────────────────────── -->
+      <section class="view" id="v-identify" data-view="identify">
+        <div class="head">
+          <div class="head-row">
+            <div class="eyebrow">Stage 3 · one photograph</div>
+            <span class="flowstep">Guided flow — step 3 of 5</span>
+          </div>
+          <h1>Identify a photo</h1>
+          <p>Detect, find the flank, match against the catalogue, and decide —
+             auto-accept, send for review, or enrol as a tiger not seen before.
+             The keypoints behind the match are a fixed geometric guess for now
+             (AUDIT_AND_REVISED_PLAN.md Task 4 replaces this with a trained
+             model), so treat any match here as provisional until that lands.</p>
+        </div>
+        <div class="card pad">
+          <div class="grid g2">
+            <label class="field">Photo
+              <input id="idFile" type="file" accept="image/*">
+            </label>
+            <label class="field">Recorded by
+              <input id="idActor" type="text" value="field">
+            </label>
+          </div>
+          <div class="toolbar" style="margin-top:var(--s4)">
+            <button class="primary" id="idSubmit">Identify</button>
+            <span class="note" id="idMsg"></span>
+          </div>
+        </div>
+        <div class="card pad tips">
+          <h2>What makes a good photo</h2>
+          <ul>
+            <li><b>Side profile beats any other angle.</b> The stripe pattern
+              that identifies a tiger runs along the flank — a photo taken
+              from the side gives the matcher the most pattern to work
+              with. Head-on and rear shots carry little to no flank and
+              usually cannot be matched.</li>
+            <li><b>Night infrared is accepted, not yet proven.</b> The
+              pipeline runs the same steps on an IR frame as on a daylight
+              one, but every accuracy figure quoted for this system so far
+              was measured on daylight photography. Treat night-IR matches
+              here as unvalidated rather than assume they perform the
+              same.</li>
+            <li><b>A crop with no visible flank will be refused, on
+              purpose.</b> If the animal is too close, too far, or
+              obscured such that no clean flank can be extracted, the
+              system declines to match rather than guess — that refusal is
+              deliberate (see the review queue for anything it is unsure
+              about, not this).</li>
+          </ul>
+        </div>
+        <div class="hr"></div>
+        <div id="idResult"></div>
+      </section>
+
       <!-- ── REVIEW ──────────────────────────────────────────────────── -->
       <section class="view" id="v-review" data-view="review">
         <div class="head">
-          <div class="eyebrow">Human decision</div>
+          <div class="head-row">
+            <div class="eyebrow">Human decision</div>
+            <span class="flowstep">Guided flow — step 5 of 5</span>
+          </div>
           <h1>Review queue</h1>
           <p>Matches the software was not confident enough to make on its own.
              Ordered so the ones that change the most images come first.</p>
@@ -145,7 +225,14 @@
           </div>
         </div>
         <div class="card pad" style="margin-top:var(--s5)">
-          <h2>Area occupied</h2>
+          <div class="toolbar" style="margin:0">
+            <h2 style="margin:0">Area occupied</h2>
+            <div class="spacer"></div>
+            <a class="btn" id="occGeojson" download>Download GeoJSON</a>
+            <a class="btn" id="occCsv" download>Download CSV</a>
+          </div>
+          <p class="note">The map is never the only way to get this out — GeoJSON
+             opens directly in QGIS, which forest departments already use.</p>
           <table id="occTable"></table>
         </div>
       </section>
@@ -218,6 +305,26 @@
     </main>
   </div>
 </div>
+
+<div id="guide" class="guide" hidden>
+  <div class="guide-card">
+    <div class="guide-head">
+      <span class="guide-step" id="guideStepLabel">Step 1 of 8</span>
+      <button class="guide-x" id="guideClose" aria-label="Close guide" title="Close">×</button>
+    </div>
+    <h3 id="guideTitle"></h3>
+    <p class="guide-cta" id="guideCta"></p>
+    <p id="guideBody"></p>
+    <div class="guide-foot">
+      <div class="guide-dots" id="guideDots"></div>
+      <div class="guide-actions">
+        <button id="guideBack">Back</button>
+        <button class="primary" id="guideNext">Next</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <script src="/ui/app.js"></script>
 </body>
 </html>

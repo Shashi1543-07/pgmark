@@ -10,6 +10,12 @@ data/crops/
 data/restricted/
 data/weights/
 data/config.json
+data/raw/
+data/uploads/
+manual_test_photos/
+testing data/
+*.zip
+*.pt
 *.log
 .DS_Store
 .vscode/settings.json

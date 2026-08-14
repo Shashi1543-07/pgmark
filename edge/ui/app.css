@@ -177,6 +177,16 @@ main { padding: var(--s6) var(--s7); overflow-y: auto; }
 }
 .head p { margin: var(--s2) 0 0; color: var(--ink-2); max-width: 62ch; }
 
+.head-row { display: flex; align-items: baseline; justify-content: space-between;
+            gap: var(--s3); flex-wrap: wrap; }
+.head-row .eyebrow { margin-bottom: 0; }
+.flowstep {
+  font-family: var(--f-display); font-size: 10px; letter-spacing: .1em;
+  text-transform: uppercase; color: var(--info);
+  border: 1px solid var(--info); background: var(--surface-2);
+  border-radius: 999px; padding: 3px var(--s3); white-space: nowrap;
+}
+
 .card {
   background: var(--surface); border: 1px solid var(--line-soft);
   border-radius: var(--r-card); box-shadow: var(--e1);
@@ -194,7 +204,7 @@ main { padding: var(--s6) var(--s7); overflow-y: auto; }
   text-transform: uppercase; color: var(--muted);
 }
 .stat .v {
-  font-family: var(--f-data); font-size: 27px; line-height: 1.15;
+  font-family: var(--f-data); font-size: 34px; line-height: 1.1;
   margin-top: var(--s1); font-variant-numeric: tabular-nums;
 }
 .stat .sub { font-size: 12px; color: var(--muted); margin-top: 2px; }
@@ -210,6 +220,32 @@ main { padding: var(--s6) var(--s7); overflow-y: auto; }
 }
 .stripe.wide { width: 34px; }
 .stripe.tall { min-height: 108px; }
+
+/* Wraps a real rectified crop (edge/pipeline/identify_upload.py writes
+   these once a photo has gone through Stage 3) over the procedural
+   .stripe fallback beneath it. .real-crop starts invisible and is only
+   shown once it has actually loaded (onload, in app.js's flankThumb()/
+   cropThumb()) -- a broken-image icon must never appear in its place,
+   and removing itself on error (onerror) leaves the procedural pattern
+   as the only thing on screen, exactly as if no photo had been
+   attempted. */
+.stripe-thumb {
+  position: relative; width: 12px; flex: none;
+  align-self: stretch; min-height: 44px; border-radius: 2px; overflow: hidden;
+}
+.stripe-thumb.wide { width: 34px; }
+.stripe-thumb.tall { min-height: 108px; }
+.stripe-thumb .real-crop {
+  position: absolute; inset: 0; width: 100%; height: 100%;
+  object-fit: cover; display: none;
+}
+.stripe-thumb .real-crop.loaded { display: block; }
+.stripe-thumb .stripe { position: absolute; inset: 0; min-height: 0; }
+
+/* ── identification tips ──────────────────────────────────────────────── */
+.tips ul { margin: var(--s3) 0 0; padding-left: 1.1em; }
+.tips li { margin-bottom: var(--s3); line-height: 1.5; }
+.tips li:last-child { margin-bottom: 0; }
 
 /* ── tables ───────────────────────────────────────────────────────────── */
 table { width: 100%; border-collapse: collapse; }
@@ -299,6 +335,7 @@ button, .btn {
   text-transform: uppercase; padding: var(--s2) var(--s4);
   border: 1px solid var(--line); background: var(--surface);
   color: var(--ink); border-radius: var(--r-ctl); cursor: pointer;
+  text-decoration: none; display: inline-block;
   transition: background var(--d-fast) var(--ease);
 }
 button:hover { background: var(--surface-2); }
@@ -308,6 +345,16 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 
 .toolbar { display: flex; gap: var(--s2); align-items: center; margin-bottom: var(--s4); }
 .toolbar .spacer { flex: 1; }
+
+.folderlist {
+  display: flex; flex-direction: column; gap: 2px;
+  max-height: 260px; overflow-y: auto;
+}
+.folderlist .folderitem {
+  text-align: left; border: 0; background: none; border-radius: var(--r-ctl);
+  padding: var(--s2) var(--s3); font: inherit;
+}
+.folderlist .folderitem:hover { background: var(--surface-2); }
 
 .seg { display: inline-flex; border: 1px solid var(--line); border-radius: var(--r-ctl); overflow: hidden; }
 .seg button { border: 0; border-radius: 0; }
@@ -363,6 +410,27 @@ kbd {
 .log { font-family: var(--f-data); font-size: 12px; }
 .log td { padding: var(--s2) var(--s3); }
 
+/* ── form fields (the new-run wizard) ────────────────────────────────── */
+.field {
+  display: flex; flex-direction: column; gap: var(--s1);
+  font-family: var(--f-display); font-size: 11px; letter-spacing: .1em;
+  text-transform: uppercase; color: var(--muted);
+}
+.field input, .field select, select.sel {
+  font: inherit; font-family: var(--f-body); text-transform: none;
+  letter-spacing: normal; font-size: 13px; color: var(--ink);
+  padding: var(--s2) var(--s3); border: 1px solid var(--line);
+  border-radius: var(--r-ctl); background: var(--surface);
+}
+.field input:focus, .field select:focus, select.sel:focus { border-color: var(--pelage); }
+.step {
+  display: flex; align-items: center; gap: var(--s2); font-size: 11px;
+  color: var(--muted); margin-bottom: var(--s3);
+}
+.step span { padding: 1px var(--s2); border: 1px solid var(--line-soft);
+             border-radius: var(--r-ctl); }
+.step span.on { border-color: var(--pelage); color: var(--pelage); }
+
 .banner {
   display: flex; gap: var(--s3); align-items: flex-start;
   padding: var(--s3) var(--s4); border-radius: var(--r-ctl);
@@ -389,6 +457,72 @@ kbd {
   .g2, .g3, .g4 { grid-template-columns: 1fr; }
   .topbar { padding: 0 var(--s4); }
   .brand .place { display: none; }
+}
+
+/* ── guided walkthrough ───────────────────────────────────────────────── */
+.guide-reopen {
+  font-family: var(--f-display); font-size: 11px; letter-spacing: .12em;
+  text-transform: uppercase; color: var(--info);
+  border: 1px solid var(--info); background: var(--surface);
+  border-radius: var(--r-ctl); padding: 3px var(--s3); cursor: pointer;
+}
+.guide-reopen:hover { background: var(--surface-2); }
+
+.guide {
+  position: fixed; right: var(--s5); bottom: var(--s5); z-index: 40;
+  width: 320px; max-width: calc(100vw - var(--s5) * 2);
+  animation: guide-in var(--d-base) var(--ease);
+}
+@keyframes guide-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.guide-card {
+  background: var(--surface); border: 1px solid var(--line-soft);
+  border-top: 3px solid var(--info);
+  border-radius: var(--r-panel); box-shadow: var(--e2);
+  padding: var(--s4);
+}
+.guide-head { display: flex; align-items: center; justify-content: space-between; }
+.guide-step {
+  font-family: var(--f-display); font-size: 10px; letter-spacing: .14em;
+  text-transform: uppercase; color: var(--info);
+}
+.guide-x {
+  border: 0; background: none; padding: 0 var(--s1); line-height: 1;
+  font-size: 18px; color: var(--muted); cursor: pointer;
+}
+.guide-x:hover { color: var(--ink); background: none; }
+.guide h3 { margin: var(--s2) 0 0; font-size: 15px; }
+.guide p { margin: var(--s2) 0 0; color: var(--ink-2); font-size: 13px; line-height: 1.5; }
+.guide-cta {
+  font-weight: 700; color: var(--ink); background: var(--surface-2);
+  border-radius: var(--r-ctl); padding: var(--s2) var(--s3);
+}
+.guide-foot {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-top: var(--s4); gap: var(--s3);
+}
+.guide-dots { display: flex; gap: 5px; }
+.guide-dots .dot {
+  width: 6px; height: 6px; border-radius: 50%; background: var(--line);
+}
+.guide-dots .dot.on { background: var(--info); }
+.guide-actions { display: flex; gap: var(--s2); }
+.guide-actions button { padding: var(--s1) var(--s3); font-size: 12px; }
+
+/* The one thing on screen a step is asking you to click. */
+.guide-target {
+  position: relative; box-shadow: 0 0 0 2px var(--info);
+  border-radius: var(--r-ctl); animation: guide-pulse 1.8s ease-in-out infinite;
+}
+@keyframes guide-pulse {
+  0%, 100% { box-shadow: 0 0 0 2px var(--info); }
+  50%      { box-shadow: 0 0 0 4px var(--info); }
+}
+
+@media (max-width: 720px) {
+  .guide { left: var(--s4); right: var(--s4); bottom: var(--s4); width: auto; }
 }
 
 @media (prefers-reduced-motion: reduce) {
