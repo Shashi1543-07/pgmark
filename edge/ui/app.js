@@ -817,6 +817,11 @@ function drawReview() {
       Every match the software was unsure about has been decided.</div>`;
     return;
   }
+  // Nothing to compare against (no candidates) is the common case while
+  // no side classifier exists -- "Not any of these" is the only sensible
+  // choice, so it starts pre-selected instead of making every single one
+  // of these require an extra click before Confirm does anything.
+  if (!it.candidates.length && reviewPick === 0) reviewPick = 'new';
   el.innerHTML = `
     <div class="review">
       <div class="card pad">
@@ -845,12 +850,13 @@ function drawReview() {
               <div class="k">${esc(c.ind_id)} <kbd>${i + 1}</kbd></div>
               <div class="e">match ${c.score.toFixed(3)} · ${esc(c.evidence)}</div>
             </div></button>`).join('')}
-        <button class="cand" data-pick="new" aria-pressed="false">
+        <button class="cand" data-pick="new" aria-pressed="${reviewPick === 'new'}">
           <div style="flex:1"><div class="k">Not any of these <kbd>N</kbd></div>
           <div class="e">record as a tiger not yet in the catalogue</div></div></button>
         <div class="toolbar" style="margin-top:var(--s4)">
           <button class="primary" id="confirmBtn">Confirm <kbd>↵</kbd></button>
           <button id="skipBtn">Skip <kbd>J</kbd></button>
+          <span class="note" id="reviewMsg"></span>
         </div>
         <p class="note">${reviewIdx + 1} of ${reviewItems.length} ·
            highest-impact first</p>
@@ -874,14 +880,25 @@ async function confirmReview() {
   const it = reviewItems[reviewIdx];
   if (!it) return;
   const isNew = reviewPick === 'new';
-  const ind = isNew ? it.candidates[0].ind_id : it.candidates[reviewPick].ind_id;
-  await api(`/api/review/${it.queue_id}/decide`,
+  // "Not any of these" creates a genuinely new individual server-side
+  // (edge/app.py's decide() route) -- it never reuses a candidate's
+  // ind_id, and there may be no candidates at all to reuse (the common
+  // case while no side classifier exists: every crop is compared against
+  // nothing and sent straight here).
+  if (!isNew && !it.candidates[reviewPick]) {
+    $('#reviewMsg').textContent = 'Pick a candidate, or "Not any of these", first.';
+    return;
+  }
+  const ind = isNew ? null : it.candidates[reviewPick].ind_id;
+  const r = await api(`/api/review/${it.queue_id}/decide`,
     { method: 'POST', body: { ind_id: ind, actor: 'director', new_individual: isNew } });
   reviewItems.splice(reviewIdx, 1);
   reviewPick = 0;
   if (reviewIdx >= reviewItems.length) reviewIdx = Math.max(0, reviewItems.length - 1);
   $('#tallyReview').textContent = reviewItems.length || '';
   drawReview();
+  if (isNew) await RENDER.tigers?.();
+  return r;
 }
 
 /* Keyboard first: nobody doing 200 reviews reaches for a mouse. */

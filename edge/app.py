@@ -385,15 +385,33 @@ def get_review(limit: int = 50) -> dict:
 
 @app.post("/api/review/{queue_id}/decide")
 def decide(queue_id: str, payload: dict = Body(...)) -> dict:
+    new_individual = bool(payload.get("new_individual"))
+    actor = payload.get("actor", "director")
     ind_id = payload.get("ind_id")
-    if not ind_id:
+
+    if new_individual:
+        # "Not any of these" means a genuinely new provisional individual --
+        # never the top-scoring candidate, which is what a bare ind_id from
+        # the request would be if this branch trusted it. Looked up through
+        # the crop this review item is actually about, since review_queue
+        # itself carries no reserve_id.
+        row = repo._one(repo.connect().execute(
+            "SELECT im.reserve_id FROM review_queue rq"
+            " JOIN flank_crops c ON c.crop_id = rq.crop_id"
+            " JOIN detections  d ON d.det_id = c.det_id"
+            " JOIN images      im ON im.image_id = d.image_id"
+            " WHERE rq.queue_id=?", (queue_id,)))
+        if not row:
+            raise HTTPException(404, "queue item not found")
+        ind_id = repo.create_provisional_individual(row["reserve_id"], actor)
+    elif not ind_id:
         raise HTTPException(400, "ind_id required")
+
     try:
-        result = repo.review_decide(queue_id, ind_id,
-                                    payload.get("actor", "director"),
-                                    bool(payload.get("new_individual")))
+        result = repo.review_decide(queue_id, ind_id, actor, new_individual)
     except KeyError:
         raise HTTPException(404, "queue item not found")
+    result["ind_id"] = ind_id
 
     # A correction changes which tiger was where, so both individuals'
     # home ranges change and an alert may now fire or stop firing. v0.1.1
@@ -405,8 +423,7 @@ def decide(queue_id: str, payload: dict = Body(...)) -> dict:
     q = repo._one(repo.connect().execute(
         "SELECT crop_id FROM review_queue WHERE queue_id=?", (queue_id,)))
     if q:
-        result["recomputed"] = postprocess.after_review_decision(
-            q["crop_id"], payload.get("actor", "director"))
+        result["recomputed"] = postprocess.after_review_decision(q["crop_id"], actor)
     return result
 
 
