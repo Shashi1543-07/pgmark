@@ -1083,8 +1083,8 @@ def _run(c: TestClient) -> int:
     # ── UI is served, and reaches for nothing off-machine ───────────────
     page = c.get("/").text
     check("page served", "PUG" in page)
-    js = (Path(__file__).resolve().parents[2] / "edge/ui/app.js").read_text()
-    css = (Path(__file__).resolve().parents[2] / "edge/ui/app.css").read_text()
+    js = (Path(__file__).resolve().parents[2] / "edge/ui/app.js").read_text(encoding="utf-8")
+    css = (Path(__file__).resolve().parents[2] / "edge/ui/app.css").read_text(encoding="utf-8")
     for name, text in (("page", page), ("script", js), ("stylesheet", css)):
         offenders = [t for t in ("http://", "https://", "cdn.", "googleapis",
                                  "unpkg", "jsdelivr", "tile.openstreetmap")

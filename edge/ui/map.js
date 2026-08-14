@@ -137,11 +137,18 @@ window.PugMap = (() => {
    *   data.alerts     [{ind_id,type,severity}]
    *   data.focus      ind_id or null
    *   data.generalised  true when the role only sees rounded coordinates
+   *   data.showMovement  draw every tiger's movement arrow, not just the
+   *                       focused one's -- off by default. With over a
+   *                       handful of individuals, one arrow per tiger
+   *                       drawn simultaneously is illegible crossing
+   *                       lines ("red spaghetti"), not information; the
+   *                       focused tiger's own movement is the one arrow
+   *                       that is always worth seeing without asking.
    * @param {Function} onFocus  called with an ind_id (or null)
    */
   function render(host, data, onFocus) {
     const { stations = [], occupancy = [], prior = [], alerts = [],
-            focus = null, generalised = false } = data;
+            focus = null, generalised = false, showMovement = false } = data;
 
     const usable = stations.filter(s => isFinite(s.lat) && isFinite(s.lon));
     if (!usable.length) {
@@ -187,7 +194,12 @@ window.PugMap = (() => {
        distance, and v0.1.1 drew nothing of it. An arrow from last cycle's
        centroid to this one is the entire alert, visible at a glance. */
     const priorById = Object.fromEntries(prior.map(p => [p.ind_id, p]));
-    const shifts = focused.map(o => {
+    // Every individual's arrow at once, all crossing, is the single
+    // biggest reason this map used to be unreadable. Draw movement only
+    // for whichever tiger is actually focused, unless the officer has
+    // explicitly asked to see all of it (the "Movement" layer toggle).
+    const movementSet = focus ? focused : (showMovement ? focused : []);
+    const shifts = movementSet.map(o => {
       const was = priorById[o.ind_id];
       if (!was || !isFinite(was.centroid_lat) || !isFinite(o.centroid_lat)) return '';
       const [x1, y1] = P(was.centroid_lat, was.centroid_lon);
@@ -253,23 +265,28 @@ ${STATE_COPY[st]}${s.image_count ? ` · ${s.image_count} frames` : ''}</title></
 
   function legend(occupancy, alertsByInd, focus) {
     const withHull = occupancy.filter(o => o.hull_wkt);
-    const chips = withHull.slice(0, 24).map(o => {
-      const flagged = alertsByInd[o.ind_id]?.some(a => a.severity === 'act');
-      return `<button class="chip${focus === o.ind_id ? ' on' : ''}${flagged ? ' act' : ''}"
-        data-ind="${esc(o.ind_id)}">${esc(o.ind_id)}
-        <span>${o.area_km2} km²</span></button>`;
-    }).join('');
+    // Flagged tigers first, and only those -- with anywhere from a dozen
+    // to hundreds of individuals, an alphabetical slice of the first 24
+    // answers nothing. "Which tiger needs a look" is a short list almost
+    // always; the tiger selector alongside this map is how the rest get
+    // found by name.
+    const flagged = withHull.filter(o => alertsByInd[o.ind_id]?.some(a => a.severity !== 'info'));
+    const chips = flagged.slice(0, 16).map(o => `
+      <button class="chip act${focus === o.ind_id ? ' on' : ''}" data-ind="${esc(o.ind_id)}">
+        ⚠ ${esc(o.ind_id)}<span>${o.area_km2} km²</span></button>`).join('');
+    const overflow = flagged.length > 16 ? flagged.length - 16 : 0;
 
     return `<div class="legend">
       <div class="keys">
-        <span><i class="k stn-active"></i>recording</span>
-        <span><i class="k stn-idle"></i>active, nothing seen</span>
-        <span><i class="k stn-offline"></i>stopped this cycle</span>
-        <span><i class="k stn-new"></i>installed this cycle</span>
-        <span><i class="k k-hull"></i>home range</span>
-        <span><i class="k k-shift"></i>movement since last cycle</span>
+        <span><i class="k stn-active"></i>🟢 camera working</span>
+        <span><i class="k stn-idle"></i>⚪ working, no tiger seen</span>
+        <span><i class="k stn-offline"></i>🔴 camera stopped</span>
+        <span><i class="k stn-new"></i>🟡 new camera</span>
+        <span><i class="k k-hull"></i>▒ tiger territory</span>
+        <span><i class="k k-shift"></i>➜ movement</span>
       </div>
-      ${chips ? `<div class="chips">${chips}
+      ${chips ? `<div class="chips"><b class="chips-label">Needs attention:</b>${chips}
+        ${overflow ? `<span class="note">+${overflow} more</span>` : ''}
         ${focus ? '<button class="chip clear" data-ind="">Show all</button>' : ''}</div>` : ''}
       ${withHull.length === 0 ? `<p class="note">No home ranges to draw: no individual in
         this run was captured at enough distinct stations to form a polygon. The table

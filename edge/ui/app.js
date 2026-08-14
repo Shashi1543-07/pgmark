@@ -916,21 +916,70 @@ document.addEventListener('keydown', (e) => {
 });
 
 /* ── map ───────────────────────────────────────────────────────────────── */
+const SEVERITY_RANK = { act: 0, watch: 1, info: 2 };
+const SEVERITY_ICON = { act: '🔴', watch: '🟠', info: '🟡' };
+
+/* Five questions this screen has to answer at a glance: where are the
+   tigers, which one moved, what changed this cycle, is there anything to
+   worry about, which camera/area caused it. Everything below is built
+   toward those five, not toward showing the maximum amount of data. */
 RENDER.map = async () => {
   if (!S.run) await RENDER.run();
-  /* One request instead of two, and it carries what the old map faked:
-     which cameras stopped mid-cycle, which were installed this cycle, and
-     where each tiger's centroid was last cycle. All three used to be
-     either hardcoded (`const DEAD = new Set(['PN-C-008','PN-C-009'])`) or
-     simply absent. */
-  const d = await api(`/api/runs/${S.run.run_id}/map`);
-  window.PugMap.render($('#mapSvg'), { ...d, focus: S.mapFocus || null },
+  const [d, alertData] = await Promise.all([
+    api(`/api/runs/${S.run.run_id}/map`),
+    api(`/api/runs/${S.run.run_id}/alerts?suppressed=false`),
+  ]);
+  S.mapData = d;
+
+  const occ = d.occupancy;
+  const stationState = (s) => window.PugMap.stationState(s);
+  const working = d.stations.filter((s) => stationState(s) !== 'offline').length;
+
+  $('#mapSummary').innerHTML = [
+    ['🐅 Tigers tracked', nf(occ.filter((o) => o.event_count > 0).length)],
+    ['⚠ Alerts', nf(alertData.counts.act + alertData.counts.watch + alertData.counts.info)],
+    ['📷 Cameras working', `${nf(working)} / ${nf(d.stations.length)}`],
+    ['🗺 Territories mapped', nf(occ.filter((o) => o.hull_wkt).length)],
+  ].map(([k, v]) => `<div class="card stat"><div class="k">${esc(k)}</div>
+    <div class="v">${esc(v)}</div></div>`).join('');
+
+  // The single most important thing on this screen, if there is one --
+  // highest severity first, and never invented: this is the alert
+  // engine's own ranking and its own wording (what_changed), not a
+  // guess reconstructed in JS.
+  const top = [...alertData.items].sort(
+    (a, b) => SEVERITY_RANK[a.severity] - SEVERITY_RANK[b.severity])[0];
+  $('#mapHeadline').innerHTML = top ? `
+    <div class="card pad ${esc(top.severity)}">
+      <div>
+        <h2>${SEVERITY_ICON[top.severity]} Most important change — ${esc(KIND[top.type] || top.type)}</h2>
+        <p><b>${esc(top.ind_id)}</b> — ${esc(top.what_changed)}</p>
+      </div>
+      <div class="spacer"></div>
+      <button type="button" id="mapHeadlineShow">Show on map</button>
+    </div>` : '';
+  $('#mapHeadlineShow')?.addEventListener('click', () => {
+    S.mapFocus = top.ind_id;
+    RENDER.map();
+    $('.mapwrap')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  });
+
+  // Tiger selector: every individual with a mapped location this cycle,
+  // not just the ones with alerts (the legend's own chips already cover
+  // that short list) -- this is how the rest get found by name.
+  const select = $('#mapTigerSelect');
+  const known = occ.filter((o) => o.event_count > 0).map((o) => o.ind_id).sort();
+  select.innerHTML = '<option value="">All tigers</option>'
+    + known.map((id) => `<option value="${esc(id)}">${esc(id)}</option>`).join('');
+  select.value = S.mapFocus || '';
+
+  window.PugMap.render($('#mapSvg'), { ...d, focus: S.mapFocus || null,
+    showMovement: !!S.mapShowMovement },
     (ind) => { S.mapFocus = ind; RENDER.map(); });
 
   $('#occGeojson').href = `/api/runs/${S.run.run_id}/occupancy/export.geojson`;
   $('#occCsv').href = `/api/runs/${S.run.run_id}/occupancy/export.csv`;
 
-  const occ = d.occupancy;
   if (!occ.length) {
     /* Two empty states used to look identical and mean opposite things:
        "nothing moved this cycle" and "this stage has never run against
@@ -959,6 +1008,21 @@ RENDER.map = async () => {
       RENDER.map();
     }));
 };
+
+$('#mapTigerSelect').addEventListener('change', (e) => {
+  S.mapFocus = e.target.value || null;
+  RENDER.map();
+});
+$('#mapShowMovement').addEventListener('change', (e) => {
+  S.mapShowMovement = e.target.checked;
+  RENDER.map();
+});
+$('#mapResetBtn').addEventListener('click', () => {
+  S.mapFocus = null;
+  S.mapShowMovement = false;
+  $('#mapShowMovement').checked = false;
+  RENDER.map();
+});
 
 /* ── background jobs ──────────────────────────────────────────────────────
    v0.1.1 ran a 50,000-frame import inside the HTTP request that asked for
@@ -1046,9 +1110,12 @@ function drawJob(j) {
 })();
 
 /* ── alerts ────────────────────────────────────────────────────────────── */
+// Plain language first, the internal code kept alongside it rather than
+// replacing it -- a field officer reads the left side, CLAUDE.md's own
+// audit trail (and anyone debugging the engine) still has the right side.
 const KIND = {
-  centroid_shift: 'Range has moved', new_station: 'New camera used',
-  buffer_ward: 'Moving toward people', absence: 'Not seen this cycle',
+  buffer_ward: '🔴 Tiger near village', centroid_shift: '🟠 Moved farther than usual',
+  absence: '🟡 Not seen this cycle', new_station: '🔵 Seen at a new camera',
 };
 
 RENDER.alerts = async () => {
@@ -1065,6 +1132,7 @@ RENDER.alerts = async () => {
         <div style="display:flex;gap:var(--s3);align-items:baseline;flex-wrap:wrap">
           <span class="who">${esc(a.ind_id)}</span>
           <span class="kind">${esc(KIND[a.type] || a.type)}</span>
+          <span class="note" style="font-size:11px">(${esc(a.type)})</span>
           <div style="flex:1"></div>
           ${meter(a.effort_coverage)}
           <span class="num" title="Never higher than the confidence of the
@@ -1074,11 +1142,19 @@ RENDER.alerts = async () => {
         ${a.suppressed ? `<div class="why"><b>Not raised</b><br>${esc(a.suppress_reason)}</div>` : ''}
         <div class="evidence">${Object.entries(a.evidence).map(([k, v]) =>
           `<span>${esc(k.replace(/_/g, ' '))}: ${esc(Array.isArray(v) ? v.join(', ') : v)}</span>`).join('')}</div>
+        <div class="toolbar" style="margin:var(--s2) 0 0">
+          <button type="button" class="alertShowMap" data-ind="${esc(a.ind_id)}">Show on map</button>
+        </div>
       </div>
     </article>`).join('')
     : `<div class="card empty"><strong>${S.sup ? 'Nothing was held back' : 'No alerts'}</strong>
        ${S.sup ? 'Every deviation found this cycle was raised.'
                : 'Nothing changed enough this cycle to need your attention.'}</div>`;
+
+  $$('#alertList .alertShowMap').forEach((b) => b.addEventListener('click', () => {
+    S.mapFocus = b.dataset.ind;
+    location.hash = '#map';
+  }));
 };
 
 $('#tabRaised').addEventListener('click', () => setAlertTab(false));

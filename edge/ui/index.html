@@ -205,25 +205,31 @@
       <section class="view" id="v-map" data-view="map">
         <div class="head">
           <div class="eyebrow">Occupancy</div>
-          <h1>Home ranges</h1>
-          <p>Drawn from this cycle's captures. Overlap between ranges is a
-             management signal in itself, so overlapping ranges are shaded
-             rather than hidden.</p>
+          <h1>Territories</h1>
+          <p>Where the tigers are, and what changed this cycle. Click a tiger,
+             or an alert, to focus the map on it — nothing else about the run
+             changes.</p>
         </div>
+        <div class="grid g4" id="mapSummary"></div>
+        <div id="mapHeadline"></div>
         <div class="banner">
           <b>Offline</b>
           <span>This map is drawn from the reserve boundary and station
             coordinates held on this machine. It does not fetch map tiles,
             so it works at a range office with no connection.</span>
         </div>
+        <div class="toolbar" id="mapControls">
+          <label class="field" style="flex:0 0 auto">Show tiger
+            <select id="mapTigerSelect"><option value="">All tigers</option></select>
+          </label>
+          <label class="mapcheck">
+            <input type="checkbox" id="mapShowMovement">
+            Show movement for all tigers</label>
+          <div class="spacer"></div>
+          <button type="button" id="mapResetBtn">Reset view</button>
+        </div>
         <div class="mapwrap">
           <div id="mapSvg"></div>
-          <div class="maplegend">
-            <span><i style="background:#39412f"></i>Camera station</span>
-            <span><i style="background:#b8530a"></i>Installed this cycle</span>
-            <span><i style="background:#96181c"></i>Failed during this cycle</span>
-            <span><i style="background:#b8530a;opacity:.35"></i>Home range</span>
-          </div>
         </div>
         <div class="card pad" style="margin-top:var(--s5)">
           <div class="toolbar" style="margin:0">
