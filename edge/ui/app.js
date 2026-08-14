@@ -270,12 +270,29 @@ RENDER.run = async () => {
     Object.entries(S.run.flags).map(([k, n]) => [
       `<td>${esc(FLAG[k] || k)}</td>`, `<td class="n">${nf(n)}</td>`]));
 
-  $('#runsTable').innerHTML = table(['Cycle', 'Started', 'Frames', 'Stage'],
+  // A run that stopped at 'confirmed'/'triaged'/'identified' has real work
+  // waiting -- nothing else in this UI could get back to it before this,
+  // short of knowing its run_id and calling the API by hand.
+  const RESUMABLE = new Set(['confirmed', 'triaged', 'identified']);
+  $('#runsTable').innerHTML = table(['Cycle', 'Started', 'Frames', 'Stage', ''],
     runs.map((r) => [
       `<td>${esc(r.cycle_label || r.run_id)}</td>`,
       `<td class="n">${esc((r.started_at || '').slice(0, 10))}</td>`,
       `<td class="n">${nf(r.image_count)}</td>`,
-      `<td>${esc(r.stage)}</td>`]));
+      `<td>${esc(r.stage)}</td>`,
+      `<td>${RESUMABLE.has(r.stage) && r.image_count
+        ? `<button type="button" class="resumeRunBtn" data-run="${esc(r.run_id)}">Continue</button>`
+        : ''}</td>`]));
+  $$('#runsTable .resumeRunBtn').forEach((btn) => {
+    btn.onclick = async () => {
+      btn.disabled = true;
+      btn.textContent = 'Starting…';
+      const r = await runPipeline(btn.dataset.run);
+      S.newRun = { step: 'running', runId: btn.dataset.run, jobId: r.job_id };
+      $('#newRunBody').hidden = false;
+      nrRender();
+    };
+  });
 
   const a = S.run.alerts || {};
   const hot = (a.act || 0) + (a.watch || 0);
@@ -352,6 +369,14 @@ async function nrRender() {
             <div class="k">${esc(k)}</div><div class="v">${esc(v)}</div>
             <div class="sub">${esc(s)}</div></div>`).join('')}
       </div>
+      ${p.cross_run_duplicates ? `
+        <div class="banner" style="margin-top:var(--s4)">
+          <b>${nf(p.cross_run_duplicates)} file(s) already ingested by an earlier run</b>
+          <span>${esc(p.cross_run_note)}${p.images_ingested === 0
+            ? ' There is nothing new for this scan to do — check Previous cycles below for '
+              + 'the run that already has this content, rather than confirming this one.'
+            : ''}</span>
+        </div>` : ''}
       ${Object.keys(p.mixed_camera_folders).length ? `
         <div class="banner" style="margin-top:var(--s4)">
           <b>Mixed camera bodies</b>
@@ -401,6 +426,16 @@ async function nrRender() {
           animal, person, vehicle, or blank.</span>
       </div>`;
     $('#nrTriageBtn').onclick = nrTriage;
+    return;
+  }
+
+  if (nr.step === 'running') {
+    el.innerHTML = `
+      ${nrStepper('triaged')}
+      <p class="note">Running as one background job now -- triage, identification,
+         occupancy and alerts, without further clicks. Progress is shown below. This
+         screen will not update itself; switch tabs and come back anytime, or wait
+         here.</p>`;
     return;
   }
 
@@ -559,7 +594,12 @@ async function nrTriage() {
   // 4,000 scaled to a 50,000-frame import. Triage is now the first step of
   // one background job that carries on through identification, occupancy
   // and alerts without further clicks.
-  if (!nr.manualMode) { await runPipeline(nr.runId); return; }
+  if (!nr.manualMode) {
+    const r = await runPipeline(nr.runId);
+    S.newRun = { ...nr, step: 'running', jobId: r.job_id };
+    nrRender();
+    return;
+  }
   const t = await api(`/api/runs/${nr.runId}/triage/run`, { method: 'POST', body: {} });
   const subjectImages = t.subject
     ? await api(`/api/runs/${nr.runId}/images?status=subject`) : [];
@@ -926,6 +966,15 @@ async function pollJob(jobId) {
   if (['queued', 'running', 'paused'].includes(j.state)) {
     jobTimer = setTimeout(() => pollJob(jobId), 1500);
   } else {
+    // The wizard has nothing of its own to say once its job is the thing
+    // actually running -- close it so the tab's own stats/previous-cycles
+    // table (which RENDER[S.view] is about to refresh) is what's visible,
+    // instead of a stale "Confirm" screen with a permanently disabled
+    // button and no sign anything happened.
+    if (S.newRun?.jobId === jobId) {
+      $('#newRunBody').hidden = true;
+      S.newRun = { step: 'form' };
+    }
     RENDER[S.view]?.();
   }
 }
