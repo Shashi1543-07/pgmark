@@ -66,7 +66,13 @@ def _detector_mod():
     return detector
 
 
-def run_triage(run_id: str) -> dict:
+def run_triage(run_id: str, job_id: str | None = None) -> dict:
+    """job_id is accepted for stage3.run_full_pipeline()'s benefit -- it
+    checkpoints the *job* immediately before and after calling this
+    function, not from inside it. A single triage pass isn't currently
+    broken into resumable batches the way Stage 3's bulk identify loop
+    is, so there's nothing internal for job_id to drive yet; it's here so
+    the call from run_full_pipeline() doesn't raise TypeError."""
     run = repo.run(run_id)
     if not run:
         raise ValueError(f"unknown run {run_id!r}")

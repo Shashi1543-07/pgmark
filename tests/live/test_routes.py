@@ -77,8 +77,8 @@ def _run(c: TestClient) -> int:
     h = c.get("/api/health").json()
     check("health responds", h["ok"])
     check("schema migrated", h["schema_version"] >= 1, f"v{h['schema_version']}")
-    check("schema reaches migration 5 (jobs/species/auth applied)",
-          h["schema_version"] == 5, f"v{h['schema_version']}")
+    check("schema reaches migration 6 (images.status allows 'vehicle')",
+          h["schema_version"] == 6, f"v{h['schema_version']}")
 
     reserves = c.get("/api/reserves").json()
     check("reserve seeded", len(reserves) == 1)
