@@ -13,6 +13,8 @@ import io
 import json
 import os
 import string
+import subprocess
+import sys
 import zipfile
 from pathlib import Path
 
@@ -128,6 +130,53 @@ def get_config() -> dict:
 @app.get("/api/reserves")
 def get_reserves() -> list[dict]:
     return repo.reserves()
+
+
+# ── dev / demo data ─────────────────────────────────────────────────────
+# For rehearsing a demo or judging the UI at volume, not for a real
+# deployment: this node's own security model already assumes whoever can
+# reach its UI has full control (CLAUDE.md, top of this file -- binding
+# off 127.0.0.1 is an explicit, logged decision), so a reseed button adds
+# no new class of risk on this machine. It always fully replaces the
+# database, never merges.
+_SEED_MODULES = {
+    "bulk": ["tools.seed_bulk"],
+    "demo": ["tools.seed_demo", "--reset"],
+    "blank": ["tools.reset_blank"],
+}
+
+
+@app.post("/api/dev/seed")
+def dev_seed(payload: dict = Body(...)) -> dict:
+    """Runs one of tools/seed_bulk.py, tools/seed_demo.py or
+    tools/reset_blank.py as a fresh subprocess -- not in-process. repo.py
+    caches one SQLite connection per thread, and FastAPI dispatches
+    requests across a threadpool, so any thread that has served an
+    earlier request may still hold the database file open when this one
+    tries to delete and recreate it. Confirmed empirically, not assumed:
+    without repo.close_all() here, Windows raises PermissionError on the
+    file, every time, because even one other thread's stale handle is
+    enough to block the delete -- repo.close() (this thread only) is not
+    sufficient. close_all() closes every connection this process has
+    opened on any thread and bumps a generation counter so each of those
+    threads transparently reopens against the fresh file on its next
+    query, instead of failing on a handle to a file that no longer
+    exists."""
+    which = payload.get("which")
+    args = _SEED_MODULES.get(which)
+    if not args:
+        raise HTTPException(400, "which must be 'bulk', 'demo', or 'blank'")
+    repo.close_all()
+    try:
+        result = subprocess.run(
+            [sys.executable, "-m", *args], cwd=str(Path(__file__).resolve().parent.parent),
+            capture_output=True, text=True, timeout=300)
+    finally:
+        repo.close_all()
+    if result.returncode != 0:
+        raise HTTPException(500, f"seed failed:\n{result.stderr[-3000:]}")
+    repo.audit("dev.seed", actor="director", after={"which": which})
+    return {"ok": True, "which": which, "output": result.stdout.strip()}
 
 
 # ── runs ────────────────────────────────────────────────────────────────

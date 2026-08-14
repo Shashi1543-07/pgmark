@@ -18,6 +18,9 @@ from edge import config
 
 MIGRATIONS_DIR = Path(__file__).resolve().parent / "migrations"
 _local = threading.local()
+_all_conns_lock = threading.Lock()
+_all_conns: set[sqlite3.Connection] = set()
+_generation = 0
 
 
 def now() -> str:
@@ -32,26 +35,81 @@ def new_id(prefix: str = "") -> str:
 
 def connect(path: Path | None = None) -> sqlite3.Connection:
     """One connection per thread. SQLite objects are not thread-safe and
-    FastAPI runs handlers in a thread pool."""
+    FastAPI runs handlers in a thread pool, so every *query* against a
+    given connection still only ever happens on the thread that created
+    it -- check_same_thread=False below does not change that. It exists
+    for one narrow reason: close_all() closes every connection this
+    process has opened, from whichever thread calls it, and Python's
+    sqlite3 module enforces check_same_thread on close() same as any
+    other call. With the default True, close_all()'s cross-thread
+    conn.close() calls were silently raising ProgrammingError -- caught
+    by its own `except sqlite3.Error`, since ProgrammingError is one --
+    so the connection was never actually closed, only untracked, and the
+    file stayed locked. Confirmed empirically: Windows then refuses to
+    delete it (PermissionError) even after close_all() reports success.
+    Safe to disable here specifically because sqlite3.threadsafety == 3
+    on this build (serialized mode -- the C library itself tolerates
+    cross-thread use with care) and because the only cross-thread
+    operation that ever happens is close_all()'s close() on an otherwise
+    idle connection, never a concurrent query.
+
+    The generation check exists for the other half of the same fix: a
+    thread's cached connection can now be closed by a DIFFERENT thread,
+    so without this check that thread would keep handing out an
+    already-closed connection until it happened to run a query and
+    raise, instead of transparently reopening."""
     path = path or config.DB_PATH
-    key = f"conn:{path}"
+    key, gen_key = f"conn:{path}", f"gen:{path}"
     conn = getattr(_local, key, None)
+    if conn is not None and getattr(_local, gen_key, None) != _generation:
+        conn = None
     if conn is None:
         path.parent.mkdir(parents=True, exist_ok=True)
-        conn = sqlite3.connect(path, timeout=30.0)
+        conn = sqlite3.connect(path, timeout=30.0, check_same_thread=False)
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA journal_mode=WAL")
         conn.execute("PRAGMA foreign_keys=ON")
         conn.execute("PRAGMA synchronous=NORMAL")
         setattr(_local, key, conn)
+        setattr(_local, gen_key, _generation)
+        with _all_conns_lock:
+            _all_conns.add(conn)
     return conn
 
 
 def close() -> None:
+    """Closes this thread's own cached connection(s) only. See
+    close_all() for closing every connection this process has opened,
+    on any thread."""
     for key in list(vars(_local)):
         if key.startswith("conn:"):
-            getattr(_local, key).close()
+            conn = getattr(_local, key)
             delattr(_local, key)
+            with _all_conns_lock:
+                _all_conns.discard(conn)
+            conn.close()
+
+
+def close_all() -> None:
+    """Closes every connection this process has ever opened, on any
+    thread, and bumps a generation counter so other threads transparently
+    reopen a fresh connection on their next call to connect() instead of
+    reusing a stale handle. Needed before replacing the database file out
+    from under a running server: FastAPI dispatches handlers across a
+    threadpool, so close()'s own thread-local reach only ever closes the
+    calling thread's connection, and on Windows a file still held open by
+    even one other thread cannot be deleted at all (confirmed: unlink()
+    raises PermissionError, not a silent no-op). sqlite3.Connection.close()
+    is safe to call from a thread that did not create it, provided
+    nothing else is mid-query against it -- true here, since this is only
+    ever called immediately before the whole database is replaced."""
+    global _generation
+    with _all_conns_lock:
+        conns = list(_all_conns)
+        _all_conns.clear()
+        _generation += 1
+    for conn in conns:
+        conn.close()
 
 
 # ── migrations ──────────────────────────────────────────────────────────

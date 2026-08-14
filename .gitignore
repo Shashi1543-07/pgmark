@@ -14,6 +14,7 @@ data/raw/
 data/uploads/
 data/backups/
 manual_test_photos/
+manual_test_100/
 testing data/
 *.zip
 *.pt

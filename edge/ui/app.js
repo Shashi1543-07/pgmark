@@ -1137,6 +1137,31 @@ RENDER.ops = async () => {
   ].map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join('');
 };
 
+/* Demo data: always a full replace, run as a fresh subprocess server-side
+   (edge/app.py's /api/dev/seed) rather than in-process, so a reload here
+   is the reliable way back to a consistent UI -- every screen's own
+   in-memory state (S.run, S.tigers, the guide, the wizard) was built
+   against a database that no longer exists otherwise. */
+async function devSeed(which, label) {
+  if (!confirm(`This replaces every reserve, run, tiger and alert currently on this `
+    + `machine with ${label}. There is no undo but loading something else. Continue?`)) return;
+  $$('#v-ops .toolbar button').forEach((b) => { b.disabled = true; });
+  $('#seedMsg').textContent = 'Working…';
+  try {
+    await api('/api/dev/seed', { method: 'POST', body: { which } });
+    location.reload();
+  } catch (e) {
+    $('#seedMsg').textContent = `Failed: ${e.detail || e.message}`;
+    $$('#v-ops .toolbar button').forEach((b) => { b.disabled = false; });
+  }
+}
+$('#seedBulkBtn').addEventListener('click',
+  () => devSeed('bulk', 'a large synthetic reserve (~150 tigers)'));
+$('#seedDemoBtn').addEventListener('click',
+  () => devSeed('demo', 'the small spec-demo reserve (13 tigers)'));
+$('#seedBlankBtn').addEventListener('click',
+  () => devSeed('blank', 'an empty reserve'));
+
 /* ── sync ──────────────────────────────────────────────────────────────── */
 RENDER.sync = async () => {
   const d = await api(`/api/sync/status?reserve_id=${S.reserve.reserve_id}`);

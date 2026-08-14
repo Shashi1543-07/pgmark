@@ -1092,6 +1092,32 @@ def _run(c: TestClient) -> int:
         check(f"{name} fetches nothing off this machine", not offenders,
               str(offenders))
 
+    # ── /api/dev/seed: last, since it replaces the whole database ───────
+    # Runs each seeder as the real subprocess it is in production, proving
+    # the fix for a real bug found by hand: repo.py caches one SQLite
+    # connection per thread, and this suite's own prior requests leave
+    # several such connections open, so without repo.close_all() (not
+    # close(), which only reaches the calling thread) Windows refuses to
+    # even delete the old database file -- confirmed by reproducing the
+    # PermissionError before the fix existed.
+    bad = c.post("/api/dev/seed", json={"which": "not-a-real-option"})
+    check("an unknown seed option is refused, not silently ignored",
+          bad.status_code == 400)
+
+    blanked = c.post("/api/dev/seed", json={"which": "blank"}).json()
+    check("the blank option runs and reports success", blanked.get("ok") is True,
+          str(blanked))
+    after_blank = c.get("/api/individuals?reserve_id=PENCH-MH").json()
+    check("the blank option genuinely empties the catalogue, not just returns ok",
+          after_blank == [], f"{len(after_blank)} individuals left")
+
+    reseeded = c.post("/api/dev/seed", json={"which": "demo"}).json()
+    check("the demo option runs and reports success", reseeded.get("ok") is True,
+          str(reseeded))
+    after_demo = c.get("/api/individuals?reserve_id=PENCH-MH").json()
+    check("the demo option genuinely restores the 13-tiger spec fixture, "
+          "not just returns ok", len(after_demo) == 13, f"{len(after_demo)} individuals")
+
     print("\n".join(f"  ok   {p}" for p in PASS))
     if FAIL:
         print("\n".join(f"  FAIL {f}" for f in FAIL))

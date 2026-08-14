@@ -290,6 +290,22 @@
           <div class="card pad"><h2>Versions</h2><dl class="kv" id="verKv"></dl></div>
           <div class="card pad"><h2>Thresholds in force</h2><dl class="kv" id="cfgKv"></dl></div>
         </div>
+        <div class="hr"></div>
+        <div class="banner">
+          <b>Demo data — for rehearsal and UI review only</b>
+          <span>Each option below <b>replaces every reserve, run, tiger and alert
+            currently on this machine</b> — there is no undo but loading a different
+            option. Never use this on a machine holding real field data.</span>
+        </div>
+        <div class="card pad">
+          <h2>Load or clear</h2>
+          <div class="toolbar" style="margin-top:var(--s3)">
+            <button type="button" id="seedBulkBtn">Load a big demo (150 tigers)</button>
+            <button type="button" id="seedDemoBtn">Load the small spec demo (13 tigers)</button>
+            <button type="button" class="danger" id="seedBlankBtn">Clear all data</button>
+            <span class="note" id="seedMsg"></span>
+          </div>
+        </div>
       </section>
 
       <!-- ── SYNC ────────────────────────────────────────────────────── -->
