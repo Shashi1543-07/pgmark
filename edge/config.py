@@ -113,6 +113,14 @@ class Triage:
     """Deliberately low. Recall on contains-subject matters far more than
     precision — see the asymmetry above."""
 
+    batch_size: int = 200
+    """Frames per checkpointed batch. A crash loses at most one batch."""
+
+    torch_threads: int = 0
+    """0 = leave PyTorch's default (every core). On a 4-core range-office
+    laptop that makes the machine unusable for anything else for the hours
+    a 50K run takes. 2 or 3 leaves the officer a working computer."""
+
     seconds_per_manual_review: float = 3.0
     """Stated assumption behind the person-hours-saved figure. Editable,
     and displayed next to the number so nobody mistakes it for measured."""
@@ -147,6 +155,40 @@ class Identify:
     enforce_side_separation: bool = True
     """Left and right flank patterns are DIFFERENT, not mirrored. Never
     score an L crop against an R catalogue. Turning this off is a bug."""
+
+    require_side_classifier: bool = True
+    """Bulk Stage 3 will not auto-assign or auto-enrol while this is True.
+
+    edge/pipeline/keypoints.py labels every prediction "right_shoulder"/
+    "right_hip" regardless of which flank is actually showing -- confirmed
+    empirically in docs/RESULTS.md's wild evaluation, where every held-out
+    image came back side='R' and none 'L'. On a real deployment roughly
+    half of captures show the left flank and would be scored against the
+    RIGHT-side catalogue. One photograph at a time that is a bad match a
+    human can catch; 50,000 at a time it is a corrupted catalogue.
+
+    While True, crops and embeddings are still computed and stored -- the
+    work is not thrown away -- but every decision goes to the review queue
+    with the reason stated. Set False only once a side classifier exists.
+    CLAUDE.md rule 8: refusing to answer is a valid output."""
+
+    species_gate: str = "review"
+    """strict | review | off.
+
+    MegaDetector's `animal` class is not `tiger`. v0.1.1 sent every animal
+    detection into the flank pipeline, so a leopard, sambar or wild dog
+    could be embedded, scored against the tiger catalogue, and below t_low
+    enrolled as a brand-new tiger. On a real reserve most animal detections
+    are not tigers, so that is the common case, not the rare one.
+
+      strict -- only detections confirmed as target_species proceed. With
+                no species classifier installed, that is none, and the run
+                says so rather than pretending.
+      review -- crops and embeddings are computed, decisions go to a human.
+                The honest default while no classifier exists.
+      off    -- v0.1.1's behaviour. Recorded in the audit log; not advised."""
+
+    target_species: str = "tiger"
 
     rect_body_depth_ratio: float = 0.6
     """edge/pipeline/identify.py::rectify_flank(). A profile photograph

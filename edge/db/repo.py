@@ -396,6 +396,7 @@ def run_counts(run_id: str) -> dict:
         " SUM(status='blank')       blank,"
         " SUM(status='subject')     subject,"
         " SUM(status='person')      person,"
+        " SUM(status='vehicle')     vehicle,"
         " SUM(status='corrupt')     corrupt,"
         " SUM(status='quarantined') quarantined,"
         " SUM(triage_stage='A')     stage_a,"
@@ -1006,3 +1007,9 @@ def drift_indicators(reserve_id: str) -> list[dict]:
         " (SELECT COUNT(*) FROM review_queue q WHERE q.state='open') review_open"
         " FROM runs r WHERE r.reserve_id=? ORDER BY r.started_at DESC LIMIT 10",
         (reserve_id,)))
+
+
+# ── scale/hardening extension (v0.2.0) ─────────────────────────────────
+# Rule 1 still holds: one import path (`repo.`), one place to look.
+# See edge/db/repo_ext.py for why the additions live in their own file.
+from edge.db.repo_ext import *  # noqa: E402,F401,F403

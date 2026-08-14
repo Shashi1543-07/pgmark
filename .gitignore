@@ -12,6 +12,7 @@ data/weights/
 data/config.json
 data/raw/
 data/uploads/
+data/backups/
 manual_test_photos/
 testing data/
 *.zip

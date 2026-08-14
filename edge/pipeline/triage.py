@@ -52,7 +52,18 @@ from PIL import Image, ImageFilter
 
 from edge import config
 from edge.db import repo
-from edge.pipeline import detector as detector_pipeline
+
+def _detector_mod():
+    """Import edge/pipeline/detector.py on first use, not at module import.
+
+    detector.py imports torch at module scope, triage.py imported detector
+    at module scope, and app.py imports triage -- so one missing optional
+    dependency for one stage killed the entire server, including every
+    screen that needs no model at all. Stage B already refuses gracefully
+    when the WEIGHTS are absent (CLAUDE.md rule 8); it should do the same
+    when the RUNTIME is."""
+    from edge.pipeline import detector
+    return detector
 
 
 def run_triage(run_id: str) -> dict:
@@ -154,6 +165,7 @@ def _run_stage_b(run_id: str, quarantine_dir: Path) -> dict:
     that, so there isn't one. images.status still records 'blank'/'B'
     rather than reusing Stage A's 'quarantined'/'A', so it stays visible
     *which* stage made the call."""
+    detector_pipeline = _detector_mod()
     pending = [i for i in repo.images_for_run(run_id)
                if i["status"] == "pending" and i["triage_stage"] == "A"]
     subject = person = vehicle = blank = awaiting_detector = 0
@@ -197,7 +209,11 @@ def _run_stage_b(run_id: str, quarantine_dir: Path) -> dict:
             _restrict_person(row, best_person)
             person += 1
         elif any(d.label == detector_pipeline.VEHICLE_LABEL for d in detections):
-            repo.set_image_status(row["image_id"], "subject", "B")
+            # A jeep is not a subject. v0.1.1 wrote status='subject' here,
+            # so every vehicle frame joined the animal frames in the list
+            # the UI offered for identification, and Stage 3 would try to
+            # find a shoulder and a hip on a Mahindra Bolero.
+            repo.set_image_status(row["image_id"], "vehicle", "B")
             vehicle += 1
         elif any(d.label == detector_pipeline.ANIMAL_LABEL for d in detections):
             repo.set_image_status(row["image_id"], "subject", "B")
@@ -230,6 +246,7 @@ def _restrict_person(row: dict, detection) -> None:
     pipeline -- a person is not a tiger sighting, and CLAUDE.md's
     role-gating rules exist because this frame carries a face, not a
     flank."""
+    detector_pipeline = _detector_mod()
     src = Path(row["orig_path"])
     blurred_path = config.RESTRICTED_DIR / f"{row['image_id']}_blurred.jpg"
     blurred_path.parent.mkdir(parents=True, exist_ok=True)
@@ -345,18 +362,49 @@ def _read_grid(orig_path: str, grid_n: int, band_frac: float) -> np.ndarray | No
     coarse cell grid -- resizing doubles as the cell-average: a subject
     filling 4% of the frame barely moves a global mean but reliably shows
     up in several cells at this resolution."""
-    path = Path(orig_path)
-    try:
-        with Image.open(path) as img:
-            img = img.convert("L")
-            w, h = img.size
-            band = int(h * band_frac)
-            if 0 < band < h:
-                img = img.crop((0, 0, w, h - band))
-            img = img.resize((grid_n, grid_n))
-            return np.asarray(img, dtype=np.uint8)
-    except Exception:
-        return None
+    # Delegates to edge/imageio.py, which asks libjpeg to decode the JPEG's
+    # DCT coefficients at 1/8 scale instead of building the full 12-megapixel
+    # bitmap and immediately throwing 99.99% of it away. Measured on a
+    # 4000x3000 camera-trap frame: 143.7 ms -> 38.4 ms, which is the
+    # difference between two hours and half an hour over 50,000 frames.
+    # It oversamples to grid_n*8 before the final resize so cell_score()'s
+    # calibration (tests/unit/test_triage_scoring.py) is unchanged.
+    from edge import imageio
+    return imageio.read_grid(orig_path, grid_n, band_frac)
+
+
+def _append_manifest(quarantine_dir: Path, name: str, entries: list[dict]) -> None:
+    """Write manifest entries BEFORE the files they describe are moved.
+
+    This is the fix for the worst bug in v0.1.1. The module docstring above
+    claims the manifest is written before the DB row so restore() survives
+    losing the database -- but the write happened after the whole
+    station loop, so a crash mid-run left thousands of original frames
+    physically moved into quarantine with nothing anywhere recording where
+    they came from.
+
+    Append-then-move, per batch, with an fsync. The worst case is now a
+    manifest entry for a file that was never moved, which restore()
+    already tolerates (it checks src.exists() first) -- the opposite and
+    survivable failure.
+    """
+    quarantine_dir.mkdir(parents=True, exist_ok=True)
+    path = quarantine_dir / name
+    existing = []
+    if path.exists():
+        try:
+            existing = json.loads(path.read_text())
+        except json.JSONDecodeError:
+            existing = []
+    have = {e["image_id"] for e in existing}
+    merged = existing + [e for e in entries if e["image_id"] not in have]
+    tmp = path.with_suffix(".tmp")
+    with open(tmp, "w", encoding="utf-8") as fh:
+        json.dump(merged, fh, indent=2)
+        fh.flush()
+        import os as _os
+        _os.fsync(fh.fileno())
+    tmp.replace(path)
 
 
 def _quarantine_move(run_id: str, row: dict, reason: str, conf: float,

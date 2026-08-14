@@ -528,3 +528,88 @@ kbd {
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }
 }
+
+
+/* ── map ─────────────────────────────────────────────────────────────────
+   The previous map stretched latitude and longitude independently to fill a
+   fixed 900x520 box. On the seeded reserve -- 9.8 km east-west by 10.0 km
+   north-south, very nearly square -- that drew every home-range polygon at
+   an aspect ratio of 1.84, i.e. 87% out of shape, directly beneath a table
+   of areas that edge/pipeline/occupancy.py had projected into UTM to get
+   right. edge/ui/map.js now uses one scale for both axes, which is what
+   makes the scale bar below mean anything. */
+
+.pugmap { width: 100%; height: auto; display: block;
+          background: var(--surface-2); border-radius: 4px; }
+
+.pugmap .zone        { stroke-width: 1; }
+.pugmap .zone-core   { fill: #dfe6d6; stroke: var(--line); }
+.pugmap .zone-buffer { fill: #e9ece2; stroke: var(--line-soft);
+                       stroke-dasharray: 4 3; }
+
+.pugmap .hull { fill: var(--pelage); fill-opacity: .11; stroke: var(--pelage);
+                stroke-width: 1.2; cursor: pointer; transition: fill-opacity .12s; }
+.pugmap .hull:hover        { fill-opacity: .22; }
+.pugmap .hull.focus        { fill-opacity: .26; stroke-width: 2; }
+.pugmap .hull.flagged      { stroke: var(--act); stroke-width: 1.8; }
+
+/* Movement between cycles. The centroid_shift alert is the only alert whose
+   evidence is a distance, and nothing drew it. */
+.pugmap .shift line   { stroke: var(--act); stroke-width: 1.6; opacity: .8; }
+.pugmap .shift .was   { fill: var(--muted); }
+.pugmap #arrow path   { fill: var(--act); }
+
+.pugmap .stn             { stroke: var(--surface); stroke-width: 1; }
+.pugmap .stn-active      { fill: var(--ink-2); }
+.pugmap .stn-idle        { fill: var(--sup); }
+.pugmap .stn-offline     { fill: var(--act); }
+.pugmap .stn-new         { fill: var(--info); }
+.pugmap .stn.in-range    { stroke: var(--pelage); stroke-width: 2; }
+.pugmap .stn:focus       { outline: 2px solid var(--pelage); outline-offset: 2px; }
+
+.pugmap .scalebar line, .pugmap .north line, .pugmap .north path {
+  stroke: var(--ink-2); stroke-width: 1.2; fill: none; }
+.pugmap .north path { fill: var(--ink-2); }
+.pugmap .scalebar text, .pugmap .north text {
+  font-family: var(--f-display); font-size: 10px; letter-spacing: 1px;
+  fill: var(--ink-2); }
+
+.legend { margin-top: var(--s3); }
+.legend .keys { display: flex; flex-wrap: wrap; gap: var(--s4);
+                font-size: 12px; color: var(--muted); margin-bottom: var(--s3); }
+.legend .keys span { display: flex; align-items: center; gap: 6px; }
+.legend .k { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+.legend .k.stn-active  { background: var(--ink-2); }
+.legend .k.stn-idle    { background: var(--sup); }
+.legend .k.stn-offline { background: var(--act); }
+.legend .k.stn-new     { background: var(--info); }
+.legend .k.k-hull  { background: var(--pelage); opacity: .35;
+                     border: 1px solid var(--pelage); border-radius: 2px; }
+.legend .k.k-shift { background: var(--act); border-radius: 1px; height: 2px; width: 14px; }
+
+.legend .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.legend .chip { font: inherit; font-size: 12px; cursor: pointer;
+                background: var(--surface); border: 1px solid var(--line);
+                border-radius: 3px; padding: 3px 8px; color: var(--ink-2);
+                display: flex; gap: 6px; align-items: baseline; }
+.legend .chip span  { color: var(--muted); font-family: var(--f-mono); font-size: 11px; }
+.legend .chip:hover { border-color: var(--pelage); }
+.legend .chip.on    { background: var(--pelage); color: #fff; border-color: var(--pelage); }
+.legend .chip.on span { color: #f5e2d2; }
+.legend .chip.act   { border-left: 3px solid var(--act); }
+.legend .chip.clear { color: var(--muted); }
+
+/* ── job progress ────────────────────────────────────────────────────────
+   v0.1.1 ran a 50,000-frame import inside the HTTP request that asked for
+   it, so there was nothing to show. */
+.job { border: 1px solid var(--line); border-radius: 4px; padding: var(--s3);
+       background: var(--surface); }
+.job .bar   { height: 6px; background: var(--sunk); border-radius: 3px;
+              overflow: hidden; margin: var(--s3) 0; }
+.job .bar i { display: block; height: 100%; background: var(--pelage);
+              transition: width .4s ease; }
+.job .meta  { display: flex; justify-content: space-between; font-size: 12px;
+              color: var(--muted); font-family: var(--f-mono); }
+.job.failed .bar i    { background: var(--act); }
+.job.paused .bar i    { background: var(--watch); }
+.job .deadletters     { margin-top: var(--s3); font-size: 12px; color: var(--act); }

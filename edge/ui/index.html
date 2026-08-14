@@ -325,6 +325,11 @@
   </div>
 </div>
 
+<!-- The map renderer moved out of app.js. The version in there hardcoded
+     demo station IDs (PN-C-008/009/015 as "dead"/"new") and stretched
+     latitude and longitude independently, drawing every home range 87%
+     out of shape. Loaded first so window.PugMap exists when app.js runs. -->
+<script src="/ui/map.js"></script>
 <script src="/ui/app.js"></script>
 </body>
 </html>

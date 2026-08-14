@@ -25,7 +25,13 @@ from edge.db import repo
 from edge.exports import camtrapdp
 from edge.exports import csv as csv_export
 from edge.exports import geojson as geojson_export
-from edge.pipeline import identify_upload, ingest
+from edge.pipeline import ingest
+# identify_upload is imported lazily inside the two routes that need it.
+# It pulls in torch via edge/pipeline/detector.py, and importing it here
+# meant a laptop with a broken torch install could not start the server at
+# all -- no map, no alerts, no audit log, no catalogue, because one
+# optional model dependency for one stage was imported at module scope.
+# Verified: `import edge.app` raised ModuleNotFoundError before this change.
 from edge.pipeline import triage as triage_pipeline
 from edge.sync import bundle as bundle_sync
 
@@ -55,6 +61,30 @@ def _startup() -> None:
     if applied:
         repo.audit("schema.migrate", after={"applied": applied,
                                             "version": repo.schema_version()})
+
+    # A job marked `running` at boot cannot be running: this process just
+    # started. Mark them interrupted so the run screen shows "stopped at
+    # 30,142 of 50,000, resumable" instead of a progress bar that will
+    # never move again.
+    from edge import jobs  # noqa: PLC0415
+    reaped = jobs.reap_stale()
+    if reaped:
+        repo.audit("startup.jobs_reaped", after={"count": reaped})
+
+    # Bound PyTorch's thread pool. It defaults to every core, which on a
+    # 4-core range-office laptop makes the machine unusable for anything
+    # else for the hours a 50K run takes.
+    threads = getattr(config.CONFIG.triage, "torch_threads", 0)
+    if threads:
+        try:
+            import torch  # noqa: PLC0415
+            torch.set_num_threads(int(threads))
+        except ImportError:
+            pass
+
+
+from edge.routes_scale import register as _register_scale_routes  # noqa: E402
+_register_scale_routes(app)
 
 
 # ── role gating ─────────────────────────────────────────────────────────
@@ -279,6 +309,7 @@ def identify_run_image(run_id: str, image_id: str,
     image = repo.image(image_id)
     if not image or image["run_id"] != run_id:
         raise HTTPException(404, "image not found in this run")
+    from edge.pipeline import identify_upload  # noqa: PLC0415
     try:
         return identify_upload.process_upload(
             image["orig_path"], run["reserve_id"], image["station_id"], actor)
@@ -358,11 +389,25 @@ def decide(queue_id: str, payload: dict = Body(...)) -> dict:
     if not ind_id:
         raise HTTPException(400, "ind_id required")
     try:
-        return repo.review_decide(queue_id, ind_id,
-                                  payload.get("actor", "director"),
-                                  bool(payload.get("new_individual")))
+        result = repo.review_decide(queue_id, ind_id,
+                                    payload.get("actor", "director"),
+                                    bool(payload.get("new_individual")))
     except KeyError:
         raise HTTPException(404, "queue item not found")
+
+    # A correction changes which tiger was where, so both individuals'
+    # home ranges change and an alert may now fire or stop firing. v0.1.1
+    # recorded the correction faithfully and then left every downstream
+    # number showing the pre-correction answer, with nothing marking it
+    # stale. Recompute is arithmetic over data already on disk -- fast
+    # enough that there is no reason to make the officer remember to do it.
+    from edge.pipeline import postprocess  # noqa: PLC0415
+    q = repo._one(repo.connect().execute(
+        "SELECT crop_id FROM review_queue WHERE queue_id=?", (queue_id,)))
+    if q:
+        result["recomputed"] = postprocess.after_review_decision(
+            q["crop_id"], payload.get("actor", "director"))
+    return result
 
 
 # ── identify: a raw photograph in, a catalogue/review/audit entry out ────
@@ -386,6 +431,7 @@ async def identify_upload_route(
     dest = config.UPLOADS_DIR / f"{repo.new_id('up_')}_{file.filename}"
     dest.parent.mkdir(parents=True, exist_ok=True)
     dest.write_bytes(await file.read())
+    from edge.pipeline import identify_upload  # noqa: PLC0415, F811
     try:
         return identify_upload.process_upload(str(dest), reserve_id, station_id, actor)
     except FileNotFoundError as e:

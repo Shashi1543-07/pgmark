@@ -554,6 +554,12 @@ async function nrConfirm() {
 async function nrTriage() {
   const nr = S.newRun;
   $('#nrTriageBtn').disabled = true;
+  // v0.1.1 stopped here and handed the officer a table with one Identify
+  // button per animal frame -- 945 of them on the seeded demo, roughly
+  // 4,000 scaled to a 50,000-frame import. Triage is now the first step of
+  // one background job that carries on through identification, occupancy
+  // and alerts without further clicks.
+  if (!nr.manualMode) { await runPipeline(nr.runId); return; }
   const t = await api(`/api/runs/${nr.runId}/triage/run`, { method: 'POST', body: {} });
   const subjectImages = t.subject
     ? await api(`/api/runs/${nr.runId}/images?status=subject`) : [];
@@ -855,59 +861,123 @@ document.addEventListener('keydown', (e) => {
 /* ── map ───────────────────────────────────────────────────────────────── */
 RENDER.map = async () => {
   if (!S.run) await RENDER.run();
-  const [stations, occ] = await Promise.all([
-    api(`/api/stations?reserve_id=${S.reserve.reserve_id}`),
-    api(`/api/runs/${S.run.run_id}/occupancy`),
-  ]);
-  const W = 900, H = 520, P = 34;
-  const lats = stations.map((s) => s.lat);
-  const lons = stations.map((s) => s.lon);
-  const [y0, y1] = [Math.min(...lats), Math.max(...lats)];
-  const [x0, x1] = [Math.min(...lons), Math.max(...lons)];
-  const X = (lon) => P + ((lon - x0) / ((x1 - x0) || 1)) * (W - 2 * P);
-  const Y = (lat) => H - P - ((lat - y0) / ((y1 - y0) || 1)) * (H - 2 * P);
-
-  const hulls = occ.filter((o) => o.hull_wkt).map((o) => {
-    const pts = o.hull_wkt.replace(/POLYGON\(\(|\)\)/g, '').split(', ')
-      .map((p) => p.trim().split(' ').map(Number))
-      .map(([lon, lat]) => `${X(lon).toFixed(1)},${Y(lat).toFixed(1)}`).join(' ');
-    return `<polygon class="hull" points="${pts}"><title>${esc(o.ind_id)} —
-      ${o.area_km2} km²</title></polygon>`;
-  }).join('');
-
-  const DEAD = new Set(['PN-C-008', 'PN-C-009']);
-  const NEW = new Set(['PN-C-015']);
-  const pins = stations.map((s) => {
-    const cls = DEAD.has(s.station_id) ? 'dead' : NEW.has(s.station_id) ? 'new' : '';
-    return `<circle class="stn ${cls}" cx="${X(s.lon).toFixed(1)}"
-      cy="${Y(s.lat).toFixed(1)}" r="${cls ? 5 : 3.4}"><title>${esc(s.name)}
-      (${esc(s.zone)}) — ${esc(s.station_id)}</title></circle>`;
-  }).join('');
-
-  $('#mapSvg').innerHTML = `<svg viewBox="0 0 ${W} ${H}" role="img"
-    aria-label="Camera stations and tiger home ranges">
-    <rect class="zone-buffer" x="8" y="8" width="${W - 16}" height="${H - 16}" rx="4"/>
-    <rect class="zone-core" x="${P + 60}" y="${P + 40}" width="${W - 2 * P - 120}"
-          height="${H - 2 * P - 80}" rx="4"/>
-    <text x="${P + 70}" y="${P + 60}" font-size="11" fill="#6d7566"
-          letter-spacing="2" font-family="Bahnschrift, sans-serif">CORE</text>
-    <text x="20" y="26" font-size="11" fill="#6d7566" letter-spacing="2"
-          font-family="Bahnschrift, sans-serif">BUFFER</text>
-    ${hulls}${pins}</svg>`;
+  /* One request instead of two, and it carries what the old map faked:
+     which cameras stopped mid-cycle, which were installed this cycle, and
+     where each tiger's centroid was last cycle. All three used to be
+     either hardcoded (`const DEAD = new Set(['PN-C-008','PN-C-009'])`) or
+     simply absent. */
+  const d = await api(`/api/runs/${S.run.run_id}/map`);
+  window.PugMap.render($('#mapSvg'), { ...d, focus: S.mapFocus || null },
+    (ind) => { S.mapFocus = ind; RENDER.map(); });
 
   $('#occGeojson').href = `/api/runs/${S.run.run_id}/occupancy/export.geojson`;
   $('#occCsv').href = `/api/runs/${S.run.run_id}/occupancy/export.csv`;
 
+  const occ = d.occupancy;
+  if (!occ.length) {
+    /* Two empty states used to look identical and mean opposite things:
+       "nothing moved this cycle" and "this stage has never run against
+       your data". */
+    $('#occTable').innerHTML = `<div class="card empty">
+      <strong>No home ranges yet</strong>
+      Nothing in this run has been identified to an individual, so there is
+      nothing to map. Run the pipeline on this run, or identify some frames
+      first.</div>`;
+    return;
+  }
+
   $('#occTable').innerHTML = table(
-    ['Tiger', 'Stations', 'Area km²', 'Events', 'Camera-days', 'Note'],
+    ['Tiger', 'Cameras', 'Area km²', 'Visits', 'Camera-days', 'Note'],
     occ.map((o) => [
-      `<td class="n">${esc(o.ind_id)}</td>`,
+      `<td class="n"><button class="linkish" data-ind="${esc(o.ind_id)}">${esc(o.ind_id)}</button></td>`,
       `<td class="n">${o.station_set.length}</td>`,
       `<td class="n">${o.area_km2 ?? '—'}</td>`,
       `<td class="n">${nf(o.event_count)}</td>`,
       `<td class="n">${o.effort_days}</td>`,
       `<td style="color:var(--muted)">${esc(o.insufficient_reason || '')}</td>`]));
+
+  $('#occTable').querySelectorAll('[data-ind]').forEach((b) =>
+    b.addEventListener('click', () => {
+      S.mapFocus = S.mapFocus === b.dataset.ind ? null : b.dataset.ind;
+      RENDER.map();
+    }));
 };
+
+/* ── background jobs ──────────────────────────────────────────────────────
+   v0.1.1 ran a 50,000-frame import inside the HTTP request that asked for
+   it: no progress, no cancel, no resume, and a browser timeout partway
+   through left the run in a state nothing recorded. */
+
+async function runPipeline(runId, actor = 'director') {
+  const r = await api(`/api/runs/${runId}/pipeline`,
+    { method: 'POST', body: { actor } });
+  S.job = r.job_id;
+  pollJob(r.job_id);
+  return r;
+}
+
+let jobTimer = null;
+async function pollJob(jobId) {
+  clearTimeout(jobTimer);
+  let j;
+  try { j = await api(`/api/jobs/${jobId}`); }
+  catch { return; }
+  drawJob(j);
+  if (['queued', 'running', 'paused'].includes(j.state)) {
+    jobTimer = setTimeout(() => pollJob(jobId), 1500);
+  } else {
+    RENDER[S.view]?.();
+  }
+}
+
+function drawJob(j) {
+  const host = $('#jobPanel');
+  if (!host) return;
+  host.hidden = false;
+  const pct = Math.round((j.progress || 0) * 100);
+  const eta = j.eta_seconds != null
+    ? `${Math.floor(j.eta_seconds / 60)} min ${Math.round(j.eta_seconds % 60)} s left`
+    : 'estimating…';
+  const stage = j.detail?.stage ? ` · ${esc(j.detail.stage)}` : '';
+  host.className = `job ${esc(j.state)}`;
+  host.innerHTML = `
+    <div style="display:flex;justify-content:space-between;align-items:baseline">
+      <strong>${esc(j.kind)}${stage}</strong>
+      <span class="num">${esc(j.state)}</span>
+    </div>
+    <div class="bar"><i style="width:${pct}%"></i></div>
+    <div class="meta">
+      <span>${nf(j.done_count)} of ${nf(j.total)} · ${pct}%</span>
+      <span>${j.state === 'running' ? eta : ''}</span>
+    </div>
+    ${j.error ? `<p class="note">${esc(j.error)}</p>` : ''}
+    ${j.failed_count ? `<div class="deadletters">${nf(j.failed_count)} frames could not
+      be read and were skipped. They are listed under this run — nothing was
+      silently dropped.</div>` : ''}
+    ${j.state === 'running'
+      ? `<button class="btn ghost" id="jobCancel">Stop after this batch</button>`
+      : ''}
+    ${j.state === 'paused'
+      ? `<button class="btn" id="jobResume">Resume from ${nf(j.done_count)}</button>`
+      : ''}`;
+  $('#jobCancel')?.addEventListener('click', async () => {
+    await api(`/api/jobs/${j.job_id}/cancel`, { method: 'POST', body: { actor: 'director' } });
+  });
+  $('#jobResume')?.addEventListener('click', async () => {
+    await api(`/api/jobs/${j.job_id}/resume`, { method: 'POST', body: { actor: 'director' } });
+    pollJob(j.job_id);
+  });
+}
+
+/* Pick up a job that was already running when the page was loaded — a
+   50,000-frame run outlives a browser tab, and closing the tab must not
+   look like the work stopped. */
+(async () => {
+  try {
+    const { active } = await api('/api/jobs');
+    if (active?.length) pollJob(active[0].job_id);
+  } catch { /* server not up yet */ }
+})();
 
 /* ── alerts ────────────────────────────────────────────────────────────── */
 const KIND = {

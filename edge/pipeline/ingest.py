@@ -109,9 +109,20 @@ def preflight_ingest(reserve_id: str, root_path: str, cycle_label: str | None = 
     run_row["row_hash"] = repo.compute_row_hash(run_row)
     repo.insert("runs", run_row)
 
-    image_rows = [_to_image_row(r, run_id, reserve_id, folder_station[r["folder"]], node)
-                  for r in records if not r.get("duplicate_of")]
-    repo.insert_many("images", image_rows)
+    candidate_rows = [_to_image_row(r, run_id, reserve_id, folder_station[r["folder"]], node)
+                      for r in records if not r.get("duplicate_of")]
+
+    # Content already ingested by an earlier run. image_id is a SHA-256
+    # prefix, so the same photograph produces the same primary key in every
+    # run -- and repo.insert_many()'s INSERT OR REPLACE would silently
+    # overwrite the earlier run's row, dropping its run_id and status and
+    # orphaning every detection, crop and assignment beneath it. Record the
+    # overlap instead of destroying it.
+    already = repo.existing_image_ids([r["image_id"] for r in candidate_rows])
+    image_rows = [r for r in candidate_rows if r["image_id"] not in already]
+    cross_run_duplicates = len(candidate_rows) - len(image_rows)
+    repo.insert_many_ignore("images", image_rows)
+    repo.connect().commit()
     repo.set_run_image_count(run_id, len(image_rows))
 
     duplicate_count = sum(1 for r in records if r.get("duplicate_of"))
@@ -127,6 +138,11 @@ def preflight_ingest(reserve_id: str, root_path: str, cycle_label: str | None = 
         "unmatched_folders": unmatched_folders,
         "mixed_camera_folders": mixed_camera_folders,
         "duplicate_count": duplicate_count,
+        "cross_run_duplicates": cross_run_duplicates,
+        "cross_run_note": (
+            f"{cross_run_duplicates} files in this folder were already ingested by an "
+            "earlier run and were not re-imported. Their existing rows, and everything "
+            "identified from them, are untouched." if cross_run_duplicates else None),
         "corrupt_count": corrupt_count,
         "estimated_seconds": round(len(image_rows) * cfg.estimated_seconds_per_image, 1),
         "estimated_seconds_per_image_assumed": cfg.estimated_seconds_per_image,
