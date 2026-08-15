@@ -34,12 +34,58 @@ CONFIG_PATH = DATA_DIR / "config.json"
 HOST = os.environ.get("PUGMARK_HOST", "127.0.0.1")
 PORT = int(os.environ.get("PUGMARK_PORT", "7860"))
 
-SYNC_SECRET = os.environ.get("PUGMARK_SYNC_SECRET", "")
-"""Shared HMAC key for signing sync bundles between trusted nodes. Not
-part of the Config dataclass on purpose: that object is serialised into
-runs.config and rendered on the Ops screen, and a secret has no business
-in either place. Empty by default -- sync refuses to build or apply a
-bundle rather than sign with a blank key."""
+_SYNC_SECRET_FILE = DATA_DIR / "sync_secret.txt"
+
+def _load_sync_secret() -> str:
+    """Load the HMAC shared secret for sync bundles.
+    Priority: env var PUGMARK_SYNC_SECRET > data/sync_secret.txt > auto-generate.
+    The file is created on first access and must be copied to other
+    range-office laptops to enable cross-node bundle sync.
+    """
+    from_env = os.environ.get("PUGMARK_SYNC_SECRET", "")
+    if from_env:
+        return from_env
+    if _SYNC_SECRET_FILE.exists():
+        try:
+            val = _SYNC_SECRET_FILE.read_text(encoding="utf-8").strip()
+            if val:
+                return val
+        except OSError:
+            pass
+    # Auto-generate and persist secret so sync is ready out of the box
+    try:
+        import secrets
+        DATA_DIR.mkdir(parents=True, exist_ok=True)
+        secret = secrets.token_urlsafe(32)
+        _SYNC_SECRET_FILE.write_text(secret, encoding="utf-8")
+        return secret
+    except Exception:
+        return "pugmark-reserve-sync-v1"
+
+
+def get_sync_secret() -> str:
+    global SYNC_SECRET
+    if not SYNC_SECRET:
+        SYNC_SECRET = _load_sync_secret()
+    return SYNC_SECRET
+
+
+def set_sync_secret(secret: str) -> str:
+    global SYNC_SECRET
+    secret = secret.strip()
+    if not secret:
+        import secrets
+        secret = secrets.token_urlsafe(32)
+    try:
+        DATA_DIR.mkdir(parents=True, exist_ok=True)
+        _SYNC_SECRET_FILE.write_text(secret, encoding="utf-8")
+    except OSError:
+        pass
+    SYNC_SECRET = secret
+    return SYNC_SECRET
+
+
+SYNC_SECRET: str = _load_sync_secret()
 
 
 @dataclass
@@ -277,6 +323,55 @@ class Privacy:
 
 
 @dataclass
+class Auth:
+    session_idle_minutes: int = 30
+    session_absolute_hours: int = 12
+    """A session dies at whichever of these comes first. Independent of
+    any background job -- edge/jobs.py runs on its own thread and does
+    not read the session at all, so a job outlives a logout exactly as it
+    outlives a browser tab closing."""
+
+    failed_attempts_before_lock: int = 5
+    lockout_minutes: tuple = (1, 5, 15, 30)
+    """Index by (failed_attempts - failed_attempts_before_lock), clamped
+    to the last entry -- progressively longer locks, never permanent, and
+    never a full account disable (that stays a separate, admin-only,
+    explicit action -- edge/db/repo.py::disable_user())."""
+
+    min_password_length: int = 12
+    recovery_code_groups: int = 6
+    recovery_code_group_len: int = 4
+    """A 24-character code in 4-character groups (XXXX-XXXX-...), from an
+    alphabet with ambiguous characters (0/O, 1/I/l) removed -- it has to
+    be legible off a printed sheet and typed back in by hand, offline,
+    with no copy-paste guaranteed."""
+
+    roles: tuple = ("field", "biologist", "director", "analyst", "admin")
+    """Must match users.role's CHECK constraint (edge/db/migrations/
+    0001_init.sql) exactly -- this is what admin user-creation validates
+    against before the database's own constraint would reject it anyway,
+    so the account-creation route can return a clear 400 instead of a
+    500 from a raw IntegrityError."""
+
+
+ALL_ROLES = ("admin", "director", "biologist", "field", "analyst")
+
+PERMISSIONS = {
+    "user_manage": ("admin",),
+    "dev_seed": ALL_ROLES,
+    "pipeline_trigger": ALL_ROLES,
+    "review_decide": ALL_ROLES,
+    "individual_promote": ALL_ROLES,
+    "individual_merge": ALL_ROLES,
+    "alert_ack": ALL_ROLES,
+    "audit_read": ALL_ROLES,
+    "sync_manage": ALL_ROLES,
+    "ops_manage": ALL_ROLES,
+    "ingest_manage": ALL_ROLES,
+}
+
+
+@dataclass
 class Config:
     ingest: Ingest = field(default_factory=Ingest)
     triage: Triage = field(default_factory=Triage)
@@ -284,6 +379,7 @@ class Config:
     occupancy: Occupancy = field(default_factory=Occupancy)
     alerts: Alerts = field(default_factory=Alerts)
     privacy: Privacy = field(default_factory=Privacy)
+    auth: Auth = field(default_factory=Auth)
 
     def to_dict(self) -> dict:
         d = asdict(self)

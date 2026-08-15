@@ -10,11 +10,11 @@ import json
 import sqlite3
 import threading
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Iterable
 
-from edge import config
+from edge import auth, config
 
 MIGRATIONS_DIR = Path(__file__).resolve().parent / "migrations"
 _local = threading.local()
@@ -743,10 +743,13 @@ def create_provisional_individual(reserve_id: str, actor: str) -> str:
     to compare against (edge/pipeline/identify.py::decide())."""
     ind_id = f"{reserve_id}-P-{new_id()[:8]}"
     ts = now()
-    insert("individuals", dict(
+    row = dict(
         ind_id=ind_id, reserve_id=reserve_id, label=None, provisional=1,
         sex=None, age_class=None, first_seen=ts, last_seen=ts,
-        national_id=None, notes="auto-enrolled by identify pipeline"))
+        national_id=None, notes="auto-enrolled by identify pipeline",
+        origin_node=node_id(), lamport=next_lamport(), synced_at=None)
+    row["row_hash"] = compute_row_hash(row)
+    insert("individuals", row)
     audit("individual.auto_enroll", actor=actor, entity_type="individual",
           entity_id=ind_id, after={"reserve_id": reserve_id})
     return ind_id
@@ -785,7 +788,20 @@ def promote_individual(ind_id: str, actor: str) -> bool:
     before = individual(ind_id)
     if not before or not before["provisional"]:
         return False
-    conn.execute("UPDATE individuals SET provisional=0 WHERE ind_id=?", (ind_id,))
+    # Re-stamp sync columns so this promotion travels in the next bundle.
+    # Promotion is a real content change; a stale row_hash would cause any
+    # receiving node to silently accept the old 'provisional=1' row as
+    # already-seen and never apply the update.
+    lam = next_lamport(conn)
+    updated = dict(before)
+    updated["provisional"] = 0
+    updated["lamport"] = lam
+    updated["synced_at"] = None
+    updated["row_hash"] = compute_row_hash(updated)
+    conn.execute(
+        "UPDATE individuals SET provisional=0, lamport=?, synced_at=NULL, row_hash=?"
+        " WHERE ind_id=?",
+        (lam, updated["row_hash"], ind_id))
     conn.commit()
     audit("individual.promote", actor=actor, entity_type="individual",
           entity_id=ind_id, before={"provisional": 1}, after={"provisional": 0})
@@ -1065,6 +1081,244 @@ def drift_indicators(reserve_id: str) -> list[dict]:
         " (SELECT COUNT(*) FROM review_queue q WHERE q.state='open') review_open"
         " FROM runs r WHERE r.reserve_id=? ORDER BY r.started_at DESC LIMIT 10",
         (reserve_id,)))
+
+
+# ── authentication ──────────────────────────────────────────────────────
+# The crypto/token math lives in edge/auth.py (no SQL there, per Rule 1);
+# everything here is persistence and the audit trail around it.
+
+def create_user(username: str, display_name: str | None, role: str,
+                pwd_hash: str, recovery_code_hash: str | None = None,
+                must_change: bool = True, actor: str = "system") -> None:
+    """Account creation is administrator-controlled -- there is no public
+    signup route that calls this. must_change_password defaults to 1 (the
+    schema's own DEFAULT), so a freshly created account is forced through
+    a password change before it can do anything else."""
+    insert("users", dict(
+        username=username, display_name=display_name, role=role,
+        pwd_hash=pwd_hash, created_at=now(), disabled=0,
+        recovery_code_hash=recovery_code_hash,
+        must_change_password=int(must_change),
+        failed_login_attempts=0, locked_until=None, last_login_at=None))
+    audit("auth.user_created", actor=actor, entity_type="user", entity_id=username,
+          after={"role": role})
+
+
+def ensure_admin(username: str = "admin", display_name: str = "Administrator",
+                 password: str | None = None, recovery_code: str | None = None,
+                 must_change: bool = True, actor: str = "system") -> dict:
+    """Creates the initial admin account if not already present. Returns dict
+    with username, temp_password, recovery_code, and created (bool)."""
+    user = user_by_username(username)
+    if user:
+        return {"username": username, "created": False, "temp_password": None, "recovery_code": None}
+
+    temp_password = password or auth.generate_temp_password()
+    rec_code = recovery_code or auth.generate_recovery_code()
+    pwd_hash = auth.hash_secret(temp_password)
+    rec_hash = auth.hash_secret(auth.normalise_recovery_code(rec_code))
+
+    insert("users", dict(
+        username=username, display_name=display_name, role="admin",
+        pwd_hash=pwd_hash, created_at=now(), disabled=0,
+        recovery_code_hash=rec_hash, must_change_password=int(must_change),
+        failed_login_attempts=0, locked_until=None, last_login_at=None))
+    audit("auth.user_created", actor=actor, entity_type="user", entity_id=username,
+          after={"role": "admin", "seeded": True})
+    return {"username": username, "created": True, "temp_password": temp_password, "recovery_code": rec_code}
+
+
+def user_by_username(username: str) -> dict | None:
+    return _one(connect().execute("SELECT * FROM users WHERE username=?", (username,)))
+
+
+user = user_by_username
+
+
+def list_users() -> list[dict]:
+    return _rows(connect().execute(
+        "SELECT username, display_name, role, disabled, must_change_password,"
+        " failed_login_attempts, locked_until, last_login_at, created_at"
+        " FROM users ORDER BY username"))
+
+
+def set_password(username: str, pwd_hash: str, *, must_change: bool = False,
+                  actor: str) -> None:
+    conn = connect()
+    conn.execute(
+        "UPDATE users SET pwd_hash=?, must_change_password=? WHERE username=?",
+        (pwd_hash, int(must_change), username))
+    conn.commit()
+    audit("auth.password_changed", actor=actor, entity_type="user", entity_id=username)
+    revoke_all_sessions_for_user(username, actor=actor)
+
+
+def set_recovery_code(username: str, recovery_code_hash: str, actor: str) -> None:
+    conn = connect()
+    conn.execute("UPDATE users SET recovery_code_hash=? WHERE username=?",
+                 (recovery_code_hash, username))
+    conn.commit()
+    audit("auth.recovery_code_rotated", actor=actor, entity_type="user", entity_id=username)
+
+
+def disable_user(username: str, actor: str) -> None:
+    conn = connect()
+    conn.execute("UPDATE users SET disabled=1 WHERE username=?", (username,))
+    conn.commit()
+    audit("auth.user_disabled", actor=actor, entity_type="user", entity_id=username)
+    revoke_all_sessions_for_user(username, actor=actor)
+
+
+def enable_user(username: str, actor: str) -> None:
+    conn = connect()
+    conn.execute("UPDATE users SET disabled=0, locked_until=NULL, failed_login_attempts=0 WHERE username=?", (username,))
+    conn.commit()
+    audit("auth.user_enabled", actor=actor, entity_type="user", entity_id=username)
+
+
+def delete_user(username: str, actor: str) -> None:
+    conn = connect()
+    conn.execute("DELETE FROM sessions WHERE username=?", (username,))
+    conn.execute("DELETE FROM users WHERE username=?", (username,))
+    conn.commit()
+    audit("auth.user_deleted", actor=actor, entity_type="user", entity_id=username)
+
+
+def reset_user_credentials(username: str, actor: str) -> dict:
+    from edge import auth
+    user = user_by_username(username)
+    if not user:
+        raise ValueError("User not found")
+    temp_pwd = auth.generate_temp_password()
+    rec_code = auth.generate_recovery_code()
+    pwd_hash = auth.hash_secret(temp_pwd)
+    rec_hash = auth.hash_secret(auth.normalise_recovery_code(rec_code))
+    conn = connect()
+    conn.execute(
+        "UPDATE users SET pwd_hash=?, recovery_code_hash=?, must_change_password=1,"
+        " failed_login_attempts=0, locked_until=NULL, disabled=0"
+        " WHERE username=?",
+        (pwd_hash, rec_hash, username),
+    )
+    conn.commit()
+    revoke_all_sessions_for_user(username, actor=actor)
+    audit("auth.credentials_reset", actor=actor, entity_type="user", entity_id=username,
+          note="Admin reset credentials with new temporary password and recovery code")
+    return {"username": username, "temp_password": temp_pwd, "recovery_code": rec_code}
+
+
+def record_login_success(username: str) -> None:
+    conn = connect()
+    conn.execute(
+        "UPDATE users SET failed_login_attempts=0, locked_until=NULL, last_login_at=?"
+        " WHERE username=?", (now(), username))
+    conn.commit()
+    audit("auth.login_success", actor=username, entity_type="user", entity_id=username)
+
+
+def record_login_failure(username: str) -> dict:
+    """Increments the failure count and, once it crosses
+    Auth.failed_attempts_before_lock, applies a lock whose length grows
+    with repeated failures (edge/auth.py::lockout_duration -- pure math,
+    the policy numbers themselves live in edge/config.py per Rule 2).
+    Returns {"attempts": int, "locked_until": str|None} so the login
+    route can decide what to do without a second query, though the
+    response shown to the caller must still be the same generic message
+    either way (never reveal whether this pushed the account into lock)."""
+    conn = connect()
+    conn.execute(
+        "UPDATE users SET failed_login_attempts=failed_login_attempts+1 WHERE username=?",
+        (username,))
+    conn.commit()
+    row = _one(conn.execute(
+        "SELECT failed_login_attempts FROM users WHERE username=?", (username,)))
+    attempts = row["failed_login_attempts"] if row else 0
+    audit("auth.login_failure", actor=username, entity_type="user", entity_id=username)
+
+    locked_until = None
+    duration = auth.lockout_duration(attempts)
+    if duration:
+        locked_until = (datetime.now(timezone.utc) + duration).isoformat(timespec="seconds")
+        conn.execute("UPDATE users SET locked_until=? WHERE username=?",
+                     (locked_until, username))
+        conn.commit()
+        audit("auth.account_locked", actor=username, entity_type="user", entity_id=username,
+              after={"locked_until": locked_until})
+    return {"attempts": attempts, "locked_until": locked_until}
+
+
+# ── sessions ─────────────────────────────────────────────────────────────
+
+def create_session(username: str, role: str, token_hash: str,
+                    user_agent: str | None) -> str:
+    """Returns the ISO expiry string, since the route needs it for the
+    cookie's own Max-Age. Session lifetime is the config value, computed
+    here rather than by every caller re-deriving it."""
+    expires_at = (datetime.now(timezone.utc)
+                  + timedelta(hours=config.CONFIG.auth.session_absolute_hours)
+                  ).isoformat(timespec="seconds")
+    insert("sessions", dict(
+        token_hash=token_hash, username=username, role=role, created_at=now(),
+        expires_at=expires_at, last_seen=now(), user_agent=user_agent, revoked_at=None))
+    return expires_at
+
+
+def session_user(token_hash: str) -> dict | None:
+    """The session -> user join that resolves CURRENT role, not the role
+    frozen into the session row at login time -- a promotion or demotion
+    takes effect on the holder's very next request, not whenever their
+    session happens to expire on its own (sessions.role is written at
+    creation only for cheap display/debugging, never trusted here for an
+    authorization decision). Returns None for a missing, expired,
+    idle-timed-out, or revoked session, or a disabled user -- every one
+    of those means 'not authenticated', not a reason to distinguish in
+    the caller."""
+    row = _one(connect().execute(
+        "SELECT s.token_hash, s.username, u.role, s.expires_at, s.last_seen,"
+        " s.revoked_at, u.disabled, u.must_change_password, u.display_name"
+        " FROM sessions s JOIN users u ON u.username = s.username"
+        " WHERE s.token_hash=?", (token_hash,)))
+    if not row or row["revoked_at"] or row["disabled"]:
+        return None
+    if row["expires_at"] < now():
+        return None
+    idle_limit = timedelta(minutes=config.CONFIG.auth.session_idle_minutes)
+    if row["last_seen"] and datetime.now(timezone.utc) - datetime.fromisoformat(
+            row["last_seen"]) > idle_limit:
+        return None
+    connect().execute("UPDATE sessions SET last_seen=? WHERE token_hash=?",
+                       (now(), token_hash))
+    connect().commit()
+    return row
+
+
+def revoke_session(token_hash: str, actor: str) -> bool:
+    conn = connect()
+    cur = conn.execute(
+        "UPDATE sessions SET revoked_at=? WHERE token_hash=? AND revoked_at IS NULL",
+        (now(), token_hash))
+    conn.commit()
+    if cur.rowcount:
+        audit("auth.session_revoked", actor=actor, entity_type="session",
+              entity_id=token_hash[:12], note="logout")
+    return bool(cur.rowcount)
+
+
+def revoke_all_sessions_for_user(username: str, actor: str) -> int:
+    """After a password change/reset, or an account disable -- a stolen
+    session must not keep working just because the password that
+    originally created it changed. Logging out is deliberately NOT one
+    of the reasons a background job would ever be interrupted: jobs
+    (edge/jobs.py) run on their own thread and never consult a session."""
+    conn = connect()
+    cur = conn.execute(
+        "UPDATE sessions SET revoked_at=? WHERE username=? AND revoked_at IS NULL",
+        (now(), username))
+    conn.commit()
+    if cur.rowcount:
+        audit("auth.session_revoked", actor=actor, entity_type="user", entity_id=username,
+              note=f"{cur.rowcount} session(s)")
+    return cur.rowcount
 
 
 # ── scale/hardening extension (v0.2.0) ─────────────────────────────────

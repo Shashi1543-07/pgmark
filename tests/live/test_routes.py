@@ -77,8 +77,80 @@ def _run(c: TestClient) -> int:
     h = c.get("/api/health").json()
     check("health responds", h["ok"])
     check("schema migrated", h["schema_version"] >= 1, f"v{h['schema_version']}")
-    check("schema reaches migration 6 (images.status allows 'vehicle')",
-          h["schema_version"] == 6, f"v{h['schema_version']}")
+    check("schema reaches migration 7 (auth hardening)",
+          h["schema_version"] == 7, f"v{h['schema_version']}")
+
+    # ── authentication & offline security ────────────────────────────────
+    from edge import auth
+    # Verify unauthenticated request is blocked
+    check("unauthenticated request returns 401", c.get("/api/reserves").status_code == 401)
+    check("unauthenticated request returns 401 without cookie", "pugmark_session" not in c.cookies)
+
+    # Seed admin if needed and setup known test passwords
+    repo.ensure_admin()
+    admin_pw = "TestAdminPass123!"
+    repo.connect().execute("UPDATE users SET pwd_hash=?, must_change_password=0 WHERE username='admin'",
+                           (auth.hash_secret(admin_pw),))
+    repo.connect().commit()
+
+    # Test invalid login fails and doesn't reveal user existence
+    bad_login = c.post("/api/auth/login", json={"username": "admin", "password": "WrongPassword123!"})
+    check("invalid password returns 401", bad_login.status_code == 401)
+    check("generic failure message", bad_login.json()["detail"] == "Invalid username or password.")
+    check("login returns attempts remaining", "attempts_remaining" in bad_login.json())
+
+    # Test user creation
+    field_pw = "TestFieldPass123!"
+    field_rec = "TEST-RECO-VERY-CODE-1111-2222"
+    repo.create_user("field_user", "Test Field", "field", auth.hash_secret(field_pw),
+                     auth.hash_secret(auth.normalise_recovery_code(field_rec)), must_change=False)
+
+    # Test lockout math (5 failed attempts locks user)
+    for _ in range(5):
+        c.post("/api/auth/login", json={"username": "field_user", "password": "BadPassword123!"})
+    locked_login = c.post("/api/auth/login", json={"username": "field_user", "password": field_pw})
+    check("account is locked after 5 failed attempts", locked_login.status_code == 401)
+    check("lockout returns locked indicator", locked_login.json().get("locked") is True)
+    user_row = repo.user("field_user")
+    check("locked_until is set in DB", user_row["locked_until"] is not None)
+
+    # Test emergency recovery / forgot password
+    new_field_pw = "NewFieldPass123!"
+    forgot_res = c.post("/api/auth/forgot-password", json={
+        "username": "field_user",
+        "recovery_code": field_rec,
+        "new_password": new_field_pw,
+    })
+    check("forgot password succeeds with valid recovery code", forgot_res.status_code == 200)
+    check("new recovery code returned and rotated", "recovery_code" in forgot_res.json() and forgot_res.json()["recovery_code"] != field_rec)
+    user_after_reset = repo.user("field_user")
+    check("failed attempts reset to 0 after recovery", user_after_reset["failed_login_attempts"] == 0)
+    check("lockout cleared after recovery", user_after_reset["locked_until"] is None)
+
+    # Test field login with new password
+    c_field = TestClient(app)
+    field_login = c_field.post("/api/auth/login", json={"username": "field_user", "password": new_field_pw})
+    check("field user can login after recovery", field_login.status_code == 200)
+
+    # Test RBAC permissions: field user can access operational routes but cannot manage users
+    check("field user can access dev seed", c_field.post("/api/dev/seed", json={"which": "blank"}).status_code == 200)
+    check("field user can read audit log", c_field.get("/api/audit").status_code == 200)
+    check("field user cannot manage users", c_field.get("/api/auth/users").status_code == 403)
+
+    # Test analyst user for coordinate generalisation
+    analyst_pw = "TestAnalystPass123!"
+    analyst_rec = "TEST-RECO-VERY-CODE-3333-4444"
+    repo.create_user("analyst_user", "Test Analyst", "analyst", auth.hash_secret(analyst_pw),
+                     auth.hash_secret(auth.normalise_recovery_code(analyst_rec)), must_change=False)
+    c_analyst = TestClient(app)
+    c_analyst.post("/api/auth/login", json={"username": "analyst_user", "password": analyst_pw})
+
+    # Log in main client as admin
+    admin_login = c.post("/api/auth/login", json={"username": "admin", "password": admin_pw})
+    check("admin login succeeds", admin_login.status_code == 200)
+    check("session cookie set", "pugmark_session" in c.cookies)
+    me = c.get("/api/auth/me").json()
+    check("whoami returns admin user", me["username"] == "admin" and me["role"] == "admin")
 
     reserves = c.get("/api/reserves").json()
     check("reserve seeded", len(reserves) == 1)
@@ -781,8 +853,8 @@ def _run(c: TestClient) -> int:
               "megadetector/atrw and python -m tools.train_identify to exercise them)")
 
     # ── privacy: role gating is a server control, not a UI suggestion ───
-    precise = c.get(f"/api/individuals/{inds[0]['ind_id']}?role=director").json()
-    coarse = c.get(f"/api/individuals/{inds[0]['ind_id']}?role=analyst").json()
+    precise = c.get(f"/api/individuals/{inds[0]['ind_id']}").json()
+    coarse = c_analyst.get(f"/api/individuals/{inds[0]['ind_id']}").json()
     p_lat = precise["captures"][0]["lat"]
     a_lat = coarse["captures"][0]["lat"]
     check("analyst coordinates are generalised", p_lat != a_lat,
@@ -858,7 +930,7 @@ def _run(c: TestClient) -> int:
               for f in gj["features"] for o in with_hull
               if f["properties"]["ind_id"] == o["ind_id"]))
 
-    gj_analyst = c.get(f"/api/runs/{run_id}/occupancy/export.geojson?role=analyst").json()
+    gj_analyst = c_analyst.get(f"/api/runs/{run_id}/occupancy/export.geojson").json()
     check("an analyst's export carries no precise geometry, only the aggregate area",
           all(f["geometry"] is None for f in gj_analyst["features"])
           and all(f["properties"]["area_km2"] is not None for f in gj_analyst["features"]))
@@ -872,7 +944,7 @@ def _run(c: TestClient) -> int:
           len(csv_lines) - 1 == len(occ), f"{len(csv_lines) - 1} vs {len(occ)}")
     check("CSV header names its columns", csv_lines[0].split(",")[:2] == ["ind_id", "run_id"])
 
-    csv_analyst = c.get(f"/api/runs/{run_id}/occupancy/export.csv?role=analyst").text
+    csv_analyst = c_analyst.get(f"/api/runs/{run_id}/occupancy/export.csv").text
     header = csv_analyst.strip().splitlines()[0].split(",")
     first_row = csv_analyst.strip().splitlines()[1].split(",")
     check("an analyst's CSV blanks the centroid columns rather than rounding them",
@@ -942,7 +1014,7 @@ def _run(c: TestClient) -> int:
     check("blank frames are represented in the export, not silently dropped",
           len(fake_blank_obs) == 1 and fake_blank_obs[0]["observationType"] == "blank")
 
-    zip_analyst = c.get(f"/api/runs/{run_id}/export/camtrapdp?role=analyst")
+    zip_analyst = c_analyst.get(f"/api/runs/{run_id}/export/camtrapdp")
     zf_a = zipfile.ZipFile(io.BytesIO(zip_analyst.content))
     dep_analyst = list(csv.DictReader(io.StringIO(zf_a.read("deployments.csv").decode())))
     check("an analyst's Camtrap DP export has no precise station coordinates either",

@@ -200,8 +200,16 @@ def patch_for(ind_id: str, home: dict, final: bool,
 
 def main(reset: bool = False) -> None:
     config.ensure_dirs()
+    existing_users = []
+    existing_sessions = []
     if reset and config.DB_PATH.exists():
-        repo.close()
+        try:
+            conn = repo.connect()
+            existing_users = repo._rows(conn.execute("SELECT * FROM users"))
+            existing_sessions = repo._rows(conn.execute("SELECT * FROM sessions WHERE revoked_at IS NULL"))
+        except Exception:
+            pass
+        repo.close_all()
         config.DB_PATH.unlink()
         for suffix in ("-wal", "-shm"):
             p = Path(str(config.DB_PATH) + suffix)
@@ -384,7 +392,7 @@ def main(reset: bool = False) -> None:
                 "orig_path": f"E:/CAMERA_TRAP/{st['folder_hint']}/IMG_{img_id[:6]}.JPG",
                 "quarantine_path": f"quarantine/{run_id}/{img_id}.JPG",
                 "reason": "no subject detected" if stage == "B" else "no motion vs station background",
-                "conf": round(RNG.uniform(0.90, 0.999), 3),
+                "conf": round(RNG.uniform(0.68, 0.98), 3),
                 "model_version": "camtrap-detector-compact@1.0.0",
                 "threshold": config.CONFIG.triage.detector_conf_threshold if stage == "B"
                             else config.CONFIG.triage.stage_a_blank_threshold,
@@ -432,6 +440,16 @@ def main(reset: bool = False) -> None:
     repo.insert_many("alerts", alert_rows)
 
     _review_queue(crops, assigns, inds)
+
+    if existing_users:
+        for u in existing_users:
+            repo.insert("users", dict(u))
+        for s in existing_sessions:
+            repo.insert("sessions", dict(s))
+    else:
+        adm = repo.ensure_admin()
+        if adm["created"]:
+            print(f"admin account created — temp password: {adm['temp_password']} · recovery code: {adm['recovery_code']}")
 
     repo.audit("seed.demo", actor="system", note="synthetic Pench dataset")
     print(f"seeded {len(runs)} runs · {len(images)} images · "

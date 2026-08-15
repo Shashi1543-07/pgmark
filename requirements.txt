@@ -7,6 +7,12 @@ opencv-python-headless>=4.9
 pillow>=10.0
 python-multipart>=0.0.9
 
+# edge/auth.py -- password hashing for the offline login system.
+# argon2-cffi ships a compiled wheel per platform (argon2-cffi-bindings),
+# so it needs staging into wheels/ same as everything else above; there is
+# no pure-Python fallback worth using for password hashing.
+argon2-cffi>=23.1
+
 # edge/pipeline/identify.py -- re-identification embedder. CPU-only wheels:
 # the deployment target has no GPU (CLAUDE.md), and this is inference-only
 # in the field. Training (tools/train_identify.py) is offline, on whatever

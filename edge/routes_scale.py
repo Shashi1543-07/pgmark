@@ -35,17 +35,20 @@ import importlib.util
 import shutil
 from pathlib import Path
 
-from fastapi import Body, HTTPException, Query
+from fastapi import Body, Depends, HTTPException
 
 from edge import config, jobs
 from edge.db import repo
 
 
 def register(app) -> None:                                        # noqa: C901
+    from edge.app import current_user, require_role
+
     # ── the whole pipeline, as one action ────────────────────────────────
 
     @app.post("/api/runs/{run_id}/pipeline")
-    def start_pipeline(run_id: str, payload: dict = Body(default={})) -> dict:
+    def start_pipeline(run_id: str, payload: dict = Body(default={}),
+                       user: dict = Depends(require_role(*config.PERMISSIONS["pipeline_trigger"]))) -> dict:
         """Triage -> identify -> occupancy -> alerts, as one resumable
         background job.
 
@@ -67,30 +70,30 @@ def register(app) -> None:                                        # noqa: C901
         if existing:
             return {"job_id": existing[0]["job_id"], "already_running": True}
 
-        job_id = jobs.create("stage3", run["reserve_id"], run_id,
-                             actor=payload.get("actor", "director"))
+        actor = user["username"]
+        job_id = jobs.create("stage3", run["reserve_id"], run_id, actor=actor)
         from edge.pipeline import stage3
-        jobs.start(job_id, lambda jid: stage3.run_full_pipeline(
-            run_id, jid, payload.get("actor", "director")))
+        jobs.start(job_id, lambda jid: stage3.run_full_pipeline(run_id, jid, actor))
         return {"job_id": job_id, "run_id": run_id,
                 "note": "Running in the background. Poll /api/jobs/{job_id} for progress; "
                         "it survives a page reload and can be resumed after a restart."}
 
     @app.post("/api/runs/{run_id}/stage3")
-    def start_stage3(run_id: str, payload: dict = Body(default={})) -> dict:
+    def start_stage3(run_id: str, payload: dict = Body(default={}),
+                     user: dict = Depends(require_role(*config.PERMISSIONS["pipeline_trigger"]))) -> dict:
         """Bulk Stage 3 alone, for a run already triaged."""
         run = repo.run(run_id)
         if not run:
             raise HTTPException(404, "run not found")
-        job_id = jobs.create("stage3", run["reserve_id"], run_id,
-                             actor=payload.get("actor", "director"))
+        actor = user["username"]
+        job_id = jobs.create("stage3", run["reserve_id"], run_id, actor=actor)
         from edge.pipeline import stage3
-        jobs.start(job_id, lambda jid: stage3.run_stage3(
-            run_id, jid, payload.get("actor", "director")))
+        jobs.start(job_id, lambda jid: stage3.run_stage3(run_id, jid, actor))
         return {"job_id": job_id}
 
     @app.post("/api/runs/{run_id}/postprocess")
-    def run_postprocess(run_id: str, payload: dict = Body(default={})) -> dict:
+    def run_postprocess(run_id: str, payload: dict = Body(default={}),
+                        user: dict = Depends(require_role(*config.PERMISSIONS["pipeline_trigger"]))) -> dict:
         """Recompute occupancy and alerts for a run.
 
         Fast enough to run inline (well under a second on the seeded
@@ -103,40 +106,41 @@ def register(app) -> None:                                        # noqa: C901
             raise HTTPException(404, "run not found")
         from edge.pipeline import postprocess
         try:
-            return postprocess.run(run_id, actor=payload.get("actor", "director"))
+            return postprocess.run(run_id, actor=user["username"])
         except ValueError as e:
             raise HTTPException(400, str(e))
 
     # ── jobs ─────────────────────────────────────────────────────────────
 
     @app.get("/api/jobs")
-    def list_jobs(run_id: str | None = None) -> dict:
+    def list_jobs(run_id: str | None = None, user: dict = Depends(current_user)) -> dict:
         return {"active": jobs.active(),
                 "for_run": jobs.for_run(run_id) if run_id else None}
 
     @app.get("/api/jobs/{job_id}")
-    def job_status(job_id: str) -> dict:
+    def job_status(job_id: str, user: dict = Depends(current_user)) -> dict:
         s = jobs.status(job_id)
         if not s:
             raise HTTPException(404, "job not found")
         return s
 
     @app.post("/api/jobs/{job_id}/cancel")
-    def cancel_job(job_id: str, actor: str = Body("director", embed=True)) -> dict:
+    def cancel_job(job_id: str, user: dict = Depends(require_role(*config.PERMISSIONS["pipeline_trigger"]))) -> dict:
         """Cooperative: the stage stops at its next batch boundary with a
         usable cursor. Nothing is killed mid-write — that is how you get
         files moved into quarantine with no manifest recording where they
         came from."""
-        if not jobs.cancel(job_id, actor):
+        if not jobs.cancel(job_id, user["username"]):
             raise HTTPException(400, "job is not running")
         return {"ok": True, "note": "Stopping at the next batch boundary. Work already "
                                     "committed is kept and the job can be resumed."}
 
     @app.post("/api/jobs/{job_id}/resume")
-    def resume_job(job_id: str, actor: str = Body("director", embed=True)) -> dict:
+    def resume_job(job_id: str, user: dict = Depends(require_role(*config.PERMISSIONS["pipeline_trigger"]))) -> dict:
         job = jobs.get(job_id)
         if not job:
             raise HTTPException(404, "job not found")
+        actor = user["username"]
         from edge.pipeline import stage3
         try:
             if job.kind == "stage3":
@@ -152,7 +156,7 @@ def register(app) -> None:                                        # noqa: C901
         return {"job_id": job_id, "resumed_from": job.cursor, "done": job.done_count}
 
     @app.get("/api/runs/{run_id}/dead-letters")
-    def dead_letters(run_id: str) -> dict:
+    def dead_letters(run_id: str, user: dict = Depends(current_user)) -> dict:
         """Frames that failed and were skipped. A 50,000-frame import with
         40 unreadable files is not the same import as one with none, and
         v0.1.1 had nowhere to record the difference — a failed frame was
@@ -162,7 +166,8 @@ def register(app) -> None:                                        # noqa: C901
     # ── pagination ───────────────────────────────────────────────────────
 
     @app.get("/api/runs/{run_id}/images/page")
-    def images_page(run_id: str, status: str, limit: int = 100, offset: int = 0) -> dict:
+    def images_page(run_id: str, status: str, limit: int = 100, offset: int = 0,
+                    user: dict = Depends(current_user)) -> dict:
         """`/api/runs/{id}/images` returns every matching row: 945 on the
         seeded demo, ~4,000 scaled to a 50,000-frame import, each rendered
         as a DOM row with a button. This replaces it."""
@@ -171,27 +176,27 @@ def register(app) -> None:                                        # noqa: C901
         return repo.images_by_status_page(run_id, status, limit, offset)
 
     @app.get("/api/review/page")
-    def review_page(limit: int = 50, offset: int = 0) -> dict:
+    def review_page(limit: int = 50, offset: int = 0, user: dict = Depends(current_user)) -> dict:
         return repo.review_open_page(limit, offset)
 
     @app.post("/api/review/{queue_id}/claim")
-    def claim_review(queue_id: str, actor: str = Body("director", embed=True)) -> dict:
+    def claim_review(queue_id: str, user: dict = Depends(require_role(*config.PERMISSIONS["review_decide"]))) -> dict:
         """Two reviewers in two tabs saw the same top item and could both
         decide it; the second silently superseded the first with no sign a
         race had occurred."""
-        if not repo.claim_review_item(queue_id, actor):
+        if not repo.claim_review_item(queue_id, user["username"]):
             raise HTTPException(409, "another reviewer is already working on this item")
         return {"ok": True}
 
     @app.post("/api/review/{queue_id}/release")
-    def release_review(queue_id: str) -> dict:
+    def release_review(queue_id: str, user: dict = Depends(require_role(*config.PERMISSIONS["review_decide"]))) -> dict:
         repo.release_review_item(queue_id)
         return {"ok": True}
 
     # ── catalogue: the states that had no route ──────────────────────────
 
     @app.get("/api/catalogue/health")
-    def catalogue_health(reserve_id: str) -> dict:
+    def catalogue_health(reserve_id: str, user: dict = Depends(current_user)) -> dict:
         """Per-individual catalogue completeness, including the single-flank
         state. CLAUDE.md rule 6 calls that state first-class; v0.1.1 gave it
         no route, so the UI could never ask which individuals were in it."""
@@ -204,14 +209,15 @@ def register(app) -> None:                                        # noqa: C901
         }
 
     @app.get("/api/individuals/provisional")
-    def provisional(reserve_id: str) -> dict:
+    def provisional(reserve_id: str, user: dict = Depends(current_user)) -> dict:
         """Auto-enrolled individuals awaiting confirmation. `promote` existed
         as a route and had no caller, so these accumulated with no way to
         clear them."""
         return {"items": repo.provisional_individuals(reserve_id)}
 
     @app.post("/api/individuals/{ind_id}/merge")
-    def merge(ind_id: str, payload: dict = Body(...)) -> dict:
+    def merge(ind_id: str, payload: dict = Body(...),
+              user: dict = Depends(require_role(*config.PERMISSIONS["individual_merge"]))) -> dict:
         """Fold one individual into another.
 
         The unavoidable consequence of provisional auto-enrolment: the same
@@ -224,20 +230,21 @@ def register(app) -> None:                                        # noqa: C901
         if not target:
             raise HTTPException(400, "`into` (the surviving ind_id) is required")
         try:
-            return repo.merge_individual(ind_id, target, payload.get("actor", "director"))
+            return repo.merge_individual(ind_id, target, user["username"])
         except KeyError as e:
             raise HTTPException(404, str(e))
         except ValueError as e:
             raise HTTPException(400, str(e))
 
     @app.post("/api/individuals/rebuild-entities")
-    def rebuild_entities(reserve_id: str = Body(..., embed=True)) -> dict:
+    def rebuild_entities(reserve_id: str = Body(..., embed=True),
+                         user: dict = Depends(require_role(*config.PERMISSIONS["individual_merge"]))) -> dict:
         return {"entities": repo.rebuild_entities(reserve_id)}
 
     # ── map data ─────────────────────────────────────────────────────────
 
     @app.get("/api/runs/{run_id}/map")
-    def map_data(run_id: str, role: str = Query("director")) -> dict:
+    def map_data(run_id: str, user: dict = Depends(current_user)) -> dict:
         """Everything the map needs, in one request.
 
         Including the two facts the old map hardcoded as literal station IDs
@@ -247,6 +254,8 @@ def register(app) -> None:                                        # noqa: C901
         run = repo.run(run_id)
         if not run:
             raise HTTPException(404, "run not found")
+        role = user["role"]
+        actor = user["username"]
         period = repo.run_period(run_id)
         generalised = role in config.CONFIG.privacy.generalise_coords_for_roles
 
@@ -266,7 +275,7 @@ def register(app) -> None:                                        # noqa: C901
                 p["centroid_lat"], p["centroid_lon"] = rnd(p["centroid_lat"]), rnd(p["centroid_lon"])
 
         repo.audit(f"location.read.{'generalised' if generalised else 'precise'}",
-                   actor=role, entity_type="run", entity_id=run_id, note="map")
+                   actor=actor, entity_type="run", entity_id=run_id, note="map")
 
         return {"stations": stations, "occupancy": occ, "prior": prior,
                 "alerts": [{"ind_id": a["ind_id"], "type": a["type"],
@@ -277,7 +286,7 @@ def register(app) -> None:                                        # noqa: C901
     # ── readiness ────────────────────────────────────────────────────────
 
     @app.get("/api/health/ready")
-    def readiness() -> dict:
+    def readiness(user: dict = Depends(current_user)) -> dict:
         """What can actually run on this machine, right now.
 
         `/api/health` returned `{"ok": true}` unconditionally — it was true
@@ -372,7 +381,8 @@ def register(app) -> None:                                        # noqa: C901
     # ── ops ──────────────────────────────────────────────────────────────
 
     @app.post("/api/ops/backup")
-    def backup(payload: dict = Body(default={})) -> dict:
+    def backup(payload: dict = Body(default={}),
+               user: dict = Depends(require_role(*config.PERMISSIONS["ops_manage"]))) -> dict:
         """A consistent copy, taken through SQLite's own backup API rather
         than a file copy (which is not safe against a live WAL).
 
@@ -389,17 +399,17 @@ def register(app) -> None:                                        # noqa: C901
             raise HTTPException(500, f"backup failed: {exc}")
 
     @app.get("/api/ops/integrity")
-    def integrity() -> dict:
+    def integrity(user: dict = Depends(current_user)) -> dict:
         return repo.integrity_check()
 
     @app.post("/api/ops/checkpoint")
-    def wal_checkpoint() -> dict:
+    def wal_checkpoint(user: dict = Depends(require_role(*config.PERMISSIONS["ops_manage"]))) -> dict:
         """Truncate the write-ahead log. After a large import the -wal file
         can exceed the database itself; nothing in v0.1.1 ever ran this."""
         return repo.checkpoint_wal()
 
     @app.get("/api/ops/jobs")
-    def ops_jobs() -> dict:
+    def ops_jobs(user: dict = Depends(current_user)) -> dict:
         return {"active": jobs.active(),
                 "recent": repo._rows(repo.connect().execute(
                     "SELECT job_id, run_id, kind, state, total, done_count, failed_count,"

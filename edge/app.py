@@ -16,13 +16,14 @@ import string
 import subprocess
 import sys
 import zipfile
+from datetime import datetime, timezone
 from pathlib import Path
 
-from fastapi import Body, FastAPI, File, Form, HTTPException, Query, UploadFile
+from fastapi import Body, Depends, FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
-from edge import config
+from edge import auth, config
 from edge.db import repo
 from edge.exports import camtrapdp
 from edge.exports import csv as csv_export
@@ -56,6 +57,24 @@ async def no_cache_ui(request, call_next):
     return response
 
 
+SESSION_COOKIE = "pugmark_session"
+
+
+@app.middleware("http")
+async def resolve_session(request: Request, call_next):
+    """Resolves whoever the session cookie belongs to and attaches it to
+    request.state.user (or None) -- this middleware only ever *identifies*
+    the caller. It never blocks a request itself; current_user()/
+    require_role() below do that, at each route that needs it. That split
+    is deliberate (see the "RBAC enforcement" design note in the auth
+    plan): different routes need different role sets, not just
+    authenticated-or-not, and that granularity belongs at the route, not
+    a single blanket gate here."""
+    token = request.cookies.get(SESSION_COOKIE)
+    request.state.user = repo.session_user(auth.hash_token(token)) if token else None
+    return await call_next(request)
+
+
 @app.on_event("startup")
 def _startup() -> None:
     config.ensure_dirs()
@@ -63,6 +82,12 @@ def _startup() -> None:
     if applied:
         repo.audit("schema.migrate", after={"applied": applied,
                                             "version": repo.schema_version()})
+
+    # Ensure admin user is seeded so node is immediately usable offline
+    adm = repo.ensure_admin()
+    if adm["created"]:
+        repo.audit("auth.user_created", actor="system", entity_type="user",
+                   entity_id="admin", after={"role": "admin", "startup_seeded": True})
 
     # A job marked `running` at boot cannot be running: this process just
     # started. Mark them interrupted so the run screen shows "stopped at
@@ -85,13 +110,13 @@ def _startup() -> None:
             pass
 
 
-from edge.routes_scale import register as _register_scale_routes  # noqa: E402
-_register_scale_routes(app)
-
-
 # ── role gating ─────────────────────────────────────────────────────────
 # Roles are enforced here rather than in the UI, because a UI check is a
-# suggestion and a server check is a control. See blueprint §10.
+# suggestion and a server check is a control. See blueprint §10. Until this
+# module's auth section (below) existed, "here" meant a role= query string
+# the client supplied itself with no credential behind it -- ?role=director
+# was the entire access control. Every route now derives role from
+# Depends(current_user)/Depends(require_role(...)), never from client input.
 
 def _generalise(lat: float | None, lon: float | None, role: str) -> tuple:
     """Roles above reserve level see grid cells, not points. National
@@ -104,8 +129,32 @@ def _generalise(lat: float | None, lon: float | None, role: str) -> tuple:
     return round(lat / step) * step, round(lon / step) * step
 
 
-def _role(role: str = Query("director", pattern="^(field|biologist|director|analyst|admin)$")) -> str:
-    return role
+def current_user(request: Request) -> dict:
+    """The one required dependency on every protected route. 401, not a
+    redirect or a default identity -- an API returning *something* for an
+    unauthenticated request is exactly the mistake this whole module
+    exists to fix."""
+    user = request.state.user
+    if not user:
+        raise HTTPException(401, "not authenticated")
+    return user
+
+
+def require_role(*roles: str):
+    """Depends(require_role("admin", "director")) -- 403 if the resolved,
+    *current* role (not whatever a client claims) isn't in the allowed
+    set. A factory, not a single dependency, because different routes
+    genuinely need different role sets -- import/run processing isn't the
+    same set as user management -- and that belongs at the route."""
+    def _check(user: dict = Depends(current_user)) -> dict:
+        if user["role"] not in roles:
+            raise HTTPException(403, "insufficient permission")
+        return user
+    return _check
+
+
+from edge.routes_scale import register as _register_scale_routes  # noqa: E402
+_register_scale_routes(app)
 
 
 # ── meta ────────────────────────────────────────────────────────────────
@@ -127,8 +176,275 @@ def get_config() -> dict:
     return config.CONFIG.to_dict()
 
 
+# ── auth ────────────────────────────────────────────────────────────────
+# Passwords/recovery codes/tokens: edge/auth.py. Persistence: repo.py's
+# authentication section. This is just the HTTP surface over both.
+
+SESSION_COOKIE = "pugmark_session"
+
+# Verified against on an unknown username so a login attempt for a real
+# account and a nonexistent one cost the same amount of CPU time -- without
+# this, "how long did the response take" is itself a username-enumeration
+# oracle even though every response body is identical.
+_DUMMY_HASH = auth.hash_secret("no such account, this hash is never a match")
+
+_LOGIN_FAIL = "Invalid username or password."
+_RECOVERY_FAIL = "Invalid username or recovery code."
+
+
+@app.post("/api/auth/login")
+def login(response: Response, username: str = Body(...), password: str = Body(...)):
+    """Validates user credentials, enforcing lockout thresholds with structured
+    attempt feedback while preserving timing indistinguishability for unknown accounts."""
+    max_attempts = config.CONFIG.auth.failed_attempts_before_lock
+    user = repo.user_by_username(username)
+    if not user:
+        auth.verify_secret(password, _DUMMY_HASH)
+        return JSONResponse(
+            status_code=401,
+            content={
+                "detail": _LOGIN_FAIL,
+                "attempts_remaining": None,
+                "max_attempts": max_attempts,
+                "locked": False,
+            },
+        )
+    if user["disabled"]:
+        return JSONResponse(
+            status_code=401,
+            content={
+                "detail": "Account is disabled. Please contact an administrator.",
+                "attempts_remaining": 0,
+                "max_attempts": max_attempts,
+                "locked": False,
+                "disabled": True,
+            },
+        )
+    if user["locked_until"] and user["locked_until"] > repo.now():
+        locked_until_dt = datetime.fromisoformat(user["locked_until"])
+        remaining_sec = max(1, int((locked_until_dt - datetime.now(timezone.utc)).total_seconds()))
+        return JSONResponse(
+            status_code=401,
+            content={
+                "detail": f"Account is temporarily locked. Try again in {remaining_sec}s, or reset via recovery code.",
+                "attempts_remaining": 0,
+                "max_attempts": max_attempts,
+                "locked": True,
+                "locked_until": user["locked_until"],
+                "lockout_seconds": remaining_sec,
+            },
+        )
+    if not auth.verify_secret(password, user["pwd_hash"]):
+        fail_res = repo.record_login_failure(username)
+        attempts = fail_res["attempts"]
+        locked_until = fail_res["locked_until"]
+        attempts_remaining = max(0, max_attempts - attempts)
+        if locked_until:
+            locked_until_dt = datetime.fromisoformat(locked_until)
+            remaining_sec = max(1, int((locked_until_dt - datetime.now(timezone.utc)).total_seconds()))
+            return JSONResponse(
+                status_code=401,
+                content={
+                    "detail": f"Account locked due to {attempts} failed attempts. Try again in {remaining_sec}s, or reset via recovery code.",
+                    "attempts_remaining": 0,
+                    "max_attempts": max_attempts,
+                    "locked": True,
+                    "locked_until": locked_until,
+                    "lockout_seconds": remaining_sec,
+                },
+            )
+        return JSONResponse(
+            status_code=401,
+            content={
+                "detail": _LOGIN_FAIL,
+                "attempts_remaining": attempts_remaining,
+                "max_attempts": max_attempts,
+                "locked": False,
+            },
+        )
+
+    repo.record_login_success(username)
+    token = auth.generate_session_token()
+    repo.create_session(username, user["role"], auth.hash_token(token), user_agent=None)
+    response.set_cookie(
+        SESSION_COOKIE, token, httponly=True, samesite="lax",
+        # secure=False is deliberate, not an oversight: this deployment is
+        # confirmed single-laptop, browser and server on 127.0.0.1, no
+        # HTTPS anywhere -- see the plan's scope note. Revisit if that
+        # deployment model ever changes.
+        secure=False, max_age=config.CONFIG.auth.session_absolute_hours * 3600, path="/")
+    return {
+        "username": username, "role": user["role"],
+        "display_name": user["display_name"],
+        "must_change_password": bool(user["must_change_password"]),
+    }
+
+
+@app.post("/api/auth/logout")
+def logout(response: Response, user: dict = Depends(current_user)) -> dict:
+    repo.revoke_session(user["token_hash"], actor=user["username"])
+    response.delete_cookie(SESSION_COOKIE, path="/")
+    return {"ok": True}
+
+
+@app.get("/api/auth/me")
+def auth_me(user: dict = Depends(current_user)) -> dict:
+    return {
+        "username": user["username"], "role": user["role"],
+        "display_name": user["display_name"],
+        "must_change_password": bool(user["must_change_password"]),
+    }
+
+
+@app.post("/api/auth/change-password")
+def change_password(
+    response: Response,
+    current_password: str = Body(...),
+    new_password: str = Body(...),
+    user: dict = Depends(current_user),
+) -> dict:
+    """Requires the current password even when the caller is only here
+    because must_change_password forced them -- a hijacked session still
+    should not be able to lock the real owner out by setting a new
+    password nobody else knows."""
+    row = repo.user_by_username(user["username"])
+    if not row or not auth.verify_secret(current_password, row["pwd_hash"]):
+        raise HTTPException(401, "Current password is incorrect.")
+    weak = auth.is_weak_password(new_password, user["username"])
+    if weak:
+        raise HTTPException(400, weak)
+    repo.set_password(user["username"], auth.hash_secret(new_password),
+                       must_change=False, actor=user["username"])
+    # Establish active session for the user with new credentials
+    token = auth.generate_session_token()
+    repo.create_session(user["username"], row["role"], auth.hash_token(token), user_agent=None)
+    response.set_cookie(
+        SESSION_COOKIE, token, httponly=True, samesite="lax",
+        secure=False, max_age=config.CONFIG.auth.session_absolute_hours * 3600, path="/")
+    return {
+        "ok": True,
+        "username": user["username"],
+        "role": row["role"],
+        "display_name": row["display_name"],
+        "relogin_required": False,
+    }
+
+
+@app.post("/api/auth/forgot-password")
+def forgot_password(
+    username: str = Body(...),
+    recovery_code: str = Body(...),
+    new_password: str = Body(...),
+) -> dict:
+    """No session required -- this *is* the "I'm locked out" path. Reuses
+    the same failed_login_attempts/locked_until columns as ordinary login,
+    so brute-forcing a recovery code is rate-limited the same way brute-
+    forcing a password is, rather than needing a second lockout mechanism.
+    Never auto-logs in afterward (CLAUDE.md-adjacent: proving the recovery
+    code is not the same as proving it's this session's rightful owner) --
+    the caller gets a fresh recovery code once, then must log in normally."""
+    user = repo.user_by_username(username)
+    if not user or not user["recovery_code_hash"]:
+        auth.verify_secret(recovery_code, _DUMMY_HASH)
+        raise HTTPException(401, _RECOVERY_FAIL)
+    if user["locked_until"] and user["locked_until"] > repo.now():
+        locked_until_dt = datetime.fromisoformat(user["locked_until"])
+        remaining_sec = max(1, int((locked_until_dt - datetime.now(timezone.utc)).total_seconds()))
+        return JSONResponse(
+            status_code=401,
+            content={
+                "detail": f"Account is temporarily locked. Try again in {remaining_sec}s.",
+                "locked": True,
+                "lockout_seconds": remaining_sec,
+            },
+        )
+    if not auth.verify_secret(auth.normalise_recovery_code(recovery_code),
+                               user["recovery_code_hash"]):
+        repo.record_login_failure(username)
+        raise HTTPException(401, _RECOVERY_FAIL)
+
+    weak = auth.is_weak_password(new_password, username)
+    if weak:
+        raise HTTPException(400, weak)
+
+    repo.record_login_success(username)  # clears the failed-attempt counter
+    repo.set_password(username, auth.hash_secret(new_password),
+                       must_change=False, actor=username)
+    new_code = auth.generate_recovery_code()
+    repo.set_recovery_code(username, auth.hash_secret(auth.normalise_recovery_code(new_code)), actor=username)
+    return {"ok": True, "recovery_code": new_code}
+
+
+@app.get("/api/auth/users")
+def list_auth_users(user: dict = Depends(require_role("admin"))) -> list[dict]:
+    return repo.list_users()
+
+
+@app.post("/api/auth/users")
+def create_auth_user(
+    username: str = Body(...),
+    display_name: str | None = Body(None),
+    role: str = Body(...),
+    user: dict = Depends(require_role("admin")),
+) -> dict:
+    if repo.user_by_username(username):
+        raise HTTPException(409, "That username already exists.")
+    if role not in config.CONFIG.auth.roles:
+        raise HTTPException(400, f"Unknown role. Must be one of: {', '.join(config.CONFIG.auth.roles)}")
+    temp_password = auth.generate_temp_password()
+    recovery_code = auth.generate_recovery_code()
+    repo.create_user(username, display_name, role, auth.hash_secret(temp_password),
+                      actor=user["username"])
+    repo.set_recovery_code(username, auth.hash_secret(auth.normalise_recovery_code(recovery_code)), actor=user["username"])
+    # Shown exactly once, here, in the response -- neither value is ever
+    # retrievable again. The admin is responsible for handing this to the
+    # new user out of band (printed slip, said aloud) and destroying it.
+    return {"username": username, "temp_password": temp_password, "recovery_code": recovery_code}
+
+
+@app.post("/api/auth/users/{username}/disable")
+def disable_auth_user(username: str, user: dict = Depends(require_role("admin"))) -> dict:
+    if username == user["username"]:
+        raise HTTPException(400, "Cannot disable your own account.")
+    target = repo.user_by_username(username)
+    if not target:
+        raise HTTPException(404, "No such user.")
+    repo.disable_user(username, actor=user["username"])
+    return {"ok": True}
+
+
+@app.post("/api/auth/users/{username}/enable")
+def enable_auth_user(username: str, user: dict = Depends(require_role("admin"))) -> dict:
+    target = repo.user_by_username(username)
+    if not target:
+        raise HTTPException(404, "No such user.")
+    repo.enable_user(username, actor=user["username"])
+    return {"ok": True}
+
+
+@app.delete("/api/auth/users/{username}")
+@app.post("/api/auth/users/{username}/delete")
+def delete_auth_user(username: str, user: dict = Depends(require_role("admin"))) -> dict:
+    if username == user["username"]:
+        raise HTTPException(400, "Cannot delete your own account.")
+    target = repo.user_by_username(username)
+    if not target:
+        raise HTTPException(404, "No such user.")
+    repo.delete_user(username, actor=user["username"])
+    return {"ok": True}
+
+
+@app.post("/api/auth/users/{username}/reset-credentials")
+def reset_auth_user_credentials(username: str, user: dict = Depends(require_role("admin"))) -> dict:
+    target = repo.user_by_username(username)
+    if not target:
+        raise HTTPException(404, "No such user.")
+    result = repo.reset_user_credentials(username, actor=user["username"])
+    return result
+
+
 @app.get("/api/reserves")
-def get_reserves() -> list[dict]:
+def get_reserves(user: dict = Depends(current_user)) -> list[dict]:
     return repo.reserves()
 
 
@@ -147,7 +463,7 @@ _SEED_MODULES = {
 
 
 @app.post("/api/dev/seed")
-def dev_seed(payload: dict = Body(...)) -> dict:
+def dev_seed(payload: dict = Body(...), user: dict = Depends(require_role(*config.PERMISSIONS["dev_seed"]))) -> dict:
     """Runs one of tools/seed_bulk.py, tools/seed_demo.py or
     tools/reset_blank.py as a fresh subprocess -- not in-process. repo.py
     caches one SQLite connection per thread, and FastAPI dispatches
@@ -175,19 +491,19 @@ def dev_seed(payload: dict = Body(...)) -> dict:
         repo.close_all()
     if result.returncode != 0:
         raise HTTPException(500, f"seed failed:\n{result.stderr[-3000:]}")
-    repo.audit("dev.seed", actor="director", after={"which": which})
+    repo.audit("dev.seed", actor=user["username"], after={"which": which})
     return {"ok": True, "which": which, "output": result.stdout.strip()}
 
 
 # ── runs ────────────────────────────────────────────────────────────────
 
 @app.get("/api/runs")
-def get_runs(reserve_id: str | None = None) -> list[dict]:
+def get_runs(reserve_id: str | None = None, user: dict = Depends(current_user)) -> list[dict]:
     return repo.runs(reserve_id)
 
 
 @app.post("/api/fs/native-browse")
-def native_browse_folder() -> dict:
+def native_browse_folder(user: dict = Depends(require_role(*config.PERMISSIONS["ingest_manage"]))) -> dict:
     """Opens the real OS folder dialog (Explorer on Windows) and blocks
     until the user picks a folder or cancels. Works because this node's
     browser and its filesystem are the same laptop -- CLAUDE.md's
@@ -216,7 +532,7 @@ def native_browse_folder() -> dict:
 
 
 @app.get("/api/fs/browse")
-def browse_folders(path: str | None = None) -> dict:
+def browse_folders(path: str | None = None, user: dict = Depends(require_role(*config.PERMISSIONS["ingest_manage"]))) -> dict:
     """Lets the new-run screen offer a click-through folder picker instead
     of a typed path. This works because the browser and the filesystem
     being browsed are the same laptop -- CLAUDE.md's deployment target --
@@ -247,7 +563,7 @@ def browse_folders(path: str | None = None) -> dict:
 
 
 @app.post("/api/runs")
-def start_run(payload: dict = Body(...)) -> dict:
+def start_run(payload: dict = Body(...), user: dict = Depends(require_role(*config.PERMISSIONS["ingest_manage"]))) -> dict:
     """Stage 1: scan a folder, ingest what it understood, report the rest.
     Nothing here runs a model -- triage doesn't exist yet -- so every image
     lands at status='pending'. See edge/pipeline/ingest.py."""
@@ -258,11 +574,11 @@ def start_run(payload: dict = Body(...)) -> dict:
         result = ingest.preflight_ingest(reserve_id, root_path, payload.get("cycle_label"))
     except ValueError as e:
         raise HTTPException(400, str(e))
-    return {**preflight(result["run_id"]), **result}
+    return {**preflight(result["run_id"], user=user), **result}
 
 
 @app.post("/api/runs/{run_id}/confirm")
-def confirm_run(run_id: str, payload: dict = Body(default={})) -> dict:
+def confirm_run(run_id: str, payload: dict = Body(default={}), user: dict = Depends(require_role(*config.PERMISSIONS["ingest_manage"]))) -> dict:
     """The officer's confirm click. Resolves any folder ingest could not
     match on its own; a folder left neither assigned nor skipped blocks
     confirmation rather than being guessed (blueprint §5.1)."""
@@ -276,7 +592,7 @@ def confirm_run(run_id: str, payload: dict = Body(default={})) -> dict:
 
 
 @app.get("/api/runs/{run_id}")
-def get_run(run_id: str) -> dict:
+def get_run(run_id: str, user: dict = Depends(current_user)) -> dict:
     r = repo.run(run_id)
     if not r:
         raise HTTPException(404, "run not found")
@@ -288,7 +604,7 @@ def get_run(run_id: str) -> dict:
 
 
 @app.get("/api/runs/{run_id}/preflight")
-def preflight(run_id: str) -> dict:
+def preflight(run_id: str, user: dict = Depends(current_user)) -> dict:
     """Everything the machine understood, shown before it acts on any of it.
     Nothing irreversible happens before the officer confirms this screen."""
     if not repo.run(run_id):
@@ -304,7 +620,7 @@ def preflight(run_id: str) -> dict:
 # ── triage ──────────────────────────────────────────────────────────────
 
 @app.get("/api/runs/{run_id}/triage")
-def triage(run_id: str) -> dict:
+def triage(run_id: str, user: dict = Depends(current_user)) -> dict:
     if not repo.run(run_id):
         raise HTTPException(404, "run not found")
     return {
@@ -315,7 +631,7 @@ def triage(run_id: str) -> dict:
 
 
 @app.post("/api/runs/{run_id}/triage/run")
-def run_triage(run_id: str) -> dict:
+def run_triage(run_id: str, user: dict = Depends(require_role(*config.PERMISSIONS["pipeline_trigger"]))) -> dict:
     """Stage 2A (motion prefilter) then Stage 2B (MegaDetector V6) on
     whatever Stage A leaves pending. If Stage B's weights are not on this
     machine, everything Stage A didn't quarantine stays 'pending',
@@ -329,14 +645,14 @@ def run_triage(run_id: str) -> dict:
 
 
 @app.post("/api/runs/{run_id}/quarantine/restore")
-def restore(run_id: str, actor: str = Body("director", embed=True)) -> dict:
+def restore(run_id: str, user: dict = Depends(require_role(*config.PERMISSIONS["pipeline_trigger"]))) -> dict:
     if not repo.run(run_id):
         raise HTTPException(404, "run not found")
-    return {"restored": triage_pipeline.restore(run_id, actor)}
+    return {"restored": triage_pipeline.restore(run_id, user["username"])}
 
 
 @app.get("/api/runs/{run_id}/images")
-def get_run_images(run_id: str, status: str) -> list[dict]:
+def get_run_images(run_id: str, status: str, user: dict = Depends(current_user)) -> list[dict]:
     if not repo.run(run_id):
         raise HTTPException(404, "run not found")
     return repo.images_by_status(run_id, status)
@@ -344,7 +660,7 @@ def get_run_images(run_id: str, status: str) -> list[dict]:
 
 @app.post("/api/runs/{run_id}/images/{image_id}/identify")
 def identify_run_image(run_id: str, image_id: str,
-                        actor: str = Body("field", embed=True)) -> dict:
+                        user: dict = Depends(require_role(*config.PERMISSIONS["ingest_manage"]))) -> dict:
     """Runs Stage 3 (edge/pipeline/identify_upload.py) directly against a
     frame this run already ingested. The file is already on this machine
     -- a bulk scan never runs identify/matching on its own (Stage 3 takes
@@ -361,7 +677,7 @@ def identify_run_image(run_id: str, image_id: str,
     from edge.pipeline import identify_upload  # noqa: PLC0415
     try:
         return identify_upload.process_upload(
-            image["orig_path"], run["reserve_id"], image["station_id"], actor)
+            image["orig_path"], run["reserve_id"], image["station_id"], user["username"])
     except FileNotFoundError:
         raise HTTPException(400, "Stage 3 (the detector/embedder) weights are not "
                                   "downloaded on this machine.")
@@ -370,23 +686,25 @@ def identify_run_image(run_id: str, image_id: str,
 # ── individuals ─────────────────────────────────────────────────────────
 
 @app.get("/api/individuals")
-def get_individuals(reserve_id: str) -> list[dict]:
+def get_individuals(reserve_id: str, user: dict = Depends(current_user)) -> list[dict]:
     return repo.individuals(reserve_id)
 
 
 @app.get("/api/individuals/{ind_id}")
-def get_individual(ind_id: str, role: str = Query("director")) -> dict:
+def get_individual(ind_id: str, user: dict = Depends(current_user)) -> dict:
     ind = repo.individual(ind_id)
     if not ind:
         raise HTTPException(404, "individual not found")
+    role = user["role"]
+    actor = user["username"]
     caps = repo.individual_captures(ind_id)
     for c in caps:
         c["lat"], c["lon"] = _generalise(c.get("lat"), c.get("lon"), role)
     if role in config.CONFIG.privacy.generalise_coords_for_roles:
-        repo.audit("location.read.generalised", actor=role,
+        repo.audit("location.read.generalised", actor=actor,
                    entity_type="individual", entity_id=ind_id)
     else:
-        repo.audit("location.read.precise", actor=role,
+        repo.audit("location.read.precise", actor=actor,
                    entity_type="individual", entity_id=ind_id)
     ind["captures"] = caps
     ind["sides_seen"] = sorted({c["side"] for c in caps if c["side"] in ("L", "R")})
@@ -394,7 +712,7 @@ def get_individual(ind_id: str, role: str = Query("director")) -> dict:
 
 
 @app.get("/api/individuals/{ind_id}/thumbnail")
-def get_individual_thumbnail(ind_id: str) -> FileResponse:
+def get_individual_thumbnail(ind_id: str, user: dict = Depends(current_user)) -> FileResponse:
     """The most recent real, rectified flank crop for this individual --
     edge/ui/app.js requests this for the stripe rail and falls back to
     the procedurally generated pattern on a 404 (most individuals in the
@@ -407,14 +725,14 @@ def get_individual_thumbnail(ind_id: str) -> FileResponse:
 
 
 @app.post("/api/individuals/{ind_id}/promote")
-def promote(ind_id: str, actor: str = Body("director", embed=True)) -> dict:
-    if not repo.promote_individual(ind_id, actor):
+def promote(ind_id: str, user: dict = Depends(require_role(*config.PERMISSIONS["individual_promote"]))) -> dict:
+    if not repo.promote_individual(ind_id, user["username"]):
         raise HTTPException(400, "not provisional, or not found")
     return {"ok": True}
 
 
 @app.get("/api/crops/{crop_id}/image")
-def get_crop_image(crop_id: str) -> FileResponse:
+def get_crop_image(crop_id: str, user: dict = Depends(current_user)) -> FileResponse:
     """The real rectified flank crop, if one was ever saved for this
     crop_id -- edge/ui/app.js's review screen requests this for the
     frame under review. 404s (never a placeholder image) when the crop
@@ -425,17 +743,18 @@ def get_crop_image(crop_id: str) -> FileResponse:
     return FileResponse(path, media_type="image/jpeg")
 
 
-# ── review ──────────────────────────────────────────────────────────────
+# ── review ──────────────────────────────────────────────────────
+
 
 @app.get("/api/review")
-def get_review(limit: int = 50) -> dict:
+def get_review(limit: int = 50, user: dict = Depends(current_user)) -> dict:
     return {"open": repo.review_count(), "items": repo.review_open(limit)}
 
 
 @app.post("/api/review/{queue_id}/decide")
-def decide(queue_id: str, payload: dict = Body(...)) -> dict:
+def decide(queue_id: str, payload: dict = Body(...), user: dict = Depends(require_role(*config.PERMISSIONS["review_decide"]))) -> dict:
     new_individual = bool(payload.get("new_individual"))
-    actor = payload.get("actor", "director")
+    actor = user["username"]
     ind_id = payload.get("ind_id")
 
     if new_individual:
@@ -483,7 +802,7 @@ async def identify_upload_route(
     file: UploadFile = File(...),
     reserve_id: str = Form(...),
     station_id: str | None = Form(None),
-    actor: str = Form("field"),
+    user: dict = Depends(require_role(*config.PERMISSIONS["ingest_manage"])),
 ) -> dict:
     """Stage 3 end to end -- detect, keypoints, side, rectify, quality
     gate, embed, match, decide. See edge/pipeline/identify_upload.py.
@@ -492,6 +811,7 @@ async def identify_upload_route(
     to be poor until Task 4's trained regressor replaces it -- this
     route exists to prove the pipe reaches the catalogue, the review
     queue, and the audit log, not to produce a trustworthy match yet."""
+    actor = user["username"]
     if not repo.reserve(reserve_id):
         raise HTTPException(404, "reserve not found")
     dest = config.UPLOADS_DIR / f"{repo.new_id('up_')}_{file.filename}"
@@ -507,7 +827,9 @@ async def identify_upload_route(
 # ── occupancy and alerts ────────────────────────────────────────────────
 
 @app.get("/api/runs/{run_id}/occupancy")
-def get_occupancy(run_id: str, role: str = Query("director")) -> list[dict]:
+def get_occupancy(run_id: str, user: dict = Depends(current_user)) -> list[dict]:
+    role = user["role"]
+    actor = user["username"]
     rows = repo.occupancy(run_id)
     generalised = role in config.CONFIG.privacy.generalise_coords_for_roles
     for r in rows:
@@ -522,38 +844,43 @@ def get_occupancy(run_id: str, role: str = Query("director")) -> list[dict]:
             r["hull_wkt"] = None
     if rows:
         repo.audit(f"location.read.{'generalised' if generalised else 'precise'}",
-                   actor=role, entity_type="run", entity_id=run_id, note="occupancy")
+                   actor=actor, entity_type="run", entity_id=run_id, note="occupancy")
     return rows
 
 
 @app.get("/api/runs/{run_id}/occupancy/export.geojson")
-def export_occupancy_geojson(run_id: str, role: str = Query("director")) -> Response:
+def export_occupancy_geojson(run_id: str, user: dict = Depends(current_user)) -> Response:
     if not repo.run(run_id):
         raise HTTPException(404, "run not found")
+    role = user["role"]
+    actor = user["username"]
     generalised = role in config.CONFIG.privacy.generalise_coords_for_roles
     rows = repo.occupancy(run_id)
     repo.audit(f"location.read.{'generalised' if generalised else 'precise'}",
-               actor=role, entity_type="run", entity_id=run_id, note="occupancy.export.geojson")
+               actor=actor, entity_type="run", entity_id=run_id, note="occupancy.export.geojson")
     body = geojson_export.occupancy_feature_collection(rows, include_geometry=not generalised)
     return Response(json.dumps(body, indent=2), media_type="application/geo+json",
                     headers={"Content-Disposition": f'attachment; filename="{run_id}_occupancy.geojson"'})
 
 
 @app.get("/api/runs/{run_id}/occupancy/export.csv")
-def export_occupancy_csv(run_id: str, role: str = Query("director")) -> Response:
+def export_occupancy_csv(run_id: str, user: dict = Depends(current_user)) -> Response:
     if not repo.run(run_id):
         raise HTTPException(404, "run not found")
+    role = user["role"]
+    actor = user["username"]
     generalised = role in config.CONFIG.privacy.generalise_coords_for_roles
     rows = repo.occupancy(run_id)
     repo.audit(f"location.read.{'generalised' if generalised else 'precise'}",
-               actor=role, entity_type="run", entity_id=run_id, note="occupancy.export.csv")
+               actor=actor, entity_type="run", entity_id=run_id, note="occupancy.export.csv")
     body = csv_export.occupancy_csv(rows, include_locations=not generalised)
     return Response(body, media_type="text/csv",
                     headers={"Content-Disposition": f'attachment; filename="{run_id}_occupancy.csv"'})
 
 
 @app.get("/api/stations/export.geojson")
-def export_stations_geojson(reserve_id: str, role: str = Query("director")) -> Response:
+def export_stations_geojson(reserve_id: str, user: dict = Depends(current_user)) -> Response:
+    role = user["role"]
     rows = repo.stations(reserve_id)
     for r in rows:
         r["lat"], r["lon"] = _generalise(r["lat"], r["lon"], role)
@@ -563,7 +890,7 @@ def export_stations_geojson(reserve_id: str, role: str = Query("director")) -> R
 
 
 @app.get("/api/runs/{run_id}/export/camtrapdp")
-def export_camtrapdp(run_id: str, role: str = Query("director")) -> Response:
+def export_camtrapdp(run_id: str, user: dict = Depends(current_user)) -> Response:
     """The community exchange format (blueprint §11) -- three CSVs plus a
     package descriptor, zipped. Readable by the wider camera-trap
     ecosystem, not just this app."""
@@ -571,9 +898,11 @@ def export_camtrapdp(run_id: str, role: str = Query("director")) -> Response:
     if not run:
         raise HTTPException(404, "run not found")
     reserve = repo.reserve(run["reserve_id"])
+    role = user["role"]
+    actor = user["username"]
     generalised = role in config.CONFIG.privacy.generalise_coords_for_roles
     repo.audit(f"location.read.{'generalised' if generalised else 'precise'}",
-               actor=role, entity_type="run", entity_id=run_id, note="camtrapdp.export")
+               actor=actor, entity_type="run", entity_id=run_id, note="camtrapdp.export")
 
     files = camtrapdp.build_package(
         reserve, run,
@@ -591,7 +920,7 @@ def export_camtrapdp(run_id: str, role: str = Query("director")) -> Response:
 
 
 @app.get("/api/runs/{run_id}/alerts")
-def get_alerts(run_id: str, suppressed: bool = False) -> dict:
+def get_alerts(run_id: str, suppressed: bool = False, user: dict = Depends(current_user)) -> dict:
     return {
         "counts": repo.alert_counts(run_id),
         "items": repo.alerts(run_id, suppressed),
@@ -599,8 +928,8 @@ def get_alerts(run_id: str, suppressed: bool = False) -> dict:
 
 
 @app.post("/api/alerts/{alert_id}/acknowledge")
-def ack(alert_id: str, actor: str = Body("director", embed=True)) -> dict:
-    if not repo.acknowledge_alert(alert_id, actor):
+def ack(alert_id: str, user: dict = Depends(require_role(*config.PERMISSIONS["alert_ack"]))) -> dict:
+    if not repo.acknowledge_alert(alert_id, user["username"]):
         raise HTTPException(400, "already acknowledged, or not found")
     return {"ok": True}
 
@@ -608,12 +937,12 @@ def ack(alert_id: str, actor: str = Body("director", embed=True)) -> dict:
 # ── audit and ops ───────────────────────────────────────────────────────
 
 @app.get("/api/audit")
-def get_audit(limit: int = 200, q: str | None = None) -> list[dict]:
+def get_audit(limit: int = 200, q: str | None = None, user: dict = Depends(require_role(*config.PERMISSIONS["audit_read"]))) -> list[dict]:
     return repo.audit_tail(limit, q)
 
 
 @app.get("/api/ops")
-def ops(reserve_id: str) -> dict:
+def ops(reserve_id: str, user: dict = Depends(current_user)) -> dict:
     return {
         "drift": repo.drift_indicators(reserve_id),
         "schema_version": repo.schema_version(),
@@ -622,7 +951,8 @@ def ops(reserve_id: str) -> dict:
 
 
 @app.get("/api/stations")
-def get_stations(reserve_id: str, role: str = Query("director")) -> list[dict]:
+def get_stations(reserve_id: str, user: dict = Depends(current_user)) -> list[dict]:
+    role = user["role"]
     rows = repo.stations(reserve_id)
     for r in rows:
         r["lat"], r["lon"] = _generalise(r["lat"], r["lon"], role)
@@ -632,12 +962,13 @@ def get_stations(reserve_id: str, role: str = Query("director")) -> list[dict]:
 # ── sync (interface defined, transport not built for the hackathon) ─────
 
 @app.get("/api/sync/status")
-def sync_status(reserve_id: str | None = None) -> dict:
+def sync_status(reserve_id: str | None = None, user: dict = Depends(current_user)) -> dict:
     """Two separate honest answers, not one blurred together: edge-to-edge
     bundle sync is real and works if a secret is configured; the central
     tier is designed (blueprint §3) and not built at all, on this node or
     anywhere else."""
-    secret_set = bool(config.SYNC_SECRET)
+    sync_secret = config.get_sync_secret()
+    secret_set = bool(sync_secret)
     return {
         "node_id": repo.node_id(),
         "bundle_sync_enabled": secret_set,
@@ -651,7 +982,7 @@ def sync_status(reserve_id: str | None = None) -> dict:
 
 
 @app.get("/api/sync/bundle")
-def get_bundle(reserve_id: str, since_lamport: int = 0) -> Response:
+def get_bundle(reserve_id: str, since_lamport: int = 0, user: dict = Depends(require_role(*config.PERMISSIONS["sync_manage"]))) -> Response:
     """Downloads a signed bundle of everything this node has written for
     a reserve since since_lamport. A file, not a socket -- meant to
     travel over HTTP, a USB stick, or a hotspot, and to be safe to send
@@ -659,11 +990,11 @@ def get_bundle(reserve_id: str, since_lamport: int = 0) -> Response:
     if not repo.reserve(reserve_id):
         raise HTTPException(404, "reserve not found")
     try:
-        bundle = bundle_sync.build_bundle(reserve_id, since_lamport, config.SYNC_SECRET)
+        bundle = bundle_sync.build_bundle(reserve_id, since_lamport, config.get_sync_secret())
     except ValueError as e:
         raise HTTPException(400, str(e))
     row_count = sum(len(v) for v in bundle["rows"].values())
-    repo.audit("sync.bundle.build", actor="system", entity_type="reserve",
+    repo.audit("sync.bundle.build", actor=user["username"], entity_type="reserve",
                entity_id=reserve_id, after={"rows": row_count, "up_to_lamport": bundle["up_to_lamport"]})
     fname = f"{reserve_id}_{bundle['up_to_lamport']}.pugmark-bundle.json"
     return Response(json.dumps(bundle, indent=2), media_type="application/json",
@@ -671,7 +1002,7 @@ def get_bundle(reserve_id: str, since_lamport: int = 0) -> Response:
 
 
 @app.post("/api/sync/bundle/apply")
-async def apply_bundle_route(file: UploadFile = File(...), actor: str = Form("director")) -> dict:
+async def apply_bundle_route(file: UploadFile = File(...), user: dict = Depends(require_role(*config.PERMISSIONS["sync_manage"]))) -> dict:
     """Applies an uploaded bundle. Idempotent -- the same file can be
     dropped here twice with no ill effect -- and refuses outright if the
     signature doesn't verify, per blueprint §10: a receiving node must
@@ -681,12 +1012,42 @@ async def apply_bundle_route(file: UploadFile = File(...), actor: str = Form("di
     except json.JSONDecodeError:
         raise HTTPException(400, "not a valid bundle file")
     try:
-        stats = bundle_sync.apply_bundle(bundle, config.SYNC_SECRET)
+        stats = bundle_sync.apply_bundle(bundle, config.get_sync_secret())
     except ValueError as e:
         raise HTTPException(400, str(e))
-    repo.audit("sync.bundle.apply", actor=actor, entity_type="reserve",
+    repo.audit("sync.bundle.apply", actor=user["username"], entity_type="reserve",
                entity_id=stats["reserve_id"], after=stats)
     return stats
+
+
+@app.get("/api/sync/key")
+def get_sync_key_info(user: dict = Depends(require_role(*config.PERMISSIONS["sync_manage"]))) -> dict:
+    """Returns the current sync HMAC key and node info."""
+    sec = config.get_sync_secret()
+    return {
+        "sync_secret": sec,
+        "key_length": len(sec),
+        "node_id": repo.node_id(),
+        "file_path": str(config.DATA_DIR / "sync_secret.txt"),
+    }
+
+
+@app.post("/api/sync/key")
+def update_sync_key(payload: dict = Body(default={}), user: dict = Depends(require_role(*config.PERMISSIONS["user_manage"]))) -> dict:
+    """Sets a new sync secret or auto-generates one if new_secret is blank."""
+    new_sec = payload.get("new_secret", "")
+    saved = config.set_sync_secret(new_sec)
+    repo.audit("sync.key.rotate", actor=user["username"], entity_type="system",
+               entity_id="sync_secret", note="rotated or imported sync key")
+    return {"ok": True, "sync_secret": saved}
+
+
+@app.get("/api/sync/key/download")
+def download_sync_key_file(user: dict = Depends(require_role(*config.PERMISSIONS["sync_manage"]))) -> Response:
+    """Downloads sync_secret.txt for transfer to other range-office laptops."""
+    sec = config.get_sync_secret()
+    return Response(sec, media_type="text/plain",
+                    headers={"Content-Disposition": 'attachment; filename="sync_secret.txt"'})
 
 
 # ── static UI ───────────────────────────────────────────────────────────

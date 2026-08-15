@@ -32,6 +32,22 @@ def ck(name: str, cond: bool, extra: str = "") -> None:
 
 def main() -> int:
     c = TestClient(app_module.app)
+    from edge import auth
+    repo.ensure_admin()
+    admin_pw = "TestAdminPass123!"
+    repo.connect().execute("UPDATE users SET pwd_hash=?, must_change_password=0 WHERE username='admin'",
+                           (auth.hash_secret(admin_pw),))
+    repo.connect().commit()
+    login_res = c.post("/api/auth/login", json={"username": "admin", "password": admin_pw})
+    ck("admin login sets session cookie", login_res.status_code == 200 and "pugmark_session" in c.cookies)
+
+    # Setup analyst client for coordinate generalisation check
+    analyst_pw = "TestAnalystPass123!"
+    repo.create_user("analyst_test", "Test Analyst", "analyst", auth.hash_secret(analyst_pw),
+                     auth.hash_secret("code"), must_change=False)
+    c_analyst = TestClient(app_module.app)
+    c_analyst.post("/api/auth/login", json={"username": "analyst_test", "password": analyst_pw})
+
     reserves = c.get("/api/reserves").json()
     if not reserves:
         print("No reserves. Run `python -m tools.seed_demo --reset` first.")
@@ -88,7 +104,7 @@ def main() -> int:
        or True)
     ck("prior-cycle centroids for movement arrows", isinstance(m["prior"], list),
        f"{len(m['prior'])}")
-    g = c.get(f"/api/runs/{latest}/map?role=analyst").json()
+    g = c_analyst.get(f"/api/runs/{latest}/map").json()
     ck("analyst role gets no hull geometry",
        all(o["hull_wkt"] is None for o in g["occupancy"]))
 
@@ -111,13 +127,24 @@ def main() -> int:
        "items" in c.get(f"/api/individuals/provisional?reserve_id={rid}").json())
 
     print("\nCONCURRENCY — two reviewers cannot both decide one item")
+    rev_a_pw = "TestRevAPass123!"
+    rev_b_pw = "TestRevBPass123!"
+    repo.create_user("rev_a", "Reviewer A", "director", auth.hash_secret(rev_a_pw),
+                     auth.hash_secret("code"), must_change=False)
+    repo.create_user("rev_b", "Reviewer B", "director", auth.hash_secret(rev_b_pw),
+                     auth.hash_secret("code"), must_change=False)
+    c_rev_a = TestClient(app_module.app)
+    c_rev_b = TestClient(app_module.app)
+    c_rev_a.post("/api/auth/login", json={"username": "rev_a", "password": rev_a_pw})
+    c_rev_b.post("/api/auth/login", json={"username": "rev_b", "password": rev_b_pw})
+
     q = c.get("/api/review/page?limit=1").json()
     if q["items"]:
         qid = q["items"][0]["queue_id"]
-        a = c.post(f"/api/review/{qid}/claim", json={"actor": "a"})
-        b = c.post(f"/api/review/{qid}/claim", json={"actor": "b"})
+        a = c_rev_a.post(f"/api/review/{qid}/claim")
+        b = c_rev_b.post(f"/api/review/{qid}/claim")
         ck("second reviewer rejected", a.status_code == 200 and b.status_code == 409)
-        c.post(f"/api/review/{qid}/release")
+        c_rev_a.post(f"/api/review/{qid}/release")
     else:
         ck("second reviewer rejected", True, "queue empty, skipped")
 

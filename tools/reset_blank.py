@@ -30,8 +30,16 @@ from tools.seed_demo import RESERVE, RESERVE_UTM_EPSG, build_activity, build_sta
 
 def main() -> None:
     config.ensure_dirs()
+    existing_users = []
+    existing_sessions = []
     if config.DB_PATH.exists():
-        repo.close()
+        try:
+            conn = repo.connect()
+            existing_users = repo._rows(conn.execute("SELECT * FROM users"))
+            existing_sessions = repo._rows(conn.execute("SELECT * FROM sessions WHERE revoked_at IS NULL"))
+        except Exception:
+            pass
+        repo.close_all()
         config.DB_PATH.unlink()
         for suffix in ("-wal", "-shm"):
             p = Path(str(config.DB_PATH) + suffix)
@@ -52,6 +60,15 @@ def main() -> None:
     stations = build_stations()
     repo.insert_many("stations", stations)
     repo.insert_many("station_activity", build_activity(stations, set(), datetime.now(timezone.utc)))
+    if existing_users:
+        for u in existing_users:
+            repo.insert("users", dict(u))
+        for s in existing_sessions:
+            repo.insert("sessions", dict(s))
+    else:
+        adm = repo.ensure_admin()
+        if adm["created"]:
+            print(f"admin account created — temp password: {adm['temp_password']} · recovery code: {adm['recovery_code']}")
 
     print(f"blank reserve ready: {RESERVE} -- {len(stations)} stations, "
           f"0 runs, 0 individuals, 0 alerts")

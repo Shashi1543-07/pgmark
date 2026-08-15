@@ -94,8 +94,16 @@ def build_names(n: int) -> list[str]:
 
 def main() -> None:
     config.ensure_dirs()
+    existing_users = []
+    existing_sessions = []
     if config.DB_PATH.exists():
-        repo.close()
+        try:
+            conn = repo.connect()
+            existing_users = repo._rows(conn.execute("SELECT * FROM users"))
+            existing_sessions = repo._rows(conn.execute("SELECT * FROM sessions WHERE revoked_at IS NULL"))
+        except Exception:
+            pass
+        repo.close_all()
         config.DB_PATH.unlink()
         for suffix in ("-wal", "-shm"):
             p = Path(str(config.DB_PATH) + suffix)
@@ -164,7 +172,7 @@ def main() -> None:
     repo.insert_many("individuals", inds)
 
     # ── captures, cycle by cycle, real pipeline postprocess after each ───
-    runs, images, dets, crops, assigns, events, image_events = [], [], [], [], [], [], []
+    runs, images, dets, crops, assigns, events, image_events, quarantine = [], [], [], [], [], [], [], []
     for ci, (label, start) in enumerate(cycles):
         run_id = f"run_bulk_{ci + 1:02d}"
         runs.append({
@@ -239,16 +247,71 @@ def main() -> None:
                             "decision": decision, "confidence": score, "superseded_by": None,
                             "decided_at": when.isoformat(), "actor": "system",
                         })
-        runs[-1]["image_count"] = len(cycle_images)
+        # ── Blank / Quarantined frames for triage evaluation ────────────────
+        BLANK_REASONS = [
+            ("wind_blown_foliage", 0.94),
+            ("empty_grassland", 0.98),
+            ("shadow_movement", 0.88),
+            ("lens_flare_glare", 0.91),
+            ("night_thermal_false_trigger", 0.85),
+            ("motion_blur_distant", 0.76),
+            ("partial_grass_obstruction", 0.68),
+            ("falling_leaf_trigger", 0.82),
+        ]
+        for bi in range(RNG.randint(45, 65)):
+            st = RNG.choice(stations)
+            img_id = hid("bk", run_id, bi)
+            reason, base_conf = RNG.choice(BLANK_REASONS)
+            conf = round(max(0.60, min(0.99, base_conf + RNG.uniform(-0.06, 0.05))), 3)
+            when = start + timedelta(days=RNG.randint(1, CYCLE_SPACING_DAYS - 2), hours=RNG.randint(0, 23))
+            row_bytes = RNG.randint(1_500_000, 2_800_000)
+            row = {
+                "image_id": img_id, "reserve_id": RESERVE, "run_id": run_id,
+                "station_id": st["station_id"],
+                "orig_path": f"E:/CAMERA_TRAP/{st['folder_hint']}/BLANK_{img_id[:6]}.JPG",
+                "sha256": img_id, "dhash": img_id[:12],
+                "captured_at": when.isoformat(),
+                "captured_at_raw": None, "captured_at_source": "exif",
+                "drift_applied_s": 0, "is_night": int(RNG.random() < 0.5),
+                "width": 4000, "height": 3000, "bytes": row_bytes,
+                "status": "quarantined", "triage_stage": "A" if conf > 0.85 else "B", "flags": "[]",
+            }
+            images.append(row)
+            cycle_images.append(row)
+            quarantine.append({
+                "q_id": hid("q", img_id),
+                "run_id": run_id,
+                "image_id": img_id,
+                "orig_path": row["orig_path"],
+                "quarantine_path": f"quarantine/{run_id}/{img_id}.JPG",
+                "reason": reason.replace("_", " "),
+                "conf": conf,
+                "model_version": "camtrap-detector-compact@1.0.0",
+                "threshold": 0.85,
+                "bytes": row_bytes,
+                "restored_at": None,
+            })
+        runs[ci]["image_count"] = len(cycle_images)
 
     repo.insert_many("runs", runs)
     repo.insert_many("images", images)
+    repo.insert_many("quarantine", quarantine)
     repo.insert_many("events", events)
     repo.insert_many("image_event", image_events)
     repo.insert_many("detections", dets)
     repo.insert_many("flank_crops", crops)
     repo.insert_many("assignments", assigns)
     repo.rebuild_entities(RESERVE)
+
+    if existing_users:
+        for u in existing_users:
+            repo.insert("users", dict(u))
+        for s in existing_sessions:
+            repo.insert("sessions", dict(s))
+    else:
+        adm = repo.ensure_admin()
+        if adm["created"]:
+            print(f"admin account created — temp password: {adm['temp_password']} · recovery code: {adm['recovery_code']}")
 
     total_alerts = 0
     for run in runs:
