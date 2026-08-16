@@ -16,11 +16,8 @@ full-size bitmap is never constructed. Stage A downsamples to a 16x16 grid
 and ingest's night heuristic to 32x32, so both were building a 12-megapixel
 array in order to throw away 99.99% of it.
 
-The second thing here is content validation. v0.1.1 decided what was an
-image from the file extension and a `PIL.verify()` that it then discarded —
-and `verify()` alone does not catch a decompression bomb, a truncated file
-that decodes to garbage, or a 30,000x30,000 PNG that will exhaust the RAM
-of the laptop this is supposed to run on.
+Orientation is normalized via EXIF before any geometry or cropping.
+Perceptual hash (dhash) and SHA256 deduplication are computed in-line.
 """
 from __future__ import annotations
 
@@ -28,7 +25,7 @@ import io
 from pathlib import Path
 
 import numpy as np
-from PIL import Image, ImageFile
+from PIL import Image, ImageFile, ImageOps
 
 # A truncated JPEG is common on a card that was pulled mid-write. Decoding
 # what is there beats discarding the frame — but the truncation is recorded
@@ -53,6 +50,9 @@ _MAGIC = (
     (b"RIFF", "WEBP"),
 )
 
+EXIF_ORIENTATION = 274
+EXIF_SERIAL_TAGS = (42033, 0xA431, 0xA435)  # BodySerialNumber / CameraSerialNumber
+
 
 class UnreadableImage(Exception):
     """The file is not a usable image. Carries the reason so the dead-letter
@@ -70,19 +70,34 @@ def sniff_format(head: bytes) -> str | None:
     return None
 
 
-def probe(path: str | Path, *, read_exif: bool = True) -> dict:
-    """One pass over a file: size, format, dimensions, EXIF, night flag.
+def normalize_orientation(im: Image.Image) -> Image.Image:
+    """Normalize image orientation based on EXIF metadata (tags 1-8)."""
+    try:
+        return ImageOps.exif_transpose(im) or im
+    except Exception:
+        return im
 
-    v0.1.1's `ingest._scan_file()` opened and fully decoded each frame
-    twice — once for `verify()`, once for EXIF — and then a third time
-    inside `_night_heuristic()`, which called `.convert("RGB").resize(...)`
-    on the full-resolution image. Three full decodes per frame, at ingest,
-    for metadata that needs none of them.
+
+def compute_dhash(im: Image.Image, hash_size: int = 8) -> str:
+    """Calculate difference hash (dhash) as a hexadecimal string for dedup."""
+    try:
+        # Resize to (hash_size + 1, hash_size) in greyscale
+        resized = im.convert("L").resize((hash_size + 1, hash_size), Image.Resampling.LANCZOS)
+        arr = np.asarray(resized, dtype=np.int16)
+        # Compare adjacent pixels horizontally: arr[:, 1:] > arr[:, :-1]
+        diff = arr[:, 1:] > arr[:, :-1]
+        # Pack boolean array into hex string
+        return "{:016x}".format(int("".join("1" if b else "0" for b in diff.flatten()), 2))
+    except Exception:
+        return ""
+
+
+def probe(path: str | Path, *, read_exif: bool = True) -> dict:
+    """One pass over a file: size, format, dimensions, EXIF, night flag, dhash, orientation.
 
     Raises `UnreadableImage` rather than returning a half-populated dict:
     "this file could not be read" is a different outcome from "this file
-    was read and has no EXIF", and collapsing them is how a corrupt card
-    becomes an invisible gap in a season's data.
+    was read and has no EXIF".
     """
     p = Path(path)
     try:
@@ -99,9 +114,11 @@ def probe(path: str | Path, *, read_exif: bool = True) -> dict:
         raise UnreadableImage("not a recognised image format (magic bytes do not match "
                               "JPEG/PNG/TIFF/BMP/WEBP)")
 
-    out = {"bytes": size, "format": fmt, "width": None, "height": None,
-           "exif_dt_raw": None, "make": None, "model": None, "is_night": 0,
-           "truncated": False}
+    out = {
+        "bytes": size, "format": fmt, "width": None, "height": None,
+        "exif_dt_raw": None, "make": None, "model": None, "serial": None,
+        "orientation": 1, "is_night": 0, "dhash": None, "truncated": False
+    }
     try:
         with Image.open(p) as im:
             if im.format and im.format.upper() not in ALLOWED_FORMATS:
@@ -113,13 +130,21 @@ def probe(path: str | Path, *, read_exif: bool = True) -> dict:
             if read_exif:
                 exif = im.getexif()
                 out["exif_dt_raw"] = exif.get(36867) or exif.get(306)
-                out["make"], out["model"] = exif.get(271), exif.get(272)
-            # Night flag on a 1/8-scale decode: the IR/greyscale signal this
-            # measures survives downsampling completely.
+                out["make"] = (str(exif.get(271)).strip() if exif.get(271) else None)
+                out["model"] = (str(exif.get(272)).strip() if exif.get(272) else None)
+                out["orientation"] = int(exif.get(EXIF_ORIENTATION) or 1)
+                for stag in EXIF_SERIAL_TAGS:
+                    if exif.get(stag):
+                        out["serial"] = str(exif.get(stag)).strip()
+                        break
+
+            # Fast 1/8-scale decode for night heuristic and dhash
             im.draft("RGB", (64, 64))
             small = im.convert("RGB").resize((32, 32))
+            small = normalize_orientation(small)
             px = np.asarray(small, dtype=np.int16)
             out["is_night"] = int(float(np.mean(px.max(axis=2) - px.min(axis=2))) < 12)
+            out["dhash"] = compute_dhash(small)
     except UnreadableImage:
         raise
     except OSError as exc:
@@ -130,22 +155,13 @@ def probe(path: str | Path, *, read_exif: bool = True) -> dict:
 
 
 def read_grid(path: str | Path, grid_n: int, band_frac: float) -> np.ndarray | None:
-    """Stage A's cell grid, decoded at the smallest scale that still
-    oversamples the grid.
-
-    Drop-in replacement for `triage._read_grid()`. The only change is the
-    `draft()` call and asking for 8x the grid resolution before the final
-    resize — decoding straight to 16x16 would let libjpeg's own scaler do
-    the averaging with fewer source pixels per cell, which changes the
-    scores. Oversampling by 8x and letting Pillow's resize do the averaging
-    keeps `cell_score()`'s calibration (tests/unit/test_triage_scoring.py)
-    valid rather than silently re-tuning the blank threshold.
-    """
+    """Stage A's cell grid, normalized for EXIF orientation, decoded at 8x scale."""
     try:
         with Image.open(path) as im:
             target = grid_n * 8
             im.draft("L", (target, target))
             im = im.convert("L")
+            im = normalize_orientation(im)
             w, h = im.size
             band = int(h * band_frac)
             if 0 < band < h:
@@ -156,19 +172,9 @@ def read_grid(path: str | Path, grid_n: int, band_frac: float) -> np.ndarray | N
 
 
 def read_for_detector(path: str | Path, max_side: int = 1280):
-    """RGB image for Stage B, capped on the long edge.
-
-    MegaDetector's input size is fixed by its own config (640 or 1280);
-    feeding it a 12-megapixel frame decodes 12 megapixels and then throws
-    away 96% of them in the transform. `draft()` gets libjpeg to skip that
-    work up front.
-
-    Returns `(PIL.Image, original_width, original_height)` — the original
-    dimensions are returned separately because `Detector.detect()`
-    normalises boxes against them, and normalising against the drafted size
-    would put every box in the wrong place.
-    """
+    """RGB image for Stage B, capped on the long edge, normalized for EXIF orientation."""
     with Image.open(path) as im:
+        im = normalize_orientation(im)
         ow, oh = im.size
         im.draft("RGB", (max_side, max_side))
         out = im.convert("RGB")
@@ -180,11 +186,10 @@ def read_for_detector(path: str | Path, max_side: int = 1280):
 
 
 def read_bgr(path: str | Path) -> np.ndarray | None:
-    """Full-resolution BGR array for rectification, which genuinely needs
-    real pixels — `cv2.warpPerspective` samples the source image, so this
-    is the one place a full decode is the right call."""
+    """Full-resolution BGR array for rectification, normalized for EXIF orientation."""
     try:
         with Image.open(path) as im:
+            im = normalize_orientation(im)
             arr = np.asarray(im.convert("RGB"))
         return arr[:, :, ::-1].copy()
     except Exception:                                              # noqa: BLE001
@@ -192,13 +197,7 @@ def read_bgr(path: str | Path) -> np.ndarray | None:
 
 
 def hash_and_probe(path: str | Path, chunk: int = 1024 * 1024) -> tuple[str, dict]:
-    """SHA-256 streamed in chunks, plus the metadata probe.
-
-    v0.1.1 did `path.read_bytes()` — the entire file into RAM — to hash it.
-    For one 3 MB frame that is nothing; the point is that it establishes a
-    pattern where a 100 MB video file dropped in the folder by mistake also
-    goes fully into memory, and nothing bounds it.
-    """
+    """SHA-256 streamed in chunks, plus the metadata probe."""
     import hashlib
     h = hashlib.sha256()
     p = Path(path)
@@ -212,15 +211,10 @@ def hash_and_probe(path: str | Path, chunk: int = 1024 * 1024) -> tuple[str, dic
 
 
 def thumbnail_bytes(path: str | Path, max_side: int = 320, quality: int = 78) -> bytes | None:
-    """A small JPEG for the UI.
-
-    `/api/crops/{id}/image` and `/api/individuals/{id}/thumbnail` returned
-    the full-size file with `FileResponse`. A review screen showing 50
-    candidate crops therefore pulled 50 full-resolution images across
-    localhost to render them at 96 px.
-    """
+    """A small JPEG for the UI, normalized for EXIF orientation."""
     try:
         with Image.open(path) as im:
+            im = normalize_orientation(im)
             im.draft("RGB", (max_side, max_side))
             im = im.convert("RGB")
             im.thumbnail((max_side, max_side))

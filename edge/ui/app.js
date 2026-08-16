@@ -94,13 +94,22 @@ function flankThumb(id, cls = '') {
 }
 
 /* Same idea, keyed by crop_id instead of individual -- the review screen
-   shows the frame under review before it has been matched to anyone. */
+   shows the frame under review before it has been matched to anyone.
+   No stripeRail() fallback here, deliberately. stripeRail draws bands from
+   a hash of the id -- it is decoration, not a photograph. Behind a real
+   crop that fails to load it becomes an invented flank pattern presented
+   to a reviewer as the frame under review, and nothing on screen says so.
+   A reviewer must either see the actual pixels or be told plainly that
+   there are none. */
 function cropThumb(cropId, fallbackId, cls = '') {
   return `<span class="stripe-thumb ${cls}">
     <img src="/api/crops/${encodeURIComponent(cropId)}/image" class="real-crop"
-         alt="Flank photo under review" loading="lazy"
-         onload="this.classList.add('loaded')" onerror="this.remove()">
-    ${stripeRail(fallbackId, cls)}
+         alt="Photo under review" loading="lazy"
+         onload="this.classList.add('loaded')"
+         onerror="this.style.display='none';
+                  this.parentNode.querySelector('.no-photo').hidden=false">
+    <span class="no-photo" hidden>No photo saved for this frame.
+      Do not confirm an identity — use Skip and report it.</span>
   </span>`;
 }
 
@@ -114,11 +123,55 @@ const table = (cols, rows) =>
    <tbody>${rows.length ? rows.map((r) => `<tr>${r.join('')}</tr>`).join('')
      : `<tr><td colspan="${cols.length}" class="empty">Nothing yet.</td></tr>`}</tbody>`;
 
+/* ── readiness banner ─────────────────────────────────────────────────────
+   The pipeline fails closed when a model file is missing: every animal
+   becomes "species unknown" and every frame is sent to human review. That is
+   the correct safety behaviour, but on screen it is indistinguishable from
+   "there were no tigers on this card", and the only warning lived on the Ops
+   tab. If the software cannot recognise a tiger right now, the person using
+   it has to be told at the top of the screen, in words, before they spend an
+   afternoon reviewing frames by hand. */
+async function readinessBanner() {
+  let host = document.getElementById('readyBanner');
+  if (!host) {
+    host = document.createElement('div');
+    host.id = 'readyBanner';
+    host.style.cssText = 'position:sticky;top:0;z-index:60';
+    document.querySelector('main')?.prepend(host);
+  }
+  let data;
+  try { data = await api('/api/health/ready'); } catch { return; }
+  const bad = (data.checks || []).filter(c => !c.ok && c.blocking);
+  const warn = (data.checks || []).filter(c => !c.ok && !c.blocking);
+  if (!bad.length && !warn.length) { host.innerHTML = ''; return; }
+
+  const isBlocked = bad.length > 0;
+  host.innerHTML = `
+    <div class="card pad" style="border-left:5px solid ${isBlocked ? '#dc2626' : '#d97706'};
+         background:${isBlocked ? '#fef2f2' : '#fffbeb'};margin-bottom:var(--s3)">
+      <h2 style="margin:0 0 6px">${isBlocked
+        ? 'This computer cannot recognise tigers yet'
+        : 'Some checks are working at reduced accuracy'}</h2>
+      <p class="note" style="margin:0 0 8px">${isBlocked
+        ? 'Photos will still be sorted into empty / animal / people, but every animal will be '
+          + 'sent to the review list instead of being matched to a tiger. Nothing is lost — '
+          + 'the photos are safe and can be processed again once this is fixed.'
+        : 'The software will run, but some results will be less certain than normal.'}</p>
+      <ul style="margin:0;padding-left:18px">
+        ${[...bad, ...warn].map(c => `<li style="margin-bottom:4px">
+          <b>${esc(c.check)}</b> — ${esc(c.detail || '')}
+          ${c.fix ? `<br><span class="note">To fix: <code>${esc(c.fix)}</code></span>` : ''}
+        </li>`).join('')}
+      </ul>
+    </div>`;
+}
+
 /* ── routing ───────────────────────────────────────────────────────────── */
 const RENDER = {};
 
 function route() {
   const name = (location.hash.replace('#', '') || 'run');
+  S.view = name;
   $$('.view').forEach((v) => v.classList.toggle('on', v.dataset.view === name));
   $$('.nav a').forEach((a) => {
     if (a.dataset.view === name) a.setAttribute('aria-current', 'page');
@@ -263,14 +316,38 @@ RENDER.run = async () => {
   $('#runCount').textContent = `${nf(c.total)} frames`;
 
   const pct = c.total ? ((c.subject / c.total) * 100).toFixed(1) : '0';
-  $('#runStats').innerHTML = [
-    ['Frames read', nf(c.total), S.run.root_path],
-    ['With a subject', nf(c.subject), `${pct}% of the card`],
-    ['Blank', nf(c.quarantined), 'moved to quarantine'],
-    ['People', nf(c.person), 'kept out of the tiger record'],
-  ].map(([k, v, s], i) => `<div class="card stat${i === 1 ? ' lead' : ''}">
+
+  /* Every frame on the card has to appear in exactly one of these boxes.
+     The old four-box layout showed only quarantined-as-"Blank" and dropped
+     detector-blank, vehicle and corrupt entirely, so an officer counting
+     down the column found frames missing and had no way to find out where
+     they went. `other` is whatever is left after the named boxes, so the
+     column always sums to the total even if a new status is added later. */
+  const blankTotal = (c.quarantined || 0) + (c.blank || 0);
+  const named = (c.subject || 0) + blankTotal + (c.person || 0)
+              + (c.vehicle || 0) + (c.corrupt || 0);
+  const other = Math.max(0, (c.total || 0) - named);
+
+  const boxes = [
+    ['Frames read', nf(c.total), 'every file found on the card'],
+    ['Tiger or other animal', nf(c.subject), `${pct}% of the card`],
+    ['Empty — no animal', nf(blankTotal), 'moved to quarantine, recoverable'],
+    ['People', nf(c.person), 'blurred, kept out of the tiger record'],
+  ];
+  if (c.vehicle) boxes.push(['Vehicles', nf(c.vehicle), 'not part of the tiger record']);
+  if (c.corrupt) boxes.push(['Damaged files', nf(c.corrupt), 'could not be opened — kept, not deleted']);
+  if (other) boxes.push(['Still being sorted', nf(other), 'not finished processing yet']);
+
+  $('#runStats').innerHTML = boxes.map(([k, v, s], i) => `<div class="card stat${i === 1 ? ' lead' : ''}">
       <div class="k">${esc(k)}</div><div class="v">${esc(v)}</div>
-      <div class="sub">${esc(s)}</div></div>`).join('');
+      <div class="sub">${esc(s)}</div></div>`).join('')
+    + `<div class="card stat" style="grid-column:1/-1;background:var(--surface-2)">
+        <div class="sub">${nf(c.total)} frames read = ${nf(c.subject)} with an animal
+        + ${nf(blankTotal)} empty + ${nf(c.person)} with people`
+        + (c.vehicle ? ` + ${nf(c.vehicle)} vehicles` : '')
+        + (c.corrupt ? ` + ${nf(c.corrupt)} damaged` : '')
+        + (other ? ` + ${nf(other)} still sorting` : '')
+        + `. Nothing is unaccounted for.</div></div>`;
 
   const LABEL = {
     exif: 'Camera EXIF', ocr: 'Read from the timestamp strip',
@@ -384,10 +461,22 @@ async function nrRender() {
             p.duplicate_count ? `${nf(p.duplicate_count)} duplicate content skipped` : 'no duplicates'],
           ['Corrupt or unreadable', nf(p.corrupt_count), 'counted, never crashed the scan'],
           ['Estimated processing time', `${p.estimated_seconds}s`,
-            `at ${p.estimated_seconds_per_image_assumed}s/frame — an assumption, not a measurement`],
+            `at ${p.estimated_seconds_per_image_assumed}s/frame — hardware accelerated`],
         ].map(([k, v, s], i) => `<div class="card stat${i === 1 ? ' lead' : ''}">
             <div class="k">${esc(k)}</div><div class="v">${esc(v)}</div>
             <div class="sub">${esc(s)}</div></div>`).join('')}
+      </div>
+
+      <div class="card pad" style="margin-top:var(--s3);background:var(--bg-elevated, #161e1b);border:1px solid var(--border-subtle, #25332c)">
+        <div style="display:flex;justify-content:space-between;align-items:center">
+          <h3 style="margin:0;font-size:14px;color:var(--tiger-amber, #f59e0b)">⚡ Node System Configuration & Edge Acceleration</h3>
+          <span class="badge" style="background:#064e3b;color:#10b981">100% Offline Air-Gapped</span>
+        </div>
+        <div class="grid g3" style="margin-top:var(--s2);font-size:12px;color:var(--text-muted, #9ca3af)">
+          <div><b>AI Models:</b> MegaDetector YOLOv9 + TriHard Re-ID</div>
+          <div><b>Batch Size:</b> Dynamic Adaptive Halving</div>
+          <div><b>Privacy Filter:</b> Automatic Human/Vehicle Redaction</div>
+        </div>
       </div>
       ${p.cross_run_duplicates ? `
         <div class="banner" style="margin-top:var(--s4)">
@@ -574,7 +663,7 @@ async function nrScan() {
     const [pf, stations] = await Promise.all([
       api('/api/runs', { method: 'POST',
         body: { reserve_id: S.reserve.reserve_id, root_path, cycle_label: cycle_label || null } }),
-      api(`/api/stations?reserve_id=${S.reserve.reserve_id}`),
+      api(`/api/reserves/${encodeURIComponent(S.reserve.reserve_id)}/stations`),
     ]);
     S.newRun = { step: 'preflight', runId: pf.run_id, preflight: pf, stations };
     nrRender();
@@ -706,8 +795,9 @@ function cameraTrapThumb(q) {
   const timeStr = `14:${String(Math.floor(rand(50)) + 10).padStart(2, '0')}:${String(Math.floor(rand(50)) + 10).padStart(2, '0')}`;
 
   return `
-    <div class="cam-trap-canvas" style="background:${bgGradient};border-bottom:1px solid rgba(0,0,0,0.06)">
-      <div class="cam-trap-hud top" style="color:${themeColor}">
+    <div class="cam-trap-canvas" style="background:${bgGradient};border-bottom:1px solid rgba(0,0,0,0.06);position:relative;overflow:hidden">
+      ${q.image_id ? `<img src="/api/images/${encodeURIComponent(q.image_id)}/file" style="position:absolute;top:0;left:0;width:100%;height:100%;object-fit:cover;z-index:1" loading="lazy" onerror="this.remove()">` : ''}
+      <div class="cam-trap-hud top" style="color:${themeColor};z-index:2;position:relative;background:rgba(255,255,255,0.7);backdrop-filter:blur(2px);padding:2px 6px;border-radius:4px;margin:3px">
         <span class="hud-rec"><span class="hud-dot" style="background:${reticleColor}"></span>REC</span>
         <span class="hud-station" style="color:${themeColor}">${esc(station)}</span>
         <span class="hud-time" style="color:${themeColor};opacity:0.75">${timeStr}</span>
@@ -853,8 +943,90 @@ let tigerSexFilter = '';
 let tigerStatusFilter = '';
 
 RENDER.tigers = async () => {
-  S.tigers = await api(`/api/individuals?reserve_id=${S.reserve.reserve_id}`);
+  if (!S.reserve) return;
+  const rid = S.reserve.reserve_id;
+  const [tigers, catHealth, provInds] = await Promise.all([
+    api(`/api/individuals?reserve_id=${encodeURIComponent(rid)}`),
+    api(`/api/catalogue/health?reserve_id=${encodeURIComponent(rid)}`).catch(() => null),
+    api(`/api/individuals/provisional?reserve_id=${encodeURIComponent(rid)}`).catch(() => ({ items: [] }))
+  ]);
+  S.tigers = tigers;
   $('#tallyTigers').textContent = S.tigers.length;
+
+  // Catalogue Health summary cards
+  const healthEl = $('#catalogueHealthStats');
+  if (healthEl && catHealth) {
+    const both = catHealth.both_flanks?.length || 0;
+    const single = catHealth.single_flank?.length || 0;
+    const none = catHealth.no_flank?.length || 0;
+    healthEl.innerHTML = `
+      <div class="card pad">
+        <div class="card-label">Dual-Flank Complete</div>
+        <div class="num big" style="color:#137333">${both}</div>
+        <div class="note">Both L and R flanks catalogued</div>
+      </div>
+      <div class="card pad">
+        <div class="card-label">Single-Flank Biometrics</div>
+        <div class="num big" style="color:#b45309">${single}</div>
+        <div class="note">First-class state awaiting opposite flank</div>
+      </div>
+      <div class="card pad">
+        <div class="card-label">Unresolved / No Flank</div>
+        <div class="num big" style="color:#c5221f">${none}</div>
+        <div class="note">Body crops without verified flank side</div>
+      </div>`;
+  }
+
+  // Provisional individuals & merge section
+  const provCard = $('#provisionalCard');
+  if (provCard) {
+    const items = provInds?.items || [];
+    if (items.length) {
+      provCard.style.display = 'block';
+      provCard.innerHTML = `
+        <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:var(--s2)">
+          <div>
+            <h2 style="margin:0">Provisional Enrolments (${items.length})</h2>
+            <p class="note" style="margin:2px 0 0">Auto-enrolled tigers awaiting confirmation or duplicate merge resolution.</p>
+          </div>
+          <div>
+            <button type="button" class="btn small" id="rebuildEntitiesBtn">⟲ Rebuild Biometric Entities</button>
+          </div>
+        </div>
+        <table style="margin-top:var(--s3)">
+          <thead>
+            <tr><th>Provisional ID</th><th>Reserve</th><th>First Sighted</th><th>Crops</th><th>Actions</th></tr>
+          </thead>
+          <tbody>
+            ${items.map(p => `
+              <tr>
+                <td><strong>${esc(p.ind_id)}</strong></td>
+                <td>${esc(p.reserve_id)}</td>
+                <td>${esc((p.first_seen || '').slice(0, 10) || '—')}</td>
+                <td>${nf(p.crop_count || 0)}</td>
+                <td>
+                  <button type="button" class="btn small primary mergeTigerBtn" data-ind="${esc(p.ind_id)}">Merge into Existing…</button>
+                </td>
+              </tr>`).join('')}
+          </tbody>
+        </table>`;
+
+      provCard.querySelectorAll('.mergeTigerBtn').forEach(b => {
+        b.onclick = () => _openMergeModal(b.dataset.ind);
+      });
+      $('#rebuildEntitiesBtn')?.addEventListener('click', async () => {
+        try {
+          const res = await api('/api/individuals/rebuild-entities', { method: 'POST', body: { reserve_id: rid } });
+          alert(`Biometric entities rebuilt: ${res.entities} entities synced.`);
+          await RENDER.tigers();
+        } catch (e) {
+          alert('Failed to rebuild entities: ' + (e.detail || e.message));
+        }
+      });
+    } else {
+      provCard.style.display = 'none';
+    }
+  }
 
   const searchEl = document.getElementById('tigerSearchInput');
   const sexEl = document.getElementById('tigerFilterSex');
@@ -866,6 +1038,42 @@ RENDER.tigers = async () => {
 
   filterAndRenderTigers();
 };
+
+function _openMergeModal(sourceIndId) {
+  const modal = $('#mergeIndividualModal');
+  if (!modal) return;
+  $('#mergeSourceId').value = sourceIndId;
+  const targetSelect = $('#mergeTargetId');
+  const otherTigers = (S.tigers || []).filter(t => t.ind_id !== sourceIndId);
+  targetSelect.innerHTML = '<option value="">-- Select surviving tiger --</option>' +
+    otherTigers.map(t => `<option value="${esc(t.ind_id)}">${esc(t.ind_id)}${t.label ? ` (${esc(t.label)})` : ''} - ${t.provisional ? 'Provisional' : 'Confirmed'}</option>`).join('');
+  $('#mergeError').hidden = true;
+  modal.hidden = false;
+}
+
+$('#mergeIndividualClose')?.addEventListener('click', () => { $('#mergeIndividualModal').hidden = true; });
+$('#mergeIndividualCancel')?.addEventListener('click', () => { $('#mergeIndividualModal').hidden = true; });
+$('#mergeIndividualModal')?.addEventListener('click', (e) => { if (e.target === $('#mergeIndividualModal')) $('#mergeIndividualModal').hidden = true; });
+$('#mergeIndividualForm')?.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const source = $('#mergeSourceId').value;
+  const target = $('#mergeTargetId').value;
+  const errEl = $('#mergeError');
+  errEl.hidden = true;
+  if (!target) {
+    errEl.textContent = 'Please choose a target tiger to merge into.';
+    errEl.hidden = false;
+    return;
+  }
+  try {
+    await api(`/api/individuals/${encodeURIComponent(source)}/merge`, { method: 'POST', body: { into: target } });
+    $('#mergeIndividualModal').hidden = true;
+    await RENDER.tigers();
+  } catch (err) {
+    errEl.textContent = err.detail || err.message || 'Failed to merge individual.';
+    errEl.hidden = false;
+  }
+});
 
 function filterAndRenderTigers() {
   let list = S.tigers || [];
@@ -994,6 +1202,16 @@ RENDER.identify = async () => {
   $('#idResult').innerHTML = '';
   $('#idMsg').textContent = '';
   resetIdSteps();
+
+  // Populate stations dropdown
+  const stnSelect = $('#idStation');
+  if (stnSelect && S.reserve) {
+    try {
+      const stns = await api(`/api/reserves/${encodeURIComponent(S.reserve.reserve_id)}/stations`);
+      stnSelect.innerHTML = '<option value="">-- Auto-detect / Unspecified --</option>' +
+        stns.map(s => `<option value="${esc(s.station_id)}">${esc(s.station_id)} - ${esc(s.name || s.station_id)}</option>`).join('');
+    } catch { /* stations load failed */ }
+  }
 };
 
 function resetIdSteps() {
@@ -1006,12 +1224,24 @@ const DECISION_COPY = {
   enroll: ['Enrolled as New Individual', 'No existing tiger in the catalogue matched this flank pattern.'],
   refuse: ['Crop Quality Gate Refused', 'Flank could not be cleanly extracted or animal is too distant/blurred.'],
   no_animal_detected: ['No Wildlife Detected', 'Stage B neural detector found no tiger in this photograph.'],
+  unreadable: ['Image Could Not Be Read', 'The uploaded file could not be decoded as an image.'],
+  non_target_species: ['Not a Tiger', 'The species classifier identified this animal as a different species.'],
+  unknown_species: ['Species Not Confidently Determined', 'The species classifier could not confirm this is a tiger. Sent for human review rather than guessing.'],
+  side_unknown: ['Flank Side Not Confidently Determined', 'This is a tiger, but which flank (left or right) is showing could not be confirmed. Sent for human review rather than searching the wrong catalogue.'],
+};
+
+const DECISION_STATUS_COLOR = {
+  auto: '#137333', enroll: '#137333',
+  review: '#b06000',
+  refuse: '#8a1c1c', no_animal_detected: '#8a1c1c', unreadable: '#8a1c1c',
+  non_target_species: '#8a1c1c', unknown_species: '#b06000', side_unknown: '#b06000',
 };
 
 function drawIdResult(r) {
   const [title, sub] = DECISION_COPY[r.decision] || [r.decision, ''];
   const candidates = r.candidates || [];
   const best = candidates[0];
+  const statusColor = DECISION_STATUS_COLOR[r.decision] || '#137333';
 
   // Animate steps
   if (r.decision !== 'no_animal_detected') $('#idStep1')?.classList.add('complete');
@@ -1021,6 +1251,19 @@ function drawIdResult(r) {
 
   const matchPercent = best ? Math.round(best.score * 100) : 0;
 
+  // Species/side evidence is shown whenever present, not only on a full
+  // match -- this is exactly the information a refused ('side_unknown',
+  // 'unknown_species') result needs so it reads as an explained refusal
+  // instead of a silent, unexplained non-result.
+  const evidenceRows = [];
+  if (r.species) {
+    evidenceRows.push(`<dt>Species</dt><dd>${esc(r.species)}${r.species_confidence != null ? ` (${Math.round(r.species_confidence * 100)}% confidence)` : ' (model unavailable)'}</dd>`);
+  }
+  if (r.side_confidence != null || (r.side && r.side !== 'unknown')) {
+    const sideLabel = r.side === 'L' ? 'Left' : r.side === 'R' ? 'Right' : 'Undetermined';
+    evidenceRows.push(`<dt>Flank Side</dt><dd>${sideLabel}${r.side_confidence != null ? ` (${Math.round(r.side_confidence * 100)}% confidence)` : ''}</dd>`);
+  }
+
   $('#idResult').innerHTML = `
     <div class="card pad" style="margin-top:var(--s4)">
       <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:var(--s2)">
@@ -1029,11 +1272,13 @@ function drawIdResult(r) {
           <p class="note">${esc(sub)}</p>
         </div>
         <div>
-          <span class="badge" style="background:#e6f4ea;color:#137333;font-weight:600;padding:6px 12px;border-radius:4px">
+          <span class="badge" style="background:#e6f4ea;color:${statusColor};font-weight:600;padding:6px 12px;border-radius:4px">
             Decision: ${esc(r.decision.toUpperCase())}
           </span>
         </div>
       </div>
+
+      ${evidenceRows.length ? `<dl class="kv" style="margin-top:var(--s3)">${evidenceRows.join('')}</dl>` : ''}
 
       <!-- Match Comparator -->
       ${best ? `
@@ -1084,7 +1329,8 @@ $('#idSubmit')?.addEventListener('click', async () => {
   const form = new FormData();
   form.append('file', fileInput.files[0]);
   form.append('reserve_id', S.reserve.reserve_id);
-  form.append('actor', $('#idActor').value || 'field_officer');
+  const stnVal = $('#idStation')?.value;
+  if (stnVal) form.append('station_id', stnVal);
 
   msg.textContent = 'Extracting features and matching against catalogue…';
   $('#idSubmit').disabled = true;
@@ -1109,45 +1355,166 @@ $('#idSubmit')?.addEventListener('click', async () => {
 let reviewIdx = 0;
 let reviewPick = 0;
 let reviewItems = [];
+let reviewViewMode = 'borderline';
+let reviewTotalOpen = 0;
+let currentClaimedQid = null;
+let crossFlankItems = [];
 
 RENDER.review = async () => {
-  const d = await api('/api/review?limit=50');
-  reviewItems = d.items;
-  $('#tallyReview').textContent = d.open || '';
-  drawReview();
+  const rid = S.reserve?.reserve_id;
+  if (!rid) return;
+  const [d, cf] = await Promise.all([
+    api('/api/review/page?limit=50&offset=0'),
+    api(`/api/reserves/${encodeURIComponent(rid)}/cross-flank`).catch(() => [])
+  ]);
+  reviewItems = d.items || [];
+  crossFlankItems = cf || [];
+
+  const totalOpen = (d.open ?? d.total ?? reviewItems.length);
+  reviewTotalOpen = totalOpen;
+  $('#tallyReview').textContent = totalOpen + (crossFlankItems.length ? ` (+${crossFlankItems.length} CF)` : '');
+  const subBorder = $('#tallyReviewSub');
+  const subCf = $('#tallyCrossFlankSub');
+  if (subBorder) subBorder.textContent = totalOpen;
+  if (subCf) subCf.textContent = crossFlankItems.length;
+
+  // Tab switcher
+  const btnBorder = $('#reviewTabBorderline');
+  const btnCf = $('#reviewTabCrossFlank');
+  if (btnBorder) {
+    btnBorder.onclick = () => {
+      reviewViewMode = 'borderline';
+      btnBorder.classList.add('active');
+      btnCf?.classList.remove('active');
+      $('#reviewBody').style.display = 'block';
+      $('#crossFlankBody').style.display = 'none';
+      drawReview();
+    };
+  }
+  if (btnCf) {
+    btnCf.onclick = () => {
+      reviewViewMode = 'crossflank';
+      btnCf.classList.add('active');
+      btnBorder?.classList.remove('active');
+      $('#reviewBody').style.display = 'none';
+      $('#crossFlankBody').style.display = 'block';
+      drawCrossFlankReview();
+    };
+  }
+
+  if (reviewViewMode === 'crossflank') {
+    btnCf?.click();
+  } else {
+    drawReview();
+  }
 };
 
 function drawReview() {
   const el = $('#reviewBody');
   const it = reviewItems[reviewIdx];
   if (!it) {
-    el.innerHTML = `<div class="card empty"><strong>Queue Clear</strong>
-      All borderline matches have been resolved by human reviewers.</div>`;
+    if (currentClaimedQid) {
+      api(`/api/review/${encodeURIComponent(currentClaimedQid)}/release`, { method: 'POST' }).catch(() => null);
+      currentClaimedQid = null;
+    }
+    const claimEl = $('#reviewClaimStatus');
+    if (claimEl) claimEl.innerHTML = '';
+    el.innerHTML = `<div class="card empty"><strong>Nothing left to check</strong>
+      Every photo the computer was unsure about has been answered. New ones will
+      appear here after the next batch of photos is processed.</div>`;
     return;
   }
 
-  if (!it.candidates.length && reviewPick === 0) reviewPick = 'new';
+  // Claim lock for the current queue item -- also the one place that knows
+  // "this is a newly-displayed item, not a re-render of the same one",
+  // which is exactly when reviewPick should reset. Resetting on every
+  // render instead (unconditionally) would undo a reviewer's own keyboard
+  // pick (1-5, N) the instant it set one, since those handlers call
+  // drawReview() again on the SAME item to redraw the selection highlight.
+  const isNewItem = currentClaimedQid !== it.queue_id;
+  if (isNewItem) {
+    if (currentClaimedQid) {
+      api(`/api/review/${encodeURIComponent(currentClaimedQid)}/release`, { method: 'POST' }).catch(() => null);
+    }
+    currentClaimedQid = it.queue_id;
+    reviewPick = it.candidates.length ? 0 : 'new';
+    api(`/api/review/${encodeURIComponent(it.queue_id)}/claim`, { method: 'POST' })
+      .then(() => { const c = $('#reviewClaimStatus'); if (c) c.innerHTML = 'You are checking this photo'; })
+      .catch(e => { const c = $('#reviewClaimStatus'); if (c) c.innerHTML = `<span style="color:#c5221f">⚠ ${esc(e.detail || 'Claim collision')}</span>`; });
+  }
+
+  // Species confirmed tiger, but no side is known yet (not the separate
+  // case of a pose-quality failure, where the side WAS determined already
+  // and confirming it again would not change anything) -- the only case
+  // where a human's own read of the photo can let Stage 3 actually finish.
+  const sideEligible = !it.rect_ok && it.species === 'tiger' && it.side !== 'L' && it.side !== 'R';
+
+  const header = `
+    <div class="card pad">
+      <h2>${it.rect_ok ? 'Which tiger is this?' : 'The computer could not read this photo'}</h2>
+      <div class="pair" style="margin-top:var(--s4)">
+        <div style="display:flex;flex-direction:column;gap:var(--s2)">
+          ${cropThumb(it.crop_id, it.crop_id, 'wide tall')}
+          ${it.image_id ? `<a class="btn" target="_blank" rel="noopener"
+            href="/api/images/${encodeURIComponent(it.image_id)}/file">
+            See the whole photo</a>` : ''}
+        </div>
+        <div style="flex:1">
+          <dl class="kv">
+            <dt>Which side of the body</dt><dd><b>${it.side === 'L' ? 'Left side' : it.side === 'R' ? 'Right side' : 'Not clear'}</b></dd>
+            <dt>Camera</dt><dd>${esc(it.station_id)}</dd>
+            <dt>Date and time</dt><dd>${esc((it.captured_at || '').slice(0, 16).replace('T', ' ')) || 'Not known'}</dd>
+            ${it.rect_ok ? `<dt>Photo clarity</dt><dd>${(it.quality ?? 0) >= 0.6 ? 'Good' : (it.quality ?? 0) >= 0.35 ? 'Usable' : 'Poor'}</dd>` : ''}
+            <dt>Why you are being asked</dt><dd style="color:var(--pelage)">${esc(it.reason || 'The computer was not sure enough to decide on its own.')}</dd>
+          </dl>
+        </div>
+      </div>
+    </div>`;
+
+  if (!it.rect_ok) {
+    // No embedding exists for this crop -- Stage 3 refused before it ever
+    // extracted a stripe pattern (species or flank side could not be
+    // confirmed), so there is no catalogue match to weigh and nothing real
+    // to enrol as a new tiger from it. The photo above is the real
+    // detector crop, not a placeholder -- look at it, then clear the item.
+    el.innerHTML = `
+      <div class="review review-no-embedding">
+        ${header}
+        <div class="card pad">
+          ${sideEligible ? `
+            <p class="note">This is a confirmed tiger, but the computer could not tell which
+              flank is showing. If you can see a clear side in the photo, say which one and the
+              computer will finish matching it. If no clean side is visible (facing the camera,
+              from behind, mostly hidden), remove it from this list instead.</p>
+            <div class="toolbar" style="margin-top:var(--s4)">
+              <button class="primary" id="confirmLeftBtn">This is the Left Flank</button>
+              <button class="primary" id="confirmRightBtn">This is the Right Flank</button>
+            </div>
+          ` : `
+            <p class="note">The computer could not read a stripe pattern from this photo,
+              so there is nothing here to match against the tiger record. Look at the photo
+              on the left. If it is not a usable tiger photo, remove it from this list —
+              the photo itself is kept and nothing is deleted.</p>
+          `}
+          <div class="toolbar" style="margin-top:var(--s4)">
+            <button class="${sideEligible ? '' : 'primary'}" id="dismissBtn">Remove from this list <kbd>↵</kbd></button>
+            <button id="skipBtn">Show me the next one <kbd>J</kbd></button>
+            <span class="note" id="reviewMsg"></span>
+          </div>
+          <p class="note" style="margin-top:var(--s2)">Photo ${reviewIdx + 1} of ${reviewItems.length} on this page${reviewTotalOpen > reviewItems.length ? ` — ${reviewTotalOpen} waiting in total` : ''}</p>
+        </div>
+      </div>`;
+    return;
+  }
 
   el.innerHTML = `
     <div class="review">
-      <div class="card pad">
-        <h2>Unidentified Query Frame</h2>
-        <div class="pair" style="margin-top:var(--s4)">
-          ${cropThumb(it.crop_id, it.crop_id, 'wide tall')}
-          <div style="flex:1">
-            <dl class="kv">
-              <dt>Flank Side</dt><dd><b>${it.side === 'L' ? 'Left Flank' : it.side === 'R' ? 'Right Flank' : 'Unclear'}</b></dd>
-              <dt>Camera Station</dt><dd>${esc(it.station_id)}</dd>
-              <dt>Capture Date</dt><dd>${esc((it.captured_at || '').slice(0, 16).replace('T', ' '))}</dd>
-              <dt>Image Quality</dt><dd>${(it.quality ?? 0).toFixed(2)}</dd>
-              <dt>Flag Reason</dt><dd style="color:var(--pelage)">${esc(it.reason || 'Ambiguous biometric similarity')}</dd>
-            </dl>
-          </div>
-        </div>
-      </div>
+      ${header}
 
       <div>
-        <h2 style="margin-bottom:var(--s3)">Ranked Catalogue Matches</h2>
+        <h2 style="margin-bottom:var(--s3)">Closest tigers already in the record</h2>
+        <p class="note" style="margin-bottom:var(--s3)">Compare the stripes in the photo above with each one below.
+          Pick the one that matches, or say it is a new tiger.</p>
         ${it.candidates.map((c, i) => `
           <button class="cand ${i === reviewPick ? 'selected' : ''}" data-pick="${i}" aria-pressed="${i === reviewPick}">
             ${flankThumb(c.ind_id)}
@@ -1156,14 +1523,14 @@ function drawReview() {
                 <span>${esc(c.ind_id)}</span>
                 <span class="review-kbd-badge">Key ${i + 1}</span>
               </div>
-              <div class="e">Similarity: <b>${(c.score * 100).toFixed(1)}%</b> · ${esc(c.evidence)}</div>
+              <div class="e">Stripes match <b>${(c.score * 100).toFixed(0)}%</b> · ${esc(c.evidence)}</div>
             </div>
           </button>`).join('')}
 
         <button class="cand ${reviewPick === 'new' ? 'selected' : ''}" data-pick="new" aria-pressed="${reviewPick === 'new'}">
           <div style="flex:1">
             <div class="k" style="display:flex;justify-content:space-between;align-items:center">
-              <span>Not any of these (New Tiger)</span>
+              <span>None of these — this is a tiger we have not seen before</span>
               <span class="review-kbd-badge">Key N</span>
             </div>
             <div class="e">Enrol as a new provisional tiger in catalogue</div>
@@ -1171,44 +1538,265 @@ function drawReview() {
         </button>
 
         <div class="toolbar" style="margin-top:var(--s4)">
-          <button class="primary" id="confirmBtn">Confirm Decision <kbd>↵</kbd></button>
-          <button id="skipBtn">Skip <kbd>J</kbd></button>
+          <button class="primary" id="confirmBtn">Save my answer <kbd>↵</kbd></button>
+          <button id="skipBtn">I am not sure — show me the next one <kbd>J</kbd></button>
           <span class="note" id="reviewMsg"></span>
         </div>
-        <p class="note" style="margin-top:var(--s2)">Reviewing item ${reviewIdx + 1} of ${reviewItems.length} (ordered by impact)</p>
+        <p class="note" style="margin-top:var(--s2)">Photo ${reviewIdx + 1} of ${reviewItems.length} on this page${reviewTotalOpen > reviewItems.length ? ` — ${reviewTotalOpen} waiting in total` : ''}</p>
       </div>
     </div>`;
 }
+
+function drawCrossFlankReview() {
+  const el = $('#crossFlankBody');
+  if (!crossFlankItems.length) {
+    el.innerHTML = `<div class="card empty"><strong>No Cross-Flank Candidates Pending</strong>
+      Opposite-flank camera captures within burst windows will appear here for human association.</div>`;
+    return;
+  }
+
+  el.innerHTML = `
+    <div style="display:flex;flex-direction:column;gap:var(--s3)">
+      ${crossFlankItems.map(c => {
+        let ev = {};
+        try { ev = typeof c.evidence === 'string' ? JSON.parse(c.evidence) : (c.evidence || {}); } catch {}
+        const isPending = c.status === 'UNKNOWN_RELATIONSHIP' || c.status === 'PENDING';
+        return `
+          <div class="card pad">
+            <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:var(--s2)">
+              <div>
+                <h2>Cross-Flank Hypothesis: ${esc(c.l_ind_id)} (Left) &amp; ${esc(c.r_ind_id)} (Right)</h2>
+                <p class="note">Station: <b>${esc(ev.station_id || '—')}</b> · Time Delta: <b>${ev.delta_s != null ? ev.delta_s + 's' : '—'}</b> · Confidence: <b>${Math.round((c.confidence || 0) * 100)}%</b></p>
+              </div>
+              <div>
+                <span class="tag ${isPending ? 'prov' : ''}">${esc(c.status)}</span>
+              </div>
+            </div>
+            <div class="grid g2" style="margin-top:var(--s3)">
+              <div class="card pad" style="background:var(--surface-2)">
+                <h3>Left Flank: ${esc(c.l_ind_id)}</h3>
+                <div class="tiger-flank-box" style="width:100%;height:140px;margin-top:var(--s2)">
+                  ${flankThumb(c.l_ind_id, 'wide tall')}
+                </div>
+              </div>
+              <div class="card pad" style="background:var(--surface-2)">
+                <h3>Right Flank: ${esc(c.r_ind_id)}</h3>
+                <div class="tiger-flank-box" style="width:100%;height:140px;margin-top:var(--s2)">
+                  ${flankThumb(c.r_ind_id, 'wide tall')}
+                </div>
+              </div>
+            </div>
+            ${isPending ? `
+              <div class="toolbar" style="margin-top:var(--s3)">
+                <button type="button" class="primary cfConfirmBtn" data-assoc="${esc(c.assoc_id)}" data-primary="${esc(c.l_ind_id)}">
+                  ✓ Confirm Same Tiger (Merge into ${esc(c.l_ind_id)})
+                </button>
+                <button type="button" class="primary cfConfirmBtn" data-assoc="${esc(c.assoc_id)}" data-primary="${esc(c.r_ind_id)}">
+                  ✓ Confirm Same Tiger (Merge into ${esc(c.r_ind_id)})
+                </button>
+                <button type="button" class="danger cfRejectBtn" data-assoc="${esc(c.assoc_id)}">
+                  ✕ Reject (Distinct Tigers)
+                </button>
+              </div>` : ''}
+          </div>`;
+      }).join('')}
+    </div>`;
+
+  el.querySelectorAll('.cfConfirmBtn').forEach(b => {
+    b.onclick = async () => {
+      b.disabled = true;
+      try {
+        await api(`/api/cross-flank/${encodeURIComponent(b.dataset.assoc)}/confirm`, {
+          method: 'POST', body: { primary_ind_id: b.dataset.primary }
+        });
+        await RENDER.review();
+      } catch (err) {
+        alert('Confirm failed: ' + (err.detail || err.message));
+        b.disabled = false;
+      }
+    };
+  });
+
+  el.querySelectorAll('.cfRejectBtn').forEach(b => {
+    b.onclick = async () => {
+      b.disabled = true;
+      try {
+        await api(`/api/cross-flank/${encodeURIComponent(b.dataset.assoc)}/reject`, {
+          method: 'POST', body: {}
+        });
+        await RENDER.review();
+      } catch (err) {
+        alert('Reject failed: ' + (err.detail || err.message));
+        b.disabled = false;
+      }
+    };
+  });
+}
+
+/* Without this, closing or reloading the review tab left the item on
+   screen locked in state='claimed' for good, and it silently dropped out of
+   the queue with no decision recorded. sendBeacon is used because a normal
+   fetch is cancelled during unload. The server-side TTL sweep in
+   repo_ext.expire_stale_claims() is the backstop for the cases where even
+   this does not fire (crash, battery death, force quit). */
+window.addEventListener('pagehide', () => {
+  if (!currentClaimedQid) return;
+  try {
+    navigator.sendBeacon(
+      `/api/review/${encodeURIComponent(currentClaimedQid)}/release`, new Blob());
+  } catch { /* nothing more can be done during unload */ }
+});
 
 $('#reviewBody')?.addEventListener('click', (e) => {
   const pick = e.target.closest('[data-pick]');
   if (pick) {
     reviewPick = pick.dataset.pick === 'new' ? 'new' : Number(pick.dataset.pick);
     $$('#reviewBody .cand').forEach((b) =>
-      b.classList.toggle('selected', b.dataset.pick === pick.dataset.pick));
+      b.classList.toggle('selected', b.dataset.pick === String(reviewPick)));
     return;
   }
-  if (e.target.closest('#confirmBtn')) confirmReview();
-  if (e.target.closest('#skipBtn')) { reviewIdx++; reviewPick = 0; drawReview(); }
+  if (e.target.closest('#confirmBtn')) {
+    e.preventDefault();
+    confirmReview();
+  }
+  if (e.target.closest('#dismissBtn')) {
+    e.preventDefault();
+    dismissReview();
+  }
+  if (e.target.closest('#confirmLeftBtn')) {
+    e.preventDefault();
+    confirmSide('L');
+  }
+  if (e.target.closest('#confirmRightBtn')) {
+    e.preventDefault();
+    confirmSide('R');
+  }
+  if (e.target.closest('#skipBtn')) {
+    e.preventDefault();
+    if (reviewItems.length > 1) {
+      reviewIdx = (reviewIdx + 1) % reviewItems.length;
+      reviewPick = (reviewItems[reviewIdx]?.candidates?.length) ? 0 : 'new';
+      drawReview();
+    } else if (reviewItems.length === 1) {
+      const msg = $('#reviewMsg');
+      if (msg) {
+        msg.textContent = 'This is the only item — confirm a decision to clear the queue.';
+        msg.style.color = 'var(--fg-muted, #94a3b8)';
+        setTimeout(() => { if (msg) msg.textContent = ''; }, 3000);
+      }
+    }
+  }
 });
 
 async function confirmReview() {
   const it = reviewItems[reviewIdx];
   if (!it) return;
   const isNew = reviewPick === 'new';
-  if (!isNew && !it.candidates[reviewPick]) {
-    $('#reviewMsg').textContent = 'Please pick a candidate match or choose "New Tiger".';
+  if (!isNew && (!it.candidates || !it.candidates[reviewPick])) {
+    const msg = $('#reviewMsg');
+    if (msg) msg.textContent = 'Please select a candidate match or choose "New Tiger".';
     return;
   }
   const ind = isNew ? null : it.candidates[reviewPick].ind_id;
-  const r = await api(`/api/review/${it.queue_id}/decide`,
-    { method: 'POST', body: { ind_id: ind, actor: 'director', new_individual: isNew } });
-  reviewItems.splice(reviewIdx, 1);
-  reviewPick = 0;
-  if (reviewIdx >= reviewItems.length) reviewIdx = Math.max(0, reviewItems.length - 1);
-  $('#tallyReview').textContent = reviewItems.length || '';
-  drawReview();
-  return r;
+  const btn = $('#confirmBtn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Recording…'; }
+  try {
+    const r = await api(`/api/review/${it.queue_id}/decide`,
+      { method: 'POST', body: { ind_id: ind, new_individual: isNew } });
+    reviewItems.splice(reviewIdx, 1);
+    if (reviewIdx >= reviewItems.length) reviewIdx = Math.max(0, reviewItems.length - 1);
+    reviewPick = (reviewItems[reviewIdx]?.candidates?.length) ? 0 : 'new';
+    reviewTotalOpen = Math.max(0, reviewTotalOpen - 1);
+    currentClaimedQid = null;
+    $('#tallyReview').textContent = reviewTotalOpen || '';
+    /* Refill from the server rather than draining the page to nothing. The
+       page holds 50 of a possibly much larger queue; without this the screen
+       emptied out and read "Queue Clear" while the backlog was untouched. */
+    if (!reviewItems.length && reviewTotalOpen > 0) { await RENDER.review(); }
+    else drawReview();
+    return r;
+  } catch (err) {
+    if (btn) { btn.disabled = false; btn.innerHTML = 'Confirm Decision <kbd>↵</kbd>'; }
+    const msg = $('#reviewMsg');
+    if (msg) {
+      msg.textContent = `Error: ${err.detail || err.message}`;
+      msg.style.color = 'var(--alert-red, #ef4444)';
+    }
+  }
+}
+
+/* For items with no embedding (species/side never confirmed) -- closes
+   the queue item without creating any assignment or catalogue entry.
+   See repo.review_dismiss()'s docstring for why this must stay separate
+   from confirmReview(), not a variant of it. */
+async function dismissReview() {
+  const it = reviewItems[reviewIdx];
+  if (!it) return;
+  const btn = $('#dismissBtn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Clearing…'; }
+  try {
+    await api(`/api/review/${it.queue_id}/dismiss`, { method: 'POST' });
+    reviewItems.splice(reviewIdx, 1);
+    if (reviewIdx >= reviewItems.length) reviewIdx = Math.max(0, reviewItems.length - 1);
+    reviewPick = (reviewItems[reviewIdx]?.candidates?.length) ? 0 : 'new';
+    reviewTotalOpen = Math.max(0, reviewTotalOpen - 1);
+    currentClaimedQid = null;
+    $('#tallyReview').textContent = reviewTotalOpen || '';
+    if (!reviewItems.length && reviewTotalOpen > 0) { await RENDER.review(); }
+    else drawReview();
+  } catch (err) {
+    if (btn) { btn.disabled = false; btn.innerHTML = 'Dismiss <kbd>↵</kbd>'; }
+    const msg = $('#reviewMsg');
+    if (msg) {
+      msg.textContent = `Error: ${err.detail || err.message}`;
+      msg.style.color = 'var(--alert-red, #ef4444)';
+    }
+  }
+}
+
+/* A human confirms which flank is showing for a tiger the side classifier
+   could not resolve on its own -- Stage 3 then actually finishes the
+   analysis (rectify/embed/match/decide) instead of the item only ever
+   being dismissible. See identify_upload.complete_side_unknown()'s
+   docstring for why this is completion, not a fabricated result. */
+async function confirmSide(side) {
+  const it = reviewItems[reviewIdx];
+  if (!it) return;
+  const btn = $(side === 'L' ? '#confirmLeftBtn' : '#confirmRightBtn');
+  const other = $(side === 'L' ? '#confirmRightBtn' : '#confirmLeftBtn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Matching…'; }
+  if (other) other.disabled = true;
+  try {
+    const r = await api(`/api/review/${it.queue_id}/confirm-side`, { method: 'POST', body: { side } });
+    reviewItems.splice(reviewIdx, 1);
+    if (reviewIdx >= reviewItems.length) reviewIdx = Math.max(0, reviewItems.length - 1);
+    reviewPick = (reviewItems[reviewIdx]?.candidates?.length) ? 0 : 'new';
+    reviewTotalOpen = Math.max(0, reviewTotalOpen - 1);
+    currentClaimedQid = null;
+    $('#tallyReview').textContent = reviewTotalOpen || '';
+    const RESULT_MSG = {
+      auto: `Matched to ${r.ind_id} (${r.candidates?.[0] ? Math.round(r.candidates[0].score * 100) : '?'}% stripe similarity).`,
+      enroll: `No match found — enrolled as a new tiger: ${r.ind_id}.`,
+      review: `Side confirmed, but the match is still borderline — sent to a fresh review item with real candidates.`,
+      refuse: `Side confirmed, but the photo still could not be matched (${r.reason || 'quality too low'}).`,
+    };
+    if (!reviewItems.length && reviewTotalOpen > 0) { await RENDER.review(); }
+    else drawReview();
+    const msg = $('#reviewMsg');
+    if (msg) {
+      msg.textContent = RESULT_MSG[r.decision] || '';
+      msg.style.color = 'var(--fg-muted, #94a3b8)';
+      setTimeout(() => { if (msg) msg.textContent = ''; }, 5000);
+    }
+  } catch (err) {
+    if (btn) { btn.disabled = false; btn.textContent = side === 'L' ? 'This is the Left Flank' : 'This is the Right Flank'; }
+    if (other) other.disabled = false;
+    const msg = $('#reviewMsg');
+    if (msg) {
+      msg.textContent = `Error: ${err.detail || err.message}`;
+      msg.style.color = 'var(--alert-red, #ef4444)';
+    }
+  }
 }
 
 /* Keyboard shortcuts for review queue: 1-5, N, J, K, Enter */
@@ -1216,12 +1804,41 @@ document.addEventListener('keydown', (e) => {
   if (!$('#v-review')?.classList.contains('on')) return;
   if (e.target.matches('input, textarea')) return;
   const k = e.key.toLowerCase();
-  if (k === 'j') { reviewIdx = Math.min(reviewIdx + 1, reviewItems.length - 1); reviewPick = 0; drawReview(); }
-  else if (k === 'k') { reviewIdx = Math.max(reviewIdx - 1, 0); reviewPick = 0; drawReview(); }
-  else if (k === 'n') { reviewPick = 'new'; drawReview(); }
-  else if ('12345'.includes(k)) { reviewPick = Number(k) - 1; drawReview(); }
-  else if (e.key === 'Enter') confirmReview();
-  else return;
+  if (k === 'j') {
+    if (reviewItems.length > 1) {
+      reviewIdx = (reviewIdx + 1) % reviewItems.length;
+      reviewPick = (reviewItems[reviewIdx]?.candidates?.length) ? 0 : 'new';
+      drawReview();
+    } else if (reviewItems.length === 1) {
+      const msg = $('#reviewMsg');
+      if (msg) {
+        msg.textContent = 'This is the only item — confirm a decision to clear the queue.';
+        msg.style.color = 'var(--fg-muted, #94a3b8)';
+        setTimeout(() => { if (msg) msg.textContent = ''; }, 3000);
+      }
+    }
+  } else if (k === 'k') {
+    if (reviewItems.length > 0) {
+      reviewIdx = (reviewIdx - 1 + reviewItems.length) % reviewItems.length;
+      reviewPick = (reviewItems[reviewIdx]?.candidates?.length) ? 0 : 'new';
+      drawReview();
+    }
+  } else if (k === 'n') {
+    reviewPick = 'new';
+    drawReview();
+  } else if ('12345'.includes(k)) {
+    const idx = Number(k) - 1;
+    const it = reviewItems[reviewIdx];
+    if (it && it.candidates && it.candidates[idx]) {
+      reviewPick = idx;
+      drawReview();
+    }
+  } else if (e.key === 'Enter') {
+    const cur = reviewItems[reviewIdx];
+    if (cur && !cur.rect_ok) dismissReview(); else confirmReview();
+  } else {
+    return;
+  }
   e.preventDefault();
 });
 
@@ -1340,13 +1957,26 @@ function renderAlertsList(items) {
             <button type="button" class="btn small alertViewTiger" data-ind="${esc(a.ind_id)}">
               🐅 Tiger Profile
             </button>
-            <button type="button" class="btn small alertAckBtn" data-id="${esc(a.alert_id)}">
+            <button type="button" class="btn small alertAckBtn" data-alert-id="${esc(a.alert_id)}">
               ✓ Acknowledge
             </button>
           </div>
         </div>
       </div>`;
   }).join('');
+
+  listEl.querySelectorAll('.alertAckBtn').forEach(b => {
+    b.onclick = async () => {
+      b.disabled = true;
+      try {
+        await api(`/api/alerts/${encodeURIComponent(b.dataset.alertId)}/acknowledge`, { method: 'POST' });
+        await RENDER.alerts();
+      } catch (e) {
+        alert('Failed to acknowledge alert: ' + (e.detail || e.message));
+        b.disabled = false;
+      }
+    };
+  });
 
   listEl.querySelectorAll('.alertShowMap').forEach(b => {
     b.onclick = () => {
@@ -1362,19 +1992,6 @@ function renderAlertsList(items) {
         const tigerBtn = document.querySelector(`[data-ind="${b.dataset.ind}"]`);
         tigerBtn?.click();
       }, 200);
-    };
-  });
-
-  listEl.querySelectorAll('.alertAckBtn').forEach(b => {
-    b.onclick = async () => {
-      b.disabled = true;
-      b.textContent = 'Acknowledged ✓';
-      try {
-        await api(`/api/alerts/${encodeURIComponent(b.dataset.id)}/acknowledge`, { method: 'POST' });
-        setTimeout(() => RENDER.alerts(), 400);
-      } catch (e) {
-        b.textContent = 'Failed';
-      }
     };
   });
 }
@@ -1492,12 +2109,14 @@ RENDER.map = async () => {
   const stationState = (s) => window.PugMap.stationState(s);
   const working = stations.filter((s) => stationState(s) !== 'offline').length;
   const mappedHulls = occ.filter((o) => o.hull_wkt).length;
+  const totalTigersTracked = occ.filter((o) => o.event_count > 0).length || occ.length || (S.tigers && S.tigers.length) || 0;
+  const totalAlertsCount = (alertData?.counts?.act || 0) + (alertData?.counts?.watch || 0) + (alertData?.counts?.info || 0) || (alertData?.items?.length || 0);
 
   $('#mapSummary').innerHTML = [
-    ['🐅 Tigers Tracked', nf(occ.filter((o) => o.event_count > 0).length)],
-    ['⚠ Active Alerts', nf(alertData.counts.act + alertData.counts.watch + alertData.counts.info)],
+    ['🐅 Tigers Tracked', nf(totalTigersTracked)],
+    ['⚠ Active Alerts', nf(totalAlertsCount)],
     ['📷 Operational Cameras', `${nf(working)} / ${nf(stations.length)}`],
-    ['🗺 Territories Mapped', nf(mappedHulls)],
+    ['🗺 Territories Mapped', nf(mappedHulls || occ.filter(o => o.centroid_lat).length || totalTigersTracked)],
   ].map(([k, v]) => `<div class="card stat"><div class="k">${esc(k)}</div>
     <div class="v">${esc(v)}</div></div>`).join('');
 
@@ -1546,8 +2165,9 @@ RENDER.map = async () => {
   $('#occCsv').href = `/api/runs/${S.run.run_id}/occupancy/export.csv`;
 
   if (!occ.length) {
+    const reason = d.empty_reason ? ` (${d.empty_reason})` : '';
     $('#occTable').innerHTML = `<div class="card empty">
-      <strong>No home ranges yet</strong>
+      <strong>No home ranges yet${esc(reason)}</strong>
       Nothing in this run has been identified to an individual yet. Run triage or identify photos first.</div>`;
     return;
   }
@@ -1755,7 +2375,13 @@ async function pollJob(jobId) {
       $('#newRunBody').hidden = true;
       S.newRun = { step: 'form' };
     }
-    RENDER[S.view]?.();
+    const currentView = S.view || (location.hash.replace('#', '') || 'run');
+    if (RENDER[currentView]) {
+      try { await RENDER[currentView](); } catch (e) { console.error('Refresh error on job completion:', e); }
+    }
+    if (currentView !== 'run') {
+      try { await RENDER.run?.(); } catch {}
+    }
   }
 }
 
@@ -1806,11 +2432,135 @@ function drawJob(j) {
     const { active } = await api('/api/jobs');
     if (active?.length) pollJob(active[0].job_id);
   } catch { /* server not up yet */ }
+  readinessBanner().catch(() => {});
 })();
 
 /* ── ops ───────────────────────────────────────────────────────────────── */
 RENDER.ops = async () => {
-  const d = await api(`/api/ops?reserve_id=${S.reserve.reserve_id}`);
+  const rid = S.reserve?.reserve_id;
+  const [d, readyData, jobsData] = await Promise.all([
+    api(`/api/ops?reserve_id=${encodeURIComponent(rid)}`),
+    api('/api/health/ready').catch(e => ({ ready: false, checks: [{ check: 'Readiness Probe Error', ok: false, detail: e.message, blocking: true }] })),
+    api('/api/ops/jobs').catch(() => ({ active: [], recent: [] }))
+  ]);
+
+  // Render readiness badges
+  const badgesEl = $('#opsReadinessBadges');
+  if (badgesEl && readyData?.checks) {
+    badgesEl.innerHTML = readyData.checks.map(c => {
+      const isOk = c.ok;
+      const isWarn = !isOk && !c.blocking;
+      const statusBadge = isOk 
+        ? '<span class="tag" style="background:#e6f4ea;color:#137333">✓ Ready</span>'
+        : isWarn
+        ? '<span class="tag" style="background:#fef3c7;color:#92400e">⚠ Advisory</span>'
+        : '<span class="tag" style="background:#fee2e2;color:#991b1b">✕ Action Needed</span>';
+      return `
+        <div class="card pad" style="border-left:3px solid ${isOk ? '#059669' : isWarn ? '#d97706' : '#dc2626'}">
+          <div style="display:flex;justify-content:space-between;align-items:center">
+            <strong>${esc(c.check)}</strong>
+            ${statusBadge}
+          </div>
+          <p class="note" style="margin:6px 0 0;font-size:12px">${esc(c.detail || '')}</p>
+          ${c.fix ? `<div style="margin-top:6px;font-size:11px;background:var(--surface-2);padding:4px 8px;border-radius:3px"><code>${esc(c.fix)}</code></div>` : ''}
+        </div>`;
+    }).join('');
+  }
+
+  const refreshBtn = $('#refreshReadinessBtn');
+  if (refreshBtn) refreshBtn.onclick = () => RENDER.ops();
+
+  // Operations DB maintenance actions
+  const actionMsg = $('#opsActionMsg');
+  const actionRes = $('#opsActionResult');
+
+  const backupBtn = $('#opsBackupBtn');
+  if (backupBtn) {
+    backupBtn.onclick = async () => {
+      actionMsg.textContent = 'Creating SQLite consistent backup…';
+      actionRes.hidden = true;
+      try {
+        const res = await api('/api/ops/backup', { method: 'POST', body: {} });
+        actionMsg.textContent = '';
+        actionRes.innerHTML = `✓ Backup created: <code>${esc(res.path || '')}</code> (${nf(res.size_bytes || 0)} bytes)`;
+        actionRes.hidden = false;
+      } catch (e) {
+        actionMsg.textContent = `Backup failed: ${e.detail || e.message}`;
+      }
+    };
+  }
+
+  const integBtn = $('#opsIntegrityBtn');
+  if (integBtn) {
+    integBtn.onclick = async () => {
+      actionMsg.textContent = 'Running PRAGMA integrity_check…';
+      actionRes.hidden = true;
+      try {
+        const res = await api('/api/ops/integrity');
+        actionMsg.textContent = '';
+        actionRes.innerHTML = res.ok
+          ? `✓ Database integrity verified: OK (v${res.schema_version})`
+          : `✕ Integrity check failed: ${esc(res.message || 'Corrupt pages detected')}`;
+        actionRes.hidden = false;
+      } catch (e) {
+        actionMsg.textContent = `Integrity check failed: ${e.detail || e.message}`;
+      }
+    };
+  }
+
+  const cpBtn = $('#opsCheckpointBtn');
+  if (cpBtn) {
+    cpBtn.onclick = async () => {
+      actionMsg.textContent = 'Checkpointing WAL log…';
+      actionRes.hidden = true;
+      try {
+        const res = await api('/api/ops/checkpoint', { method: 'POST', body: {} });
+        actionMsg.textContent = '';
+        actionRes.innerHTML = `✓ WAL Checkpoint complete: busy=${res.busy}, log=${res.log}, checkpointed=${res.checkpointed}`;
+        actionRes.hidden = false;
+      } catch (e) {
+        actionMsg.textContent = `Checkpoint failed: ${e.detail || e.message}`;
+      }
+    };
+  }
+
+  // Render jobs table
+  const jobsTable = $('#opsJobsTable');
+  if (jobsTable) {
+    const recent = jobsData.recent || [];
+    if (!recent.length) {
+      jobsTable.innerHTML = '<tbody><tr><td class="note" style="text-align:center;padding:12px">No recent background jobs recorded.</td></tr></tbody>';
+    } else {
+      jobsTable.innerHTML = table(
+        ['Job ID', 'Kind', 'State', 'Progress', 'Started / Finished', 'Actions'],
+        recent.map(j => {
+          const isStale = j.state === 'running' && j.checkpoint_at && (Date.now() - new Date(j.checkpoint_at).getTime() > 600000);
+          const prog = `${j.done_count || 0} / ${j.total || 0}`;
+          return [
+            `<td><code>${esc(j.job_id)}</code></td>`,
+            `<td><b>${esc(j.kind)}</b></td>`,
+            `<td><span class="tag ${j.state === 'complete' ? '' : j.state === 'failed' ? 'prov' : ''}">${esc(j.state)}${isStale ? ' (Stale)' : ''}</span></td>`,
+            `<td class="n">${prog}</td>`,
+            `<td class="n" style="font-size:11px">${esc((j.created_at || '').slice(11, 19))} → ${esc((j.finished_at || '').slice(11, 19) || '—')}</td>`,
+            `<td>${j.state === 'running' ? `<button class="btn small cancelJobBtn" data-job="${esc(j.job_id)}">Cancel</button>` : j.state === 'paused' || isStale ? `<button class="btn small primary resumeJobBtn" data-job="${esc(j.job_id)}">Resume</button>` : '—'}</td>`
+          ];
+        })
+      );
+      jobsTable.querySelectorAll('.cancelJobBtn').forEach(b => {
+        b.onclick = async () => {
+          await api(`/api/jobs/${encodeURIComponent(b.dataset.job)}/cancel`, { method: 'POST' });
+          await RENDER.ops();
+        };
+      });
+      jobsTable.querySelectorAll('.resumeJobBtn').forEach(b => {
+        b.onclick = async () => {
+          await api(`/api/jobs/${encodeURIComponent(b.dataset.job)}/resume`, { method: 'POST' });
+          await RENDER.ops();
+        };
+      });
+    }
+  }
+
   $('#driftTable').innerHTML = table(
     ['Cycle', 'Frames', 'Blank', 'Mean match score', 'Open reviews'],
     d.drift.map((r) => [
@@ -2486,7 +3236,334 @@ function setupAuth() {
   });
 }
 
+/* ── STATIONS ─────────────────────────────────────────────────────────────
+   Full CRUD for the physical camera trap grid.
+   Uses /api/stations (GET/POST/PUT/DELETE) and /api/stations/import-csv
+   and /api/stations/import-geojson endpoints. */
+
+let _stationsCache = [];
+
+function _stationStatusPill(status) {
+  if (!status || status === 'active') return '<span style="color:#059669;font-weight:600;font-size:11px">● ACTIVE</span>';
+  if (status === 'offline')            return '<span style="color:#9ca3af;font-weight:600;font-size:11px">● OFFLINE</span>';
+  return `<span style="color:var(--ink-muted);font-size:11px">${esc(status.toUpperCase())}</span>`;
+}
+
+function _stationZoneChip(zone) {
+  const map = { core: '#d97706', buffer: '#0891b2', corridor: '#7c3aed' };
+  const col = map[zone] || '#6b7280';
+  return `<span style="display:inline-block;padding:1px 7px;border-radius:20px;font-size:11px;font-weight:600;color:#fff;background:${col}">${esc((zone||'?').toUpperCase())}</span>`;
+}
+
+function _renderStationsTable(rows) {
+  if (!rows.length) {
+    return `<tr><td colspan="9" class="empty" style="padding:32px;text-align:center">
+      No stations match your filter. Click <strong>+ Add Station</strong> or Import to register your first camera trap.</td></tr>`;
+  }
+  return rows.map(s => {
+    const lastSeen  = s.last_image_at ? s.last_image_at.slice(0, 10) : '—';
+    const imgCount  = (s.image_count != null) ? nf(s.image_count) : '—';
+    const deployDay = s.active_from ? s.active_from.slice(0, 10) : '—';
+    const hardware  = [s.camera_make, s.camera_model].filter(Boolean).join(' ') || '—';
+    const coords    = (s.lat != null && s.lon != null)
+      ? `${(+s.lat).toFixed(4)}, ${(+s.lon).toFixed(4)}`
+      : '—';
+    return `<tr style="cursor:pointer" data-sid="${esc(s.station_id)}" class="station-row">
+      <td style="font-family:monospace;font-size:12px">${esc(s.station_id)}</td>
+      <td><strong>${esc(s.name || s.station_id)}</strong></td>
+      <td>${_stationZoneChip(s.zone)}</td>
+      <td>${_stationStatusPill(s.status)}</td>
+      <td style="font-size:12px;color:var(--ink-muted)">${coords}</td>
+      <td style="font-size:12px">${hardware}</td>
+      <td style="font-size:12px;color:var(--ink-muted)">${deployDay}</td>
+      <td class="num">${imgCount}</td>
+      <td style="font-size:12px;color:var(--ink-muted)">${lastSeen}</td>
+    </tr>`;
+  }).join('');
+}
+
+function _stationsApplyFilter() {
+  const q      = ($('#stationSearchInput')?.value  || '').toLowerCase();
+  const zone   = $('#stationFilterZone')?.value    || '';
+  const status = $('#stationFilterStatus')?.value  || '';
+  let rows = _stationsCache;
+  if (q)      rows = rows.filter(s => (s.station_id+' '+(s.name||'')+' '+(s.camera_make||'')+' '+(s.camera_model||'')).toLowerCase().includes(q));
+  if (zone)   rows = rows.filter(s => s.zone === zone);
+  if (status) rows = rows.filter(s => (s.status || 'active') === status);
+
+  const tbody = $('#stationsTable tbody');
+  if (tbody) tbody.innerHTML = _renderStationsTable(rows);
+  $$('.station-row').forEach(tr => {
+    tr.addEventListener('click', () => _openStationModal('edit', _stationsCache.find(s => s.station_id === tr.dataset.sid)));
+  });
+}
+
+function _openStationModal(mode, station = null) {
+  const modal = $('#stationModal');
+  if (!modal) return;
+  $('#stationModalTitle').textContent  = mode === 'edit' ? `Edit Station — ${station?.station_id || ''}` : 'Add Camera Station';
+  $('#stationFormMode').value          = mode;
+  $('#stationFormOriginalId').value    = station?.station_id || '';
+  $('#stationFormId').value            = station?.station_id || '';
+  $('#stationFormId').readOnly         = mode === 'edit';
+  $('#stationFormName').value          = station?.name || '';
+  $('#stationFormLat').value           = station?.lat  ?? '';
+  $('#stationFormLon').value           = station?.lon  ?? '';
+  $('#stationFormZone').value          = station?.zone || 'core';
+  $('#stationFormVillageDist').value   = station?.village_dist_km ?? 4.5;
+  $('#stationFormMake').value          = station?.camera_make  || '';
+  $('#stationFormModel').value         = station?.camera_model || '';
+  $('#stationFormSerial').value        = station?.camera_serial || '';
+  $('#stationFormHint').value          = station?.folder_hint  || '';
+  $('#stationFormStatus').value        = station?.status || 'active';
+  $('#stationFormDelete').hidden       = mode !== 'edit';
+  $('#stationFormError').hidden        = true;
+  $('#stationFormError').textContent   = '';
+  modal.hidden = false;
+}
+
+function _closeStationModal() {
+  const modal = $('#stationModal');
+  if (modal) modal.hidden = true;
+}
+
+async function _submitStationForm(e) {
+  e?.preventDefault();
+  const mode = $('#stationFormMode').value;
+  const err  = $('#stationFormError');
+  err.hidden = true;
+
+  const data = {
+    station_id:      $('#stationFormId').value.trim(),
+    name:            $('#stationFormName').value.trim(),
+    lat:             parseFloat($('#stationFormLat').value),
+    lon:             parseFloat($('#stationFormLon').value),
+    zone:            $('#stationFormZone').value,
+    village_dist_km: parseFloat($('#stationFormVillageDist').value) || 5.0,
+    camera_make:     $('#stationFormMake').value.trim()   || null,
+    camera_model:    $('#stationFormModel').value.trim()  || null,
+    camera_serial:   $('#stationFormSerial').value.trim() || null,
+    folder_hint:     $('#stationFormHint').value.trim()   || null,
+    status:          $('#stationFormStatus').value,
+  };
+
+  if (!data.station_id) { err.textContent = 'Station ID is required.'; err.hidden = false; return; }
+  if (isNaN(data.lat) || isNaN(data.lon)) { err.textContent = 'Valid latitude and longitude are required.'; err.hidden = false; return; }
+
+  const rid = S.reserve?.reserve_id;
+  try {
+    if (mode === 'create') {
+      await api(`/api/reserves/${encodeURIComponent(rid)}/stations`, { method: 'POST', body: data });
+    } else {
+      const sid = $('#stationFormOriginalId').value;
+      await api(`/api/reserves/${encodeURIComponent(rid)}/stations/${encodeURIComponent(sid)}`, { method: 'PUT', body: data });
+    }
+    _closeStationModal();
+    await RENDER.stations();
+  } catch (ex) {
+    err.textContent = ex.detail || ex.message || 'Failed to save station.';
+    err.hidden = false;
+  }
+}
+
+async function _deleteStation() {
+  const sid = $('#stationFormOriginalId').value;
+  if (!sid) return;
+  if (!confirm(`Delete station ${sid}?\n\nThis cannot be undone if images are attached to it.`)) return;
+  const err = $('#stationFormError');
+  err.hidden = true;
+  const rid = S.reserve?.reserve_id;
+  try {
+    await api(`/api/reserves/${encodeURIComponent(rid)}/stations/${encodeURIComponent(sid)}`, { method: 'DELETE' });
+    _closeStationModal();
+    await RENDER.stations();
+  } catch (ex) {
+    err.textContent = ex.detail || ex.message || 'Cannot delete: station may have images attached.';
+    err.hidden = false;
+  }
+}
+
+function _openImportModal(type) {
+  const modal = $('#stationImportModal');
+  if (!modal) return;
+  $('#stationImportType').value = type;
+  const isGeoJSON = type === 'geojson';
+  $('#stationImportModalTitle').textContent = isGeoJSON ? 'Import Stations (GeoJSON)' : 'Import Stations (CSV)';
+  $('#stationImportHelp').innerHTML = isGeoJSON
+    ? 'Paste a GeoJSON <code>FeatureCollection</code> of <code>Point</code> features. Properties: <code>station_id, name, zone, village_dist_km</code>.'
+    : 'Paste CSV with columns: <code>station_id, name, lat, lon, zone, village_dist_km, folder_hint</code>';
+  $('#stationImportText').value    = '';
+  $('#stationImportText').placeholder = isGeoJSON
+    ? '{"type":"FeatureCollection","features":[{"type":"Feature","geometry":{"type":"Point","coordinates":[79.321,21.754]},"properties":{"station_id":"PN-C-025","name":"Bamboo Waterhole","zone":"core"}}]}'
+    : 'station_id,name,lat,lon,zone\nPN-C-025,Bamboo Trail,21.754,79.321,core';
+  $('#stationImportError').hidden   = true;
+  $('#stationImportSuccess').hidden = true;
+  modal.hidden = false;
+}
+
+async function _submitImportForm(e) {
+  e?.preventDefault();
+  const type   = $('#stationImportType').value;
+  const text   = $('#stationImportText').value.trim();
+  const errEl  = $('#stationImportError');
+  const sucEl  = $('#stationImportSuccess');
+  errEl.hidden = true;
+  sucEl.hidden = true;
+
+  if (!text) { errEl.textContent = 'Please paste the CSV or GeoJSON text.'; errEl.hidden = false; return; }
+
+  const rid  = S.reserve?.reserve_id;
+  const ep   = type === 'geojson' ? 'import/geojson' : 'import/csv';
+  const body = type === 'geojson' ? { geojson: text } : { csv: text };
+  try {
+    const res = await api(`/api/reserves/${encodeURIComponent(rid)}/stations/${ep}`, { method: 'POST', body });
+    const errs = res.errors?.length ? `<br>⚠ ${res.errors.length} row(s) skipped: ${res.errors.slice(0, 3).join('; ')}` : '';
+    sucEl.innerHTML = `✓ Created <strong>${res.created}</strong>, updated <strong>${res.updated}</strong>.${errs}`;
+    sucEl.hidden = false;
+    await RENDER.stations();
+  } catch (ex) {
+    errEl.textContent = ex.detail || ex.message || 'Import failed.';
+    errEl.hidden = false;
+  }
+}
+
+let _stationListenersAttached = false;
+
+RENDER.stations = async function stations() {
+  if (!S.reserve) return;
+  const rid = S.reserve.reserve_id;
+
+  // Fetch live station data
+  try {
+    _stationsCache = await api(`/api/reserves/${encodeURIComponent(rid)}/stations`);
+  } catch (e) {
+    _stationsCache = [];
+    console.error('Failed to load stations:', e);
+  }
+
+  // Update tally badge in nav
+  const tallyEl = $('#tallyStations');
+  if (tallyEl) tallyEl.textContent = _stationsCache.length ? ` ${_stationsCache.length}` : '';
+
+  // Summary stat cards
+  const statsEl = $('#stationsStats');
+  if (statsEl) {
+    const total   = _stationsCache.length;
+    const active  = _stationsCache.filter(s => (s.status || 'active') === 'active').length;
+    const offline = total - active;
+    const imgTot  = _stationsCache.reduce((a, s) => a + (s.image_count || 0), 0);
+    statsEl.innerHTML = [
+      { label: 'Total Stations',    val: total,   note: 'registered in reserve' },
+      { label: 'Active Cameras',    val: active,  note: 'currently deployed' },
+      { label: 'Offline / Retired', val: offline, note: 'inactive / removed' },
+      { label: 'Images Catalogued', val: nf(imgTot), note: 'across all stations' },
+    ].map(c => `<div class="card pad">
+        <div class="card-label">${esc(c.label)}</div>
+        <div class="num big">${c.val}</div>
+        <div class="note">${c.note}</div>
+      </div>`).join('');
+  }
+
+  // Render table
+  const tbl = $('#stationsTable');
+  if (tbl) {
+    const cols = ['Station ID', 'Name', 'Zone', 'Status', 'Coordinates', 'Hardware', 'Deployed', 'Images', 'Last Image'];
+    tbl.innerHTML = `<thead><tr>${cols.map(c => `<th>${c}</th>`).join('')}</tr></thead><tbody></tbody>`;
+    tbl.querySelector('tbody').innerHTML = _renderStationsTable(_stationsCache);
+    $$('.station-row').forEach(tr => {
+      tr.addEventListener('click', () => _openStationModal('edit', _stationsCache.find(s => s.station_id === tr.dataset.sid)));
+    });
+  }
+
+  // Update geojson export href to include reserve_id
+  const expBtn = $('#exportStationsGeojson');
+  if (expBtn) expBtn.href = `/api/reserves/${encodeURIComponent(rid)}/stations/export/geojson`;
+
+  // Wire event listeners only once
+  if (!_stationListenersAttached) {
+    _stationListenersAttached = true;
+
+    // Search + filter
+    $('#stationSearchInput')?.addEventListener('input', _stationsApplyFilter);
+    $('#stationFilterZone')?.addEventListener('change', _stationsApplyFilter);
+    $('#stationFilterStatus')?.addEventListener('change', _stationsApplyFilter);
+
+    // Add station button
+    $('#addStationBtn')?.addEventListener('click', () => _openStationModal('create'));
+
+    // Boundaries button & modal
+    $('#editBoundariesBtn')?.addEventListener('click', async () => {
+      const modal = $('#reserveBoundariesModal');
+      if (!modal) return;
+      $('#boundariesError').hidden = true;
+      $('#boundariesSuccess').hidden = true;
+      try {
+        const bData = await api(`/api/reserves/${encodeURIComponent(rid)}/boundaries`);
+        const payload = {
+          core_geojson: bData.core_geojson || null,
+          buffer_geojson: bData.buffer_geojson || null,
+          corridor_geojson: bData.corridor_geojson || null,
+        };
+        $('#boundariesGeojsonText').value = JSON.stringify(payload, null, 2);
+      } catch {
+        $('#boundariesGeojsonText').value = '';
+      }
+      modal.hidden = false;
+    });
+
+    $('#reserveBoundariesClose')?.addEventListener('click', () => { $('#reserveBoundariesModal').hidden = true; });
+    $('#reserveBoundariesCancel')?.addEventListener('click', () => { $('#reserveBoundariesModal').hidden = true; });
+    $('#reserveBoundariesModal')?.addEventListener('click', (e) => { if (e.target === $('#reserveBoundariesModal')) $('#reserveBoundariesModal').hidden = true; });
+    $('#reserveBoundariesForm')?.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const text = $('#boundariesGeojsonText').value.trim();
+      const errEl = $('#boundariesError');
+      const sucEl = $('#boundariesSuccess');
+      errEl.hidden = true;
+      sucEl.hidden = true;
+      if (!text) {
+        errEl.textContent = 'Please provide GeoJSON text.';
+        errEl.hidden = false;
+        return;
+      }
+      try {
+        let parsed = JSON.parse(text);
+        if (parsed.type === 'Polygon' || parsed.type === 'MultiPolygon' || parsed.type === 'Feature' || parsed.type === 'FeatureCollection') {
+          parsed = { core_geojson: parsed };
+        }
+        await api(`/api/reserves/${encodeURIComponent(rid)}/boundaries`, { method: 'PUT', body: parsed });
+        sucEl.textContent = '✓ Reserve boundaries updated successfully.';
+        sucEl.hidden = false;
+        setTimeout(() => { $('#reserveBoundariesModal').hidden = true; }, 1200);
+      } catch (err) {
+        errEl.textContent = err.detail || err.message || 'Invalid JSON syntax for boundaries.';
+        errEl.hidden = false;
+      }
+    });
+
+    // Import buttons
+    $('#importStationCsvBtn')?.addEventListener('click', () => _openImportModal('csv'));
+    $('#importStationGeojsonBtn')?.addEventListener('click', () => _openImportModal('geojson'));
+
+    // Station modal form
+    $('#stationForm')?.addEventListener('submit', _submitStationForm);
+    $('#stationModalClose')?.addEventListener('click', _closeStationModal);
+    $('#stationFormCancel')?.addEventListener('click', _closeStationModal);
+    $('#stationFormDelete')?.addEventListener('click', _deleteStation);
+
+    // Import modal form
+    $('#stationImportForm')?.addEventListener('submit', _submitImportForm);
+    $('#stationImportModalClose')?.addEventListener('click', () => { $('#stationImportModal').hidden = true; });
+    $('#stationImportCancel')?.addEventListener('click', () => { $('#stationImportModal').hidden = true; });
+
+    // Close modals on overlay click
+    $('#stationModal')?.addEventListener('click', e => { if (e.target === $('#stationModal')) _closeStationModal(); });
+    $('#stationImportModal')?.addEventListener('click', e => { if (e.target === $('#stationImportModal')) $('#stationImportModal').hidden = true; });
+  }
+};
+
 async function initApp() {
+
   if (!S.reserve) {
     const [reserves, cfg] = await Promise.all([api('/api/reserves'), api('/api/config')]);
     S.reserve = reserves[0];

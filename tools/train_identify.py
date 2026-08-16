@@ -3,7 +3,8 @@ docs/MODEL_CHOICES.md) on ATRW's labelled training images.
 
     python -m tools.train_identify [--epochs N] [--smoke-test]
 
-Writes data/weights/identify_embedder.pt (gitignored -- see .gitignore).
+Writes edge/models/identify/identify_embedder.pt (gitignored -- see
+.gitignore), the path the field runtime loads by absolute local path.
 Held-out-by-identity split (tools/atrw_dataset.held_out_identity_split):
 held-out identities never appear in a training batch. Rectification
 uses each image's own ATRW ground-truth keypoints
@@ -147,7 +148,10 @@ def main() -> int:
     print(f"training device: {device}"
           + (f" ({torch.cuda.get_device_name(0)})" if device.type == "cuda" else ""))
 
-    model = TripletEmbedder(pretrained=True).to(device)
+    backbone = config.RESNET50_BACKBONE_PATH if config.RESNET50_BACKBONE_PATH.exists() else None
+    if backbone is None:
+        print("no local ImageNet backbone supplied; training from scratch (no download attempted)")
+    model = TripletEmbedder(backbone_weights=backbone).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=LR)
     rng = random.Random(20260813)
 

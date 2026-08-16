@@ -65,6 +65,60 @@ def load_labelled(split: str = "train") -> list[dict]:
     return out
 
 
+_SIDE_PAIRS = [
+    ("right_ear", "left_ear"), ("right_shoulder", "left_shoulder"),
+    ("right_front_paw", "left_front_paw"), ("right_hip", "left_hip"),
+    ("right_knee", "left_knee"), ("right_back_paw", "left_back_paw"),
+]
+"""Every laterally-paired keypoint ATRW annotates, not just shoulder+hip.
+edge/pipeline/identify.py::infer_side() deliberately uses shoulder+hip
+alone, because that is the only pair the RUNTIME keypoint model ever
+predicts (Task 4's scope) -- there is nothing to gain by widening it
+there. But for LABELLING GROUND TRUTH from ATRW's own full annotation,
+all six pairs are already given, and restricting to one pair throws away
+real signal: checked empirically against the 1887 labelled rows, doing
+so leaves 982 (52%) as 'no side inferrable', and inspecting a sample of
+those by eye shows most are genuine, clean, single-flank profile shots
+where only shoulder+hip specifically went unlabelled -- not oblique or
+occluded poses. Voting across all six pairs recovers 199 of those as
+confidently L or R, and correctly flags 73 more as a real disagreement
+(different pairs favour different sides -- inspected by eye, these are
+the actual oblique/near-frontal poses, correctly UNSAFE to label)."""
+
+
+def _kp_visible(keypoints: dict, name: str) -> bool:
+    kp = keypoints.get(name)
+    return kp is not None and kp[2] > 0
+
+
+def infer_ground_truth_side(keypoints: dict) -> str:
+    """L / R / UNKNOWN from ATRW's full keypoint set, for building training
+    labels only -- see _SIDE_PAIRS' docstring for why this differs from
+    (and must not replace) edge/pipeline/identify.py::infer_side().
+
+    A pair votes for the side that is visible on that pair alone; a pair
+    with both sides visible, or neither, does not vote (uninformative
+    either way -- not an occlusion signal on its own). One-sided pairs
+    that disagree with each other is a real conflict, not a coin flip:
+    treated as UNKNOWN rather than trusting a majority, since an
+    inspected sample of exactly this case turned out to be oblique/
+    near-frontal poses, not clean profiles with one noisy point."""
+    votes = []
+    for right_name, left_name in _SIDE_PAIRS:
+        right = _kp_visible(keypoints, right_name)
+        left = _kp_visible(keypoints, left_name)
+        if right and not left:
+            votes.append("R")
+        elif left and not right:
+            votes.append("L")
+    if not votes:
+        return "UNKNOWN"
+    sides = set(votes)
+    if len(sides) > 1:
+        return "UNKNOWN"
+    return votes[0]
+
+
 def held_out_identity_split(rows: list[dict], held_out_fraction: float = 0.2,
                              seed: int = 20260813) -> tuple[list[dict], list[dict]]:
     """Splits by IDENTITY, not by image -- an embedder tested on

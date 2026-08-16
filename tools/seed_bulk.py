@@ -35,6 +35,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from edge import config                      # noqa: E402
 from edge.db import repo                     # noqa: E402
 from edge.pipeline import postprocess        # noqa: E402
+from tools.seed_demo import _capture_existing_accounts  # noqa: E402
 
 RESERVE = "PENCH-MH"
 RESERVE_UTM_EPSG = 32644
@@ -62,6 +63,15 @@ def hid(*parts) -> str:
     return hashlib.sha256("|".join(map(str, parts)).encode()).hexdigest()[:16]
 
 
+CAMERA_MAKES = [
+    ("Reconyx", "HyperFire 2", "HF2"),
+    ("Cuddeback", "Color X-Change", "CXC"),
+    ("Bushnell", "Trophy Cam HD", "BTC"),
+    ("Browning", "Strike Force Pro", "BSF"),
+    ("Spypoint", "Force-Pro", "SPF"),
+]
+
+
 def build_stations() -> list[dict]:
     out, n = [], 0
     half = (GRID_SIDE - 1) / 2
@@ -73,11 +83,16 @@ def build_stations() -> list[dict]:
             edge_dist = max(abs(row - half), abs(col - half))
             zone = "core" if edge_dist <= half * 0.55 else "buffer"
             village_km = round(1.0 + edge_dist * 2.1 + RNG.uniform(-0.3, 0.3), 1)
+            make, model, prefix = RNG.choice(CAMERA_MAKES)
+            serial = f"{prefix}-{RNG.randint(10000, 99999)}"
             out.append({
                 "station_id": sid(n, zone), "reserve_id": RESERVE,
-                "name": f"Station {n:03d}", "lat": round(lat, 5), "lon": round(lon, 5),
+                "name": f"Station {n:03d} ({'Core' if zone == 'core' else 'Buffer'})",
+                "lat": round(lat, 5), "lon": round(lon, 5),
                 "zone": zone, "village_dist_km": max(0.6, village_km),
                 "grid_cell": f"G{row}{col}", "folder_hint": f"CAM_{n:03d}",
+                "camera_make": make, "camera_model": model, "camera_serial": serial,
+                "active_from": "2025-01-01T00:00:00Z", "status": "active",
             })
     return out
 
@@ -97,39 +112,76 @@ def main() -> None:
     existing_users = []
     existing_sessions = []
     if config.DB_PATH.exists():
-        try:
-            conn = repo.connect()
-            existing_users = repo._rows(conn.execute("SELECT * FROM users"))
-            existing_sessions = repo._rows(conn.execute("SELECT * FROM sessions WHERE revoked_at IS NULL"))
-        except Exception:
-            pass
+        # Same guarantee as tools/seed_demo.py's --reset: never silently
+        # discard real accounts because this read raced with something else
+        # holding the database open. See _capture_existing_accounts()'s own
+        # docstring for the incident that made this non-optional.
+        existing_users, existing_sessions = _capture_existing_accounts()
         repo.close_all()
-        config.DB_PATH.unlink()
-        for suffix in ("-wal", "-shm"):
-            p = Path(str(config.DB_PATH) + suffix)
-            if p.exists():
-                p.unlink()
+        try:
+            config.DB_PATH.unlink()
+            for suffix in ("-wal", "-shm"):
+                p = Path(str(config.DB_PATH) + suffix)
+                if p.exists():
+                    try:
+                        p.unlink()
+                    except Exception:
+                        pass
+        except OSError:
+            conn = repo.connect()
+            conn.execute("PRAGMA foreign_keys = OFF")
+            tables = [r["name"] for r in repo._rows(conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"))]
+            for t in tables:
+                if t != "schema_migrations":
+                    try:
+                        conn.execute(f"DELETE FROM {t}")
+                    except Exception:
+                        pass
+            conn.execute("PRAGMA foreign_keys = ON")
+            conn.commit()
     repo.migrate()
 
     boundary = {
         "type": "Polygon",
-        "coordinates": [[[79.15, 21.50], [79.45, 21.50],
-                         [79.45, 21.80], [79.15, 21.80], [79.15, 21.50]]],
+        "coordinates": [[[79.16, 21.52], [79.44, 21.52],
+                         [79.44, 21.78], [79.16, 21.78], [79.16, 21.52]]],
+    }
+    core_boundary = {
+        "type": "Polygon",
+        "coordinates": [[[79.23, 21.58], [79.37, 21.58],
+                         [79.37, 21.72], [79.23, 21.72], [79.23, 21.58]]],
+    }
+    buffer_boundary = {
+        "type": "Polygon",
+        "coordinates": [[[79.16, 21.52], [79.44, 21.52],
+                         [79.44, 21.78], [79.16, 21.78], [79.16, 21.52]]],
+    }
+    corridor_boundary = {
+        "type": "LineString",
+        "coordinates": [[79.30, 21.78], [79.34, 21.84], [79.42, 21.90]],
+    }
+    res_boundaries = {
+        "type": "FeatureCollection",
+        "core_geojson": core_boundary,
+        "buffer_geojson": buffer_boundary,
+        "corridor_geojson": corridor_boundary,
     }
     repo.insert("reserves", {
         "reserve_id": RESERVE, "name": "Pench Tiger Reserve", "state": "Maharashtra",
-        "utm_epsg": RESERVE_UTM_EPSG, "boundary_geojson": json.dumps(boundary),
+        "utm_epsg": RESERVE_UTM_EPSG, "boundary_geojson": json.dumps(res_boundaries),
         "created_at": repo.now(),
     })
 
     stations = build_stations()
+    dead_stations = set(RNG.sample([s["station_id"] for s in stations], k=4))
+    new_station = RNG.choice([s["station_id"] for s in stations if s["station_id"] not in dead_stations])
+    for s in stations:
+        if s["station_id"] in dead_stations:
+            s["status"] = "offline"
+
     repo.insert_many("stations", stations)
     core = [s for s in stations if s["zone"] == "core"]
 
-    # A few cameras die or arrive mid-run, purely so the map's derived
-    # (not hardcoded) failed/new-camera legend has something real to show.
-    dead_stations = set(RNG.sample([s["station_id"] for s in stations], k=4))
-    new_station = RNG.choice([s["station_id"] for s in stations if s["station_id"] not in dead_stations])
     start_all = datetime.now(timezone.utc) - timedelta(days=CYCLE_SPACING_DAYS * N_CYCLES + 40)
     last_cycle_start = datetime.now(timezone.utc) - timedelta(days=CYCLE_SPACING_DAYS)
     activity = []

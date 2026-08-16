@@ -6,7 +6,7 @@ rate.
 
     python -m tools.bench_detector [--n 200]
 
-Requires data/weights/megadetector/ (tools.fetch_data --set megadetector)
+Requires edge/models/megadetector/ from the verified offline release bundle
 and data/raw/atrw/train/ (tools.fetch_data --set atrw) for real sample
 images -- this is a throughput measurement against real photographs, not
 synthetic frames, since JPEG decode time is part of what gets measured.
@@ -28,7 +28,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import torch                                    # noqa: E402
 
+from edge import config                         # noqa: E402
 from edge.pipeline import detector as detector_pipeline   # noqa: E402
+from edge.pipeline.device import get_device_manager       # noqa: E402
 
 
 def main() -> int:
@@ -38,7 +40,7 @@ def main() -> int:
 
     if not (detector_pipeline.CHECKPOINT_PATH.exists() and detector_pipeline.CONFIG_PATH.exists()):
         print("missing megadetector weights -- run "
-              "`python -m tools.fetch_data --set megadetector` first")
+              "the verified offline model bundle first")
         return 1
 
     atrw_train = Path("data/raw/atrw/train")
@@ -52,21 +54,27 @@ def main() -> int:
         print("no sample images found")
         return 1
 
+    plan = get_device_manager().plan()
     print(f"CPU: {platform.processor()}")
     print(f"torch threads: {torch.get_num_threads()} (torch's own default for this machine, "
           f"not pinned by this script)")
+    print(f"selected device: {plan.device} ({plan.detail})")
+    print(f"configured inference batch size: {plan.batch_size}")
     print(f"images: {len(images)}")
 
     det = detector_pipeline.get_detector()   # lazy load, excluded from the timed region
 
     warmup_n = min(5, len(images))
-    for img in images[:warmup_n]:
-        det.detect(str(img), conf_threshold=0.20)
+    det.detect_many([str(image) for image in images[:warmup_n]],
+                    conf_threshold=config.CONFIG.triage.detector_conf_threshold)
 
     t0 = time.time()
-    for img in images:
-        det.detect(str(img), conf_threshold=0.20)
+    results = det.detect_many([str(image) for image in images],
+                              conf_threshold=config.CONFIG.triage.detector_conf_threshold)
     elapsed = time.time() - t0
+    if any(result is None for result in results):
+        print("one or more benchmark images could not be read; no throughput result recorded")
+        return 1
 
     rate = len(images) / elapsed
     print(f"\n{len(images)} images in {elapsed:.2f}s -- "

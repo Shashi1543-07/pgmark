@@ -1,0 +1,29 @@
+{
+  "files": {
+    "identify/identify_embedder.pt": {
+      "bytes": 96449019,
+      "sha256": "cbe6baffc2e802ec9f9f2f89e0aa36fe13644657a5c210afd1c24a480331ad44"
+    },
+    "keypoints/pose_2kp.pt": {
+      "bytes": 5591304,
+      "sha256": "395d66fb3582626c98ddf4bd54eda442bfd7df653ea22a7a3d9b1fb27c236dfa"
+    },
+    "megadetector/MDV6-mit-yolov9-c.ckpt": {
+      "bytes": 118911015,
+      "sha256": "de7b33c5ae5e974b7ed79484b04ca67d412e9aa4e17a9f046076c48804a2f214"
+    },
+    "megadetector/config_v9s.yaml": {
+      "bytes": 3474,
+      "sha256": "60822f35c1ec879811ad54a22b03d46f2e8ccd998f86bc97ab4ec6963e588477"
+    },
+    "side/flank_side_classifier.ts": {
+      "bytes": 94454709,
+      "sha256": "20cf4906a09e049d516356105371eb0479d22abed502eea17ee51f6bba2d7a37"
+    },
+    "species/species_classifier.ts": {
+      "bytes": 1609756,
+      "sha256": "c428414fb62a1505ddd674704468c1c492e0e4f0dce4037a6d1bdd021d9b7724"
+    }
+  },
+  "schema_version": 1
+}

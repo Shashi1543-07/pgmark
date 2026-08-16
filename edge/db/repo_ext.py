@@ -49,6 +49,69 @@ from edge.db.repo import _one, _rows, connect, new_id, now
 
 VALID_RUN_STAGES = ("preflight", "confirmed", "triaged", "identified", "complete", "failed")
 
+__all__ = [
+    "VALID_RUN_STAGES",
+    "transaction",
+    "insert_many_strict",
+    "insert_many_ignore",
+    "set_image_status_many",
+    "set_image_species_many",
+    "bump_lamport_for_run",
+    "set_run_stage_checked",
+    "finish_run",
+    "set_run_models",
+    "existing_image_ids",
+    "max_ingest_batch",
+    "images_by_status_page",
+    "review_open_page",
+    "claim_review_item",
+    "release_review_item",
+    "detections_pending_stage3",
+    "count_detections_pending_stage3",
+    "set_detection_species",
+    "set_detection_species_many",
+    "record_flank_crop",
+    "record_assignment",
+    "queue_crop_review",
+    "occupancy_inputs",
+    "individuals_known_before",
+    "replace_occupancy",
+    "replace_alerts",
+    "catalogue_health",
+    "provisional_individuals",
+    "merge_individual",
+    "backup",
+    "integrity_check",
+    "checkpoint_wal",
+    "database_size_bytes",
+    "run_dead_letters",
+    "utc_now",
+    "stations_with_state",
+    "run_period",
+    "prior_centroids",
+    "create_station",
+    "update_station",
+    "delete_station",
+    "import_stations_csv",
+    "import_stations_geojson",
+    "export_stations_geojson",
+    "add_station_activity",
+    "station_deployments",
+    "multi_signal_station_score",
+    "create_cross_flank_candidate",
+    "cross_flank_candidates",
+    "confirm_cross_flank",
+    "reject_cross_flank",
+    "set_reserve_boundaries",
+    "get_reserve_boundaries",
+    "record_telemetry",
+    "run_telemetry",
+    "expire_stale_claims",
+    "set_image_terminal_status",
+    "run_status_counts",
+]
+
+
 # The only legal forward moves. v0.1.1's runs.stage was free text: any string
 # could be written, and nothing stopped a run going from 'preflight' straight
 # to 'triaged' with its folders never resolved.
@@ -305,25 +368,49 @@ def images_by_status_page(run_id: str, status: str, limit: int = 100,
             "has_more": offset + len(items) < total}
 
 
-def review_open_page(limit: int = 50, offset: int = 0) -> dict:
+def review_open_page(limit: int = 50, offset: int = 0,
+                     actor: str | None = None) -> dict:
+    """One page of the human review queue.
+
+    `actor` matters more than it looks. The review screen claims the item it
+    is displaying, and a claim moves it out of state='open'. Without the
+    claimed_by clause below, a reviewer who simply reloaded the page no
+    longer saw the item they were working on -- it was filtered out by their
+    own lock -- and the next item slid up into its place. The screen still
+    said "1 of 50", so it read exactly like the decision had been thrown
+    away, which is not what had happened at all. A reviewer must always see
+    their own claims; only somebody else's are hidden.
+    """
     limit = max(1, min(int(limit), 200))
+    expire_stale_claims()
+    mine = "(q.state='open' OR (q.state='claimed' AND q.claimed_by=?))" if actor \
+        else "q.state='open'"
+    args: tuple = (actor,) if actor else ()
     total = _one(connect().execute(
-        "SELECT COUNT(*) c FROM review_queue WHERE state='open'"))["c"]
+        "SELECT COUNT(*) c FROM review_queue q WHERE " + mine, args))["c"]
     rows = _rows(connect().execute(
-        "SELECT q.*, c.side, c.quality, c.path crop_path, im.station_id,"
-        " im.captured_at, im.is_night, im.run_id, d.species, d.conf det_conf"
+        "SELECT q.*, c.side, c.quality, c.path crop_path, c.rect_ok, im.station_id,"
+        " im.captured_at, im.is_night, im.run_id, im.image_id, d.species, d.conf det_conf"
         " FROM review_queue q"
         " JOIN flank_crops c ON c.crop_id=q.crop_id"
         " JOIN detections  d ON d.det_id=c.det_id"
         " JOIN images     im ON im.image_id=d.image_id"
-        " WHERE q.state='open' ORDER BY q.priority DESC, q.queue_id"
-        " LIMIT ? OFFSET ?", (limit, offset)))
+        " WHERE " + mine + " ORDER BY q.priority DESC, q.queue_id"
+        " LIMIT ? OFFSET ?", args + (limit, offset)))
     for r in rows:
         try:
             r["candidates"] = json.loads(r["candidates"])
         except (json.JSONDecodeError, TypeError):
             r["candidates"] = []
-    return {"total": total, "limit": limit, "offset": offset, "items": rows,
+    held = _one(connect().execute(
+        "SELECT COUNT(*) c FROM review_queue WHERE state='claimed'"
+        + (" AND (claimed_by IS NULL OR claimed_by<>?)" if actor else ""), args))["c"]
+    # "open" is the key the review screen reads for its badge. It was absent,
+    # so the badge silently fell back to len(items) -- i.e. the page size --
+    # and never moved. "held" surfaces items locked by another session so a
+    # shrinking queue is explainable rather than mysterious.
+    return {"total": total, "open": total, "held": held,
+            "limit": limit, "offset": offset, "items": rows,
             "has_more": offset + len(rows) < total}
 
 
@@ -333,9 +420,20 @@ def claim_review_item(queue_id: str, actor: str) -> bool:
     second decision superseded the first with no sign that a race had
     happened. Returns False if somebody else got there first."""
     conn = connect()
+    expire_stale_claims()
     cur = conn.execute(
-        "UPDATE review_queue SET state='claimed' WHERE queue_id=? AND state='open'",
-        (queue_id,))
+        "UPDATE review_queue SET state='claimed', claimed_by=?,"
+        " claimed_at=datetime('now') WHERE queue_id=? AND state='open'",
+        (actor, queue_id))
+    if not cur.rowcount:
+        # Re-claiming an item this same reviewer already holds is not a
+        # collision. Before this branch existed, a reviewer who reloaded the
+        # tab collided with their own stale lock and got a red 409 banner
+        # over an item nobody else had touched.
+        cur = conn.execute(
+            "UPDATE review_queue SET claimed_at=datetime('now')"
+            " WHERE queue_id=? AND state='claimed' AND claimed_by=?",
+            (queue_id, actor))
     conn.commit()
     if cur.rowcount:
         from edge.db.repo import audit
@@ -343,11 +441,81 @@ def claim_review_item(queue_id: str, actor: str) -> bool:
     return bool(cur.rowcount)
 
 
+def expire_stale_claims(ttl_minutes: int = 15) -> int:
+    """Return claims held longer than the TTL to the open queue.
+
+    A claim exists to stop two reviewers deciding the same frame at the same
+    moment. It is not a permanent assignment, and a closed browser tab must
+    not be able to remove a frame from the reserve's workload for good.
+    Called on every claim and on every page read, so the queue heals itself
+    without an operator knowing the concept of a lock exists.
+    """
+    conn = connect()
+    cur = conn.execute(
+        "UPDATE review_queue SET state='open', claimed_by=NULL, claimed_at=NULL"
+        " WHERE state='claimed' AND (claimed_at IS NULL OR"
+        "       claimed_at <= datetime('now', ?))",
+        (f"-{int(ttl_minutes)} minutes",))
+    conn.commit()
+    return cur.rowcount
+
+
 def release_review_item(queue_id: str) -> None:
     conn = connect()
-    conn.execute("UPDATE review_queue SET state='open' WHERE queue_id=? AND state='claimed'",
+    conn.execute("UPDATE review_queue SET state='open', claimed_by=NULL,"
+                 " claimed_at=NULL WHERE queue_id=? AND state='claimed'",
                  (queue_id,))
     conn.commit()
+
+
+def crop_context(crop_id: str) -> dict | None:
+    """Everything needed to re-run identification for one crop from scratch:
+    the original image, the detector's box, and the reserve it belongs to.
+    Used when a human confirms the physical side an automatic classifier
+    could not, so Stage 3's rectify -> embed -> match -> decide chain can
+    run for real instead of leaving the crop permanently unmatched."""
+    return _one(connect().execute(
+        "SELECT c.crop_id, d.det_id, d.x, d.y, d.w, d.h, im.image_id,"
+        " im.orig_path, im.reserve_id, im.run_id"
+        " FROM flank_crops c"
+        " JOIN detections d ON d.det_id = c.det_id"
+        " JOIN images im ON im.image_id = d.image_id"
+        " WHERE c.crop_id=?", (crop_id,)))
+
+
+def update_flank_crop_analysis(crop_id: str, side: str, rect_ok: bool, quality: float,
+                               path: str | None, embedding: bytes | None,
+                               embed_model_version: str | None, side_confidence: float,
+                               side_source: str, side_model_version: str | None,
+                               conn=None) -> None:
+    """Overwrite a crop's analysis in place once a human-confirmed side lets
+    Stage 3 actually finish it. This completes the SAME crop's unfinished
+    analysis -- it never had an embedding to begin with, so there is no
+    prior decision being discarded (rule 5 governs assignments, who the
+    tiger is, not this row)."""
+    owns = conn is None
+    conn = conn or connect()
+    conn.execute(
+        "UPDATE flank_crops SET side=?, rect_ok=?, quality=?, path=?, embedding=?,"
+        " embed_model_version=?, side_confidence=?, side_source=?, side_model_version=?"
+        " WHERE crop_id=?",
+        (side, int(rect_ok), quality, path, embedding, embed_model_version,
+         side_confidence, side_source, side_model_version, crop_id))
+    if owns:
+        conn.commit()
+
+
+def close_review_items_for_crop(crop_id: str) -> int:
+    """Close whatever review-queue state a crop was in (open or claimed) once
+    it has been acted on some other way -- a human-confirmed side that let
+    Stage 3 finish the analysis, for instance. Creates no assignment; that
+    is the caller's job once it knows the real outcome."""
+    conn = connect()
+    cur = conn.execute(
+        "UPDATE review_queue SET state='done' WHERE crop_id=? AND state IN ('open','claimed')",
+        (crop_id,))
+    conn.commit()
+    return cur.rowcount
 
 
 # ── Stage 3 work list ────────────────────────────────────────────────────
@@ -390,10 +558,15 @@ def count_detections_pending_stage3(run_id: str, species: str | None) -> int:
 
 
 def set_detection_species(det_id: str, species: str | None, conf: float | None,
-                          source: str, conn: sqlite3.Connection | None = None) -> None:
+                          source: str, conn: sqlite3.Connection | None = None,
+                          *, model_version: str | None = None) -> None:
+    owns_connection = conn is None
     conn = conn or connect()
-    conn.execute("UPDATE detections SET species=?, species_conf=?, species_source=?"
-                 " WHERE det_id=?", (species, conf, source, det_id))
+    conn.execute("UPDATE detections SET species=?, species_conf=?, species_source=?,"
+                 " species_model_version=? WHERE det_id=?",
+                 (species, conf, source, model_version, det_id))
+    if owns_connection:
+        conn.commit()
 
 
 def set_detection_species_many(rows: list[tuple[str, str | None, float | None, str]],
@@ -405,6 +578,68 @@ def set_detection_species_many(rows: list[tuple[str, str | None, float | None, s
         "UPDATE detections SET species=?, species_conf=?, species_source=? WHERE det_id=?",
         [(sp, c, src, d) for d, sp, c, src in rows])
     return len(rows)
+
+
+def record_flank_crop(*, crop_id: str, det_id: str, side: str, rect_ok: bool,
+                      quality: float, path: str | None, embedding: bytes | None,
+                      embed_model_version: str | None, side_confidence: float | None,
+                      side_source: str | None, side_model_version: str | None,
+                      conn: sqlite3.Connection | None = None) -> None:
+    """Persist one crop plus the independent flank-side evidence.
+
+    ``quality`` remains pose/rectification quality. ``side_confidence`` is
+    only the separate side classifier's confidence, never a copied keypoint
+    score. A ``side='unknown'`` row is a terminal, reviewable refusal and is
+    deliberately excluded from side-specific catalogue queries.
+    """
+    if side not in ("L", "R", "unknown"):
+        raise ValueError(f"invalid flank side {side!r}")
+    owns_connection = conn is None
+    conn = conn or connect()
+    conn.execute(
+        "INSERT INTO flank_crops(crop_id, det_id, side, rect_ok, quality, path,"
+        " embedding, embed_model_version, side_confidence, side_source, side_model_version)"
+        " VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+        (crop_id, det_id, side, int(rect_ok), quality, path, embedding,
+         embed_model_version, side_confidence, side_source, side_model_version))
+    if owns_connection:
+        conn.commit()
+
+
+def record_assignment(crop_id: str, ind_id: str, score: float, decision: str,
+                      actor: str, conn: sqlite3.Connection | None = None) -> str:
+    """Create an auditable assignment, superseding rather than overwriting."""
+    owns_connection = conn is None
+    conn = conn or connect()
+    assign_id = new_id("as_")
+    prior = _one(conn.execute(
+        "SELECT assign_id FROM assignments WHERE crop_id=? AND superseded_by IS NULL",
+        (crop_id,)))
+    conn.execute(
+        "INSERT INTO assignments(assign_id, crop_id, ind_id, score, method, decision,"
+        " confidence, decided_at, actor) VALUES (?,?,?,?,'embed',?,?,?,?)",
+        (assign_id, crop_id, ind_id, score, decision, score, now(), actor))
+    if prior:
+        conn.execute("UPDATE assignments SET superseded_by=? WHERE assign_id=?",
+                     (assign_id, prior["assign_id"]))
+    if owns_connection:
+        conn.commit()
+    return assign_id
+
+
+def queue_crop_review(crop_id: str, candidates: list[dict], priority: float,
+                      reason: str, conn: sqlite3.Connection | None = None) -> str:
+    """Queue a refusal/ambiguous result without turning it into an identity."""
+    owns_connection = conn is None
+    conn = conn or connect()
+    queue_id = new_id("rq_")
+    conn.execute(
+        "INSERT INTO review_queue(queue_id, crop_id, candidates, priority, reason, state)"
+        " VALUES (?,?,?,?,?,'open')",
+        (queue_id, crop_id, json.dumps(candidates), priority, reason))
+    if owns_connection:
+        conn.commit()
+    return queue_id
 
 
 # ── Stage 4: occupancy, from real data ───────────────────────────────────
@@ -649,6 +884,7 @@ def stations_with_state(reserve_id: str, period_start: str | None = None,
     rows = _rows(connect().execute(
         "SELECT s.*,"
         " (SELECT COUNT(*) FROM images i WHERE i.station_id = s.station_id) image_count,"
+        " (SELECT MAX(i.captured_at) FROM images i WHERE i.station_id = s.station_id) last_image_at,"
         " (SELECT MIN(sa.start_date) FROM station_activity sa"
         "    WHERE sa.station_id = s.station_id) first_active,"
         " (SELECT MAX(COALESCE(sa.end_date, '9999')) FROM station_activity sa"
@@ -713,3 +949,474 @@ def prior_centroids(run_id: str) -> list[dict]:
     return _rows(connect().execute(
         "SELECT ind_id, centroid_lat, centroid_lon, area_km2, event_count"
         " FROM occupancy WHERE run_id=? AND centroid_lat IS NOT NULL", (prev["run_id"],)))
+
+
+# ── Station CRUD, CSV/GeoJSON import/export ──────────────────────────────────
+
+def create_station(reserve_id: str, data: dict, actor: str = "system",
+                   conn: sqlite3.Connection | None = None) -> str:
+    """Create a camera station with optional camera body metadata and initial deployment."""
+    from edge.db import repo
+    conn = conn or repo.connect()
+    sid = data.get("station_id") or repo.new_id("stn_")
+    row = {
+        "station_id": sid,
+        "reserve_id": reserve_id,
+        "name": data.get("name") or sid,
+        "lat": float(data["lat"]),
+        "lon": float(data["lon"]),
+        "zone": data.get("zone", "core"),
+        "village_dist_km": float(data.get("village_dist_km", 5.0)),
+        "grid_cell": data.get("grid_cell"),
+        "folder_hint": data.get("folder_hint"),
+        "camera_make": data.get("camera_make"),
+        "camera_model": data.get("camera_model"),
+        "camera_serial": data.get("camera_serial"),
+        "active_from": data.get("active_from") or repo.now(),
+        "active_to": data.get("active_to"),
+        "status": data.get("status", "active"),
+        "origin_node": repo.node_id(),
+        "lamport": repo.next_lamport(),
+        "synced_at": None,
+    }
+    row["row_hash"] = repo.compute_row_hash(row)
+    repo.insert("stations", row, conn)
+
+    # Initial station activity record
+    act_id = repo.new_id("act_")
+    repo.insert("station_activity", {
+        "activity_id": act_id,
+        "station_id": sid,
+        "start_date": row["active_from"],
+        "end_date": row["active_to"],
+        "note": "station installation",
+    }, conn)
+
+    repo.audit("station.create", actor=actor, entity_type="station", entity_id=sid,
+               after={"station_id": sid, "name": row["name"], "zone": row["zone"]})
+    return sid
+
+
+def update_station(station_id: str, data: dict, actor: str = "system",
+                   conn: sqlite3.Connection | None = None) -> dict:
+    from edge.db import repo
+    conn = conn or repo.connect()
+    existing = _one(conn.execute("SELECT * FROM stations WHERE station_id=?", (station_id,)))
+    if not existing:
+        raise KeyError(f"station {station_id} not found")
+
+    sets, args = [], []
+    for k in ("name", "lat", "lon", "zone", "village_dist_km", "grid_cell",
+              "folder_hint", "camera_make", "camera_model", "camera_serial",
+              "active_from", "active_to", "status"):
+        if k in data:
+            sets.append(f"{k}=?")
+            args.append(data[k])
+    if not sets:
+        return existing
+
+    args.append(station_id)
+    conn.execute(f"UPDATE stations SET {', '.join(sets)} WHERE station_id=?", args)
+    updated = _one(conn.execute("SELECT * FROM stations WHERE station_id=?", (station_id,)))
+    repo.audit("station.update", actor=actor, entity_type="station", entity_id=station_id,
+               after=updated)
+    return updated
+
+
+def delete_station(station_id: str, actor: str = "system",
+                   conn: sqlite3.Connection | None = None) -> bool:
+    from edge.db import repo
+    conn = conn or repo.connect()
+    imgs = _one(conn.execute("SELECT COUNT(*) c FROM images WHERE station_id=?", (station_id,)))["c"]
+    if imgs > 0:
+        raise ValueError(f"cannot delete station {station_id}: {imgs} images are attached")
+    conn.execute("DELETE FROM station_activity WHERE station_id=?", (station_id,))
+    conn.execute("DELETE FROM stations WHERE station_id=?", (station_id,))
+    repo.audit("station.delete", actor=actor, entity_type="station", entity_id=station_id)
+    return True
+
+
+def import_stations_csv(reserve_id: str, csv_text: str, actor: str = "system") -> dict:
+    """Import stations from CSV with columns: station_id, name, lat, lon, zone, village_dist_km, folder_hint, etc."""
+    import csv
+    import io
+    reader = csv.DictReader(io.StringIO(csv_text.strip()))
+    created, updated, errors = 0, 0, []
+    from edge.db import repo
+    for row_idx, row in enumerate(reader, 1):
+        try:
+            sid = (row.get("station_id") or row.get("id") or "").strip()
+            lat = float(row.get("lat") or row.get("latitude") or 0.0)
+            lon = float(row.get("lon") or row.get("longitude") or 0.0)
+            if lat == 0.0 or lon == 0.0:
+                raise ValueError("missing lat/lon")
+            zone = (row.get("zone") or "core").strip().lower()
+            if zone not in ("core", "buffer", "corridor"):
+                zone = "core"
+            station_data = {
+                "station_id": sid,
+                "name": row.get("name") or sid,
+                "lat": lat,
+                "lon": lon,
+                "zone": zone,
+                "village_dist_km": float(row.get("village_dist_km") or 5.0),
+                "folder_hint": row.get("folder_hint") or sid,
+                "camera_make": row.get("camera_make") or row.get("make"),
+                "camera_model": row.get("camera_model") or row.get("model"),
+                "camera_serial": row.get("camera_serial") or row.get("serial"),
+                "grid_cell": row.get("grid_cell"),
+            }
+            existing = _one(repo.connect().execute("SELECT station_id FROM stations WHERE station_id=?", (sid,)))
+            if existing:
+                update_station(sid, station_data, actor)
+                updated += 1
+            else:
+                create_station(reserve_id, station_data, actor)
+                created += 1
+        except Exception as exc:
+            errors.append(f"Row {row_idx}: {exc}")
+    return {"created": created, "updated": updated, "errors": errors}
+
+
+def import_stations_geojson(reserve_id: str, geojson_text: str, actor: str = "system") -> dict:
+    """Import stations from GeoJSON FeatureCollection with Point features."""
+    from edge.db import repo
+    fc = json.loads(geojson_text)
+    features = fc.get("features", []) if isinstance(fc, dict) else []
+    created, updated, errors = 0, 0, []
+    for idx, f in enumerate(features, 1):
+        try:
+            geom = f.get("geometry") or {}
+            props = f.get("properties") or {}
+            if geom.get("type") != "Point":
+                continue
+            coords = geom.get("coordinates") or []
+            lon, lat = float(coords[0]), float(coords[1])
+            sid = str(props.get("station_id") or props.get("id") or f.get("id") or repo.new_id("stn_")).strip()
+            zone = str(props.get("zone") or "core").strip().lower()
+            if zone not in ("core", "buffer", "corridor"):
+                zone = "core"
+            station_data = {
+                "station_id": sid,
+                "name": props.get("name") or sid,
+                "lat": lat,
+                "lon": lon,
+                "zone": zone,
+                "village_dist_km": float(props.get("village_dist_km") or 5.0),
+                "folder_hint": props.get("folder_hint") or sid,
+                "camera_make": props.get("camera_make"),
+                "camera_model": props.get("camera_model"),
+                "camera_serial": props.get("camera_serial"),
+            }
+            existing = _one(repo.connect().execute("SELECT station_id FROM stations WHERE station_id=?", (sid,)))
+            if existing:
+                update_station(sid, station_data, actor)
+                updated += 1
+            else:
+                create_station(reserve_id, station_data, actor)
+                created += 1
+        except Exception as exc:
+            errors.append(f"Feature {idx}: {exc}")
+    return {"created": created, "updated": updated, "errors": errors}
+
+
+def export_stations_geojson(reserve_id: str) -> dict:
+    from edge.db import repo
+    stns = repo.stations(reserve_id)
+    features = []
+    for s in stns:
+        features.append({
+            "type": "Feature",
+            "id": s["station_id"],
+            "geometry": {
+                "type": "Point",
+                "coordinates": [s["lon"], s["lat"]]
+            },
+            "properties": {
+                "station_id": s["station_id"],
+                "name": s["name"],
+                "zone": s["zone"],
+                "village_dist_km": s.get("village_dist_km"),
+                "folder_hint": s.get("folder_hint"),
+                "camera_make": s.get("camera_make"),
+                "camera_model": s.get("camera_model"),
+                "camera_serial": s.get("camera_serial"),
+            }
+        })
+    return {"type": "FeatureCollection", "features": features}
+
+
+# ── Deployment intervals ───────────────────────────────────────────────────
+
+def add_station_activity(station_id: str, start_date: str, end_date: str | None = None,
+                         note: str | None = None, conn: sqlite3.Connection | None = None) -> str:
+    from edge.db import repo
+    conn = conn or repo.connect()
+    act_id = repo.new_id("act_")
+    repo.insert("station_activity", {
+        "activity_id": act_id,
+        "station_id": station_id,
+        "start_date": start_date,
+        "end_date": end_date,
+        "note": note,
+    }, conn)
+    return act_id
+
+
+def station_deployments(station_id: str, conn: sqlite3.Connection | None = None) -> list[dict]:
+    from edge.db import repo
+    conn = conn or repo.connect()
+    return _rows(conn.execute(
+        "SELECT * FROM station_activity WHERE station_id=? ORDER BY start_date",
+        (station_id,)))
+
+
+# ── Multi-signal station ID scoring ────────────────────────────────────────
+
+def _levenshtein_ratio(s1: str, s2: str) -> float:
+    import re
+    a = re.sub(r"[^A-Z0-9]", "", (s1 or "").upper())
+    b = re.sub(r"[^A-Z0-9]", "", (s2 or "").upper())
+    if not a or not b:
+        return 0.0
+    if a == b:
+        return 1.0
+    from edge.pipeline.ingest import _levenshtein
+    dist = _levenshtein(a, b)
+    max_len = max(len(a), len(b))
+    return max(0.0, 1.0 - dist / max_len)
+
+
+def multi_signal_station_score(file_rec: dict, station: dict, cfg=None) -> tuple[float, list[str]]:
+    """Score matching confidence for a file against a station record using multiple signals."""
+    weights = {
+        "folder": 0.40,
+        "serial": 0.25,
+        "make_model": 0.15,
+        "filename": 0.10,
+        "deployment": 0.10,
+    }
+    signals = []
+    total_score = 0.0
+
+    # 1. Folder match
+    folder_ratio = _levenshtein_ratio(file_rec.get("folder", ""), station.get("folder_hint") or station.get("name") or "")
+    if folder_ratio > 0.6:
+        total_score += weights["folder"] * folder_ratio
+        signals.append(f"folder({folder_ratio:.2f})")
+
+    # 2. Camera serial match
+    rec_serial = file_rec.get("serial")
+    stn_serial = station.get("camera_serial")
+    if rec_serial and stn_serial:
+        if str(rec_serial).strip() == str(stn_serial).strip():
+            total_score += weights["serial"]
+            signals.append("serial_match")
+        elif str(rec_serial).strip() in str(stn_serial) or str(stn_serial) in str(rec_serial):
+            total_score += weights["serial"] * 0.7
+            signals.append("serial_partial")
+
+    # 3. Make and Model match
+    rec_body = f"{file_rec.get('make') or ''} {file_rec.get('model') or ''}".strip().upper()
+    stn_body = f"{station.get('camera_make') or ''} {station.get('camera_model') or ''}".strip().upper()
+    if rec_body and stn_body and (rec_body in stn_body or stn_body in rec_body):
+        total_score += weights["make_model"]
+        signals.append("body_match")
+
+    # 4. Filename pattern match against station name/hint
+    fn_ratio = _levenshtein_ratio(file_rec.get("orig_path", "").split("/")[-1].split("\\")[-1], station.get("name", ""))
+    if fn_ratio > 0.4:
+        total_score += weights["filename"] * fn_ratio
+        signals.append(f"filename({fn_ratio:.2f})")
+
+    # 5. Deployment window match
+    dt = file_rec.get("captured_at") or file_rec.get("exif_dt")
+    if dt and station.get("active_from"):
+        dt_iso = dt.isoformat() if hasattr(dt, "isoformat") else str(dt)
+        if dt_iso >= str(station["active_from"]) and (not station.get("active_to") or dt_iso <= str(station["active_to"])):
+            total_score += weights["deployment"]
+            signals.append("in_deployment_window")
+
+    return min(1.0, round(total_score, 3)), signals
+
+
+# ── Cross-flank association tracking ───────────────────────────────────────
+
+def create_cross_flank_candidate(reserve_id: str, l_ind_id: str, r_ind_id: str,
+                                  confidence: float, evidence: dict,
+                                  conn: sqlite3.Connection | None = None) -> str:
+    from edge.db import repo
+    conn = conn or repo.connect()
+    assoc_id = repo.new_id("xflank_")
+    row = {
+        "assoc_id": assoc_id,
+        "reserve_id": reserve_id,
+        "l_ind_id": l_ind_id,
+        "r_ind_id": r_ind_id,
+        "status": "UNKNOWN_RELATIONSHIP",
+        "confidence": round(confidence, 4),
+        "evidence": json.dumps(evidence),
+        "confirmed_by": None,
+        "confirmed_at": None,
+        "created_at": repo.now(),
+    }
+    repo.insert("cross_flank_associations", row, conn)
+    repo.audit("cross_flank.candidate", actor="system", entity_type="individual",
+               entity_id=l_ind_id, after={"assoc_id": assoc_id, "l_ind": l_ind_id, "r_ind": r_ind_id})
+    return assoc_id
+
+
+def cross_flank_candidates(reserve_id: str, status: str | None = None,
+                           conn: sqlite3.Connection | None = None) -> list[dict]:
+    from edge.db import repo
+    conn = conn or repo.connect()
+    if status:
+        return _rows(conn.execute(
+            "SELECT * FROM cross_flank_associations WHERE reserve_id=? AND status=? ORDER BY created_at DESC",
+            (reserve_id, status)))
+    return _rows(conn.execute(
+        "SELECT * FROM cross_flank_associations WHERE reserve_id=? ORDER BY created_at DESC",
+        (reserve_id,)))
+
+
+def confirm_cross_flank(assoc_id: str, primary_ind_id: str, actor: str) -> dict:
+    """Confirm that two sided individuals are the same physical tiger, merging them."""
+    from edge.db import repo
+    conn = repo.connect()
+    assoc = _one(conn.execute("SELECT * FROM cross_flank_associations WHERE assoc_id=?", (assoc_id,)))
+    if not assoc:
+        raise KeyError(f"cross flank association {assoc_id} not found")
+    source_ind = assoc["r_ind_id"] if primary_ind_id == assoc["l_ind_id"] else assoc["l_ind_id"]
+
+    # Merge source individual into primary
+    merge_result = merge_individual(source_ind, primary_ind_id, actor)
+    conn.execute(
+        "UPDATE cross_flank_associations SET status='CONFIRMED', confirmed_by=?, confirmed_at=? WHERE assoc_id=?",
+        (actor, repo.now(), assoc_id))
+    conn.commit()
+    repo.audit("cross_flank.confirm", actor=actor, entity_type="cross_flank", entity_id=assoc_id,
+               after={"primary_ind": primary_ind_id, "merged_ind": source_ind})
+    return {"assoc_id": assoc_id, "status": "CONFIRMED", "merge": merge_result}
+
+
+def reject_cross_flank(assoc_id: str, actor: str) -> dict:
+    """Reject cross flank hypothesis; keep both entities as distinct individuals."""
+    from edge.db import repo
+    conn = repo.connect()
+    conn.execute(
+        "UPDATE cross_flank_associations SET status='REJECTED', confirmed_by=?, confirmed_at=? WHERE assoc_id=?",
+        (actor, repo.now(), assoc_id))
+    conn.commit()
+    repo.audit("cross_flank.reject", actor=actor, entity_type="cross_flank", entity_id=assoc_id)
+    return {"assoc_id": assoc_id, "status": "REJECTED"}
+
+
+# ── Reserve boundary GeoJSON layers ────────────────────────────────────────
+
+def set_reserve_boundaries(reserve_id: str, boundaries: dict, actor: str = "system") -> dict:
+    from edge.db import repo
+    conn = repo.connect()
+    sets, args = [], []
+    for k in ("boundary_geojson", "core_geojson", "buffer_geojson", "corridor_geojson"):
+        if k in boundaries:
+            sets.append(f"{k}=?")
+            val = boundaries[k]
+            args.append(json.dumps(val) if isinstance(val, (dict, list)) else val)
+    if not sets:
+        return get_reserve_boundaries(reserve_id)
+    args.append(reserve_id)
+    conn.execute(f"UPDATE reserves SET {', '.join(sets)} WHERE reserve_id=?", args)
+    conn.commit()
+    repo.audit("reserve.boundaries_update", actor=actor, entity_type="reserve", entity_id=reserve_id)
+    return get_reserve_boundaries(reserve_id)
+
+
+def get_reserve_boundaries(reserve_id: str) -> dict:
+    from edge.db import repo
+    r = _one(repo.connect().execute(
+        "SELECT reserve_id, name, utm_epsg, boundary_geojson, core_geojson, buffer_geojson, corridor_geojson"
+        " FROM reserves WHERE reserve_id=?", (reserve_id,)))
+    if not r:
+        raise KeyError(f"reserve {reserve_id} not found")
+    out = dict(r)
+    for k in ("boundary_geojson", "core_geojson", "buffer_geojson", "corridor_geojson"):
+        if out.get(k):
+            try:
+                out[k] = json.loads(out[k])
+            except Exception:
+                pass
+    return out
+
+
+# ── Run telemetry ──────────────────────────────────────────────────────────
+
+def record_telemetry(run_id: str, metrics: dict, conn: sqlite3.Connection | None = None) -> str:
+    from edge.db import repo
+    conn = conn or repo.connect()
+    telem_id = repo.new_id("tel_")
+    row = {
+        "telemetry_id": telem_id,
+        "run_id": run_id,
+        "images_per_sec": metrics.get("images_per_sec"),
+        "gpu_util": metrics.get("gpu_util"),
+        "vram_used_mb": metrics.get("vram_used_mb"),
+        "vram_total_mb": metrics.get("vram_total_mb"),
+        "cpu_util": metrics.get("cpu_util"),
+        "ram_used_mb": metrics.get("ram_used_mb"),
+        "disk_read_mb": metrics.get("disk_read_mb"),
+        "disk_write_mb": metrics.get("disk_write_mb"),
+        "timing_decode_s": metrics.get("timing_decode_s"),
+        "timing_detect_s": metrics.get("timing_detect_s"),
+        "timing_species_s": metrics.get("timing_species_s"),
+        "timing_side_s": metrics.get("timing_side_s"),
+        "timing_keypoints_s": metrics.get("timing_keypoints_s"),
+        "timing_identify_s": metrics.get("timing_identify_s"),
+        "timing_db_s": metrics.get("timing_db_s"),
+        "status_counts": json.dumps(metrics.get("status_counts", {})),
+        "recorded_at": repo.now(),
+    }
+    repo.insert("run_telemetry", row, conn)
+    return telem_id
+
+
+def run_telemetry(run_id: str) -> list[dict]:
+    from edge.db import repo
+    rows = _rows(repo.connect().execute(
+        "SELECT * FROM run_telemetry WHERE run_id=? ORDER BY recorded_at DESC", (run_id,)))
+    for r in rows:
+        try:
+            r["status_counts"] = json.loads(r["status_counts"])
+        except Exception:
+            r["status_counts"] = {}
+    return rows
+
+
+# ── Terminal status & counts ───────────────────────────────────────────────
+
+def set_image_terminal_status(image_id: str, status: str, error_stage: str | None = None,
+                              error_type: str | None = None, last_error: str | None = None,
+                              conn: sqlite3.Connection | None = None) -> None:
+    """Set terminal status on an image row.
+
+    When ``conn`` is supplied (bulk batch path), the caller owns the
+    transaction and commit.  When called without a connection (single-image
+    upload path) we open our own connection and commit immediately so the
+    status is durable even if the caller never commits.
+    """
+    from edge.db import repo
+    _own_conn = conn is None
+    conn = conn or repo.connect()
+    conn.execute(
+        "UPDATE images SET status=?, error_stage=?, error_type=?, last_error=?"
+        " WHERE image_id=?",
+        (status, error_stage, error_type, last_error, image_id))
+    if _own_conn:
+        conn.commit()
+
+
+def run_status_counts(run_id: str, conn: sqlite3.Connection | None = None) -> dict[str, int]:
+    from edge.db import repo
+    conn = conn or repo.connect()
+    rows = _rows(conn.execute("SELECT status, COUNT(*) as c FROM images WHERE run_id=? GROUP BY status", (run_id,)))
+    return {r["status"]: r["c"] for r in rows}
+

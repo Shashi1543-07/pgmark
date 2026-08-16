@@ -63,7 +63,7 @@ def main() -> int:
         print(f"missing {WEIGHTS_PATH} -- run `python -m tools.train_identify_no_rect` first")
         return 1
 
-    model = TripletEmbedder(pretrained=False)
+    model = TripletEmbedder()
     model.load_state_dict(torch.load(WEIGHTS_PATH, map_location="cpu", weights_only=True))
     model.eval()
 

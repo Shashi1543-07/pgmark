@@ -53,6 +53,7 @@
       <a href="#review"  data-view="review">Needs Review<span class="tally" id="tallyReview"></span></a>
       <div class="group">Intelligence</div>
       <a href="#map"     data-view="map">Territories</a>
+      <a href="#stations" data-view="stations">Camera Stations<span class="tally" id="tallyStations"></span></a>
       <a href="#alerts"  data-view="alerts">Alerts<span class="tally" id="tallyAlerts"></span></a>
       <div class="group">Record</div>
       <a href="#audit"   data-view="audit">History</a>
@@ -193,6 +194,10 @@
           </select>
         </div>
 
+        <!-- Catalogue Health & Completeness -->
+        <div class="grid g3" id="catalogueHealthStats" style="margin-bottom:var(--s3)"></div>
+        <div id="provisionalCard" class="card pad" style="margin-bottom:var(--s3);display:none"></div>
+
         <div class="tiger-grid-rich" id="tigerGridRich"></div>
         <div class="tigers" id="tigerGrid" style="display:none"></div>
         <div id="tigerDetail" style="margin-top:var(--s4)"></div>
@@ -240,8 +245,10 @@
             <label class="field">Select Photo (JPG / PNG)
               <input id="idFile" type="file" accept="image/*">
             </label>
-            <label class="field">Recorded By (Officer / Station)
-              <input id="idActor" type="text" value="field_officer">
+            <label class="field">Camera Station (Optional)
+              <select id="idStation">
+                <option value="">-- Auto-detect / Unspecified --</option>
+              </select>
             </label>
           </div>
           <div class="toolbar" style="margin-top:var(--s4)">
@@ -267,9 +274,17 @@
             </div>
           </div>
           <h1>Human Review Queue</h1>
-          <p>Borderline stripe similarity matches flagged for manual verification by a wildlife biologist or range officer.</p>
+          <p>Borderline stripe similarity matches and cross-flank association candidates flagged for manual verification by a wildlife biologist or range officer.</p>
+        </div>
+        <div class="toolbar" style="gap:var(--s3);flex-wrap:wrap;justify-content:space-between;margin-bottom:var(--s3)">
+          <div class="seg" role="group" id="reviewSeg">
+            <button id="reviewTabBorderline" class="active" data-view-mode="borderline">Borderline Biometrics (<span id="tallyReviewSub">0</span>)</button>
+            <button id="reviewTabCrossFlank" data-view-mode="crossflank">Cross-Flank Candidates (<span id="tallyCrossFlankSub">0</span>)</button>
+          </div>
+          <div id="reviewClaimStatus" style="font-size:12px;color:var(--muted);display:flex;align-items:center;gap:6px"></div>
         </div>
         <div id="reviewBody"></div>
+        <div id="crossFlankBody" style="display:none"></div>
       </section>
 
       <!-- ── MAP ─────────────────────────────────────────────────────── -->
@@ -289,11 +304,12 @@
           <div class="map-canvas-card">
             <!-- Floating Layer Toggles -->
             <div class="map-layer-bar">
+              <button type="button" class="map-layer-btn active" data-layer="boundaries">🗺 Boundaries</button>
               <button type="button" class="map-layer-btn active" data-layer="ranges">🐅 Home Ranges</button>
               <button type="button" class="map-layer-btn active" data-layer="stations">📷 Cameras</button>
               <button type="button" class="map-layer-btn active" data-layer="zones">🛰 Core / Buffer</button>
               <button type="button" class="map-layer-btn active" data-layer="movement">🧭 Movement</button>
-              <button type="button" class="map-layer-btn" data-layer="heatmap">🔥 Density</button>
+              <button type="button" class="map-layer-btn" id="mapToggleSidebarBtn" title="Toggle Roster Sidebar">◫ Roster</button>
             </div>
 
             <!-- Floating Zoom Controls -->
@@ -301,6 +317,7 @@
               <button type="button" class="map-zoom-btn" id="mapZoomInBtn" title="Zoom In">+</button>
               <button type="button" class="map-zoom-btn" id="mapZoomOutBtn" title="Zoom Out">−</button>
               <button type="button" class="map-zoom-btn" id="mapZoomResetBtn" title="Reset Zoom" style="font-size:13px">⟲</button>
+              <button type="button" class="map-zoom-btn" id="mapFullscreenBtn" title="Toggle Fullscreen" style="font-size:14px">⛶</button>
             </div>
 
             <!-- Floating Inspection Tooltip -->
@@ -309,6 +326,14 @@
             <!-- SVG Map Canvas Container -->
             <div class="mapwrap" id="mapWrap">
               <div id="mapSvg" style="width:100%;height:100%"></div>
+              <div id="mapSideDrawer" class="map-side-drawer"></div>
+            </div>
+
+            <!-- Timeline Scrubber & Movement Playback -->
+            <div class="map-timeline-bar" id="mapTimelineBar">
+              <button type="button" class="btn" id="mapPlayMovementBtn" style="font-size:11px">▶ Play Movement</button>
+              <input type="range" id="mapTimelineSlider" min="0" max="100" value="100">
+              <span class="note" id="mapTimelineLabel" style="font-size:12px">Survey: 100%</span>
             </div>
           </div>
 
@@ -368,6 +393,45 @@
         <div id="alertList" style="margin-top:var(--s4)"></div>
       </section>
 
+      <!-- ── STATIONS ────────────────────────────────────────────────── -->
+      <section class="view" id="v-stations" data-view="stations">
+        <div class="head">
+          <div class="eyebrow">Grid & Hardware Registry</div>
+          <h1>Camera Trap Stations</h1>
+          <p>Manage physical camera trap deployment sites, geographical coordinates, reserve zoning, and hardware lifecycle across the reserve.</p>
+        </div>
+
+        <div class="grid g4" id="stationsStats"></div>
+
+        <div class="toolbar" style="gap:var(--s3);flex-wrap:wrap;justify-content:space-between;margin-top:var(--s4)">
+          <div style="display:flex;gap:var(--s3);flex-wrap:wrap;flex:1">
+            <input type="text" id="stationSearchInput" placeholder="Search by station ID, name, or hardware…" style="flex:1;min-width:200px;padding:6px 12px;border:1px solid var(--border);border-radius:4px;background:var(--surface)">
+            <select id="stationFilterZone" style="padding:6px 10px;border:1px solid var(--border);border-radius:4px;background:var(--surface)">
+              <option value="">All Zones</option>
+              <option value="core">Core Zone</option>
+              <option value="buffer">Buffer Zone</option>
+              <option value="corridor">Corridor Zone</option>
+            </select>
+            <select id="stationFilterStatus" style="padding:6px 10px;border:1px solid var(--border);border-radius:4px;background:var(--surface)">
+              <option value="">All Statuses</option>
+              <option value="active">Active (Deploying)</option>
+              <option value="offline">Offline / Inactive</option>
+            </select>
+          </div>
+          <div style="display:flex;gap:8px;align-items:center">
+            <button class="primary" id="addStationBtn">+ Add Station</button>
+            <button class="btn" id="editBoundariesBtn">🗺 Boundaries</button>
+            <button class="btn" id="importStationCsvBtn">Import CSV</button>
+            <button class="btn" id="importStationGeojsonBtn">Import GeoJSON</button>
+            <a class="btn" id="exportStationsGeojson" href="/api/stations/export.geojson" download>Export GeoJSON</a>
+          </div>
+        </div>
+
+        <div class="card pad" style="margin-top:var(--s3)">
+          <table id="stationsTable"></table>
+        </div>
+      </section>
+
       <!-- ── AUDIT ───────────────────────────────────────────────────── -->
       <section class="view" id="v-audit" data-view="audit">
         <div class="head">
@@ -403,6 +467,32 @@
              the models no longer fit the data — new camera hardware, a new
              season, a new reserve.</p>
         </div>
+        <div class="card pad" id="opsReadinessCard">
+          <div class="toolbar" style="margin:0 0 var(--s2) 0">
+            <h2 style="margin:0">System Readiness & Model Diagnostics</h2>
+            <div class="spacer"></div>
+            <button type="button" class="btn small" id="refreshReadinessBtn">↻ Re-check Probes</button>
+          </div>
+          <p class="note" style="margin-top:0">Probes hardware capacity, signed model weights, database health, and active pipelines.</p>
+          <div id="opsReadinessBadges" class="grid g3" style="gap:var(--s2);margin-top:var(--s3)"></div>
+        </div>
+        <div class="hr"></div>
+        <div class="card pad" id="opsMaintenanceCard">
+          <h2>Database & Operations Maintenance</h2>
+          <div class="toolbar" style="margin-top:var(--s3);gap:var(--s2)">
+            <button type="button" class="btn primary" id="opsBackupBtn">💾 Backup Database</button>
+            <button type="button" class="btn" id="opsIntegrityBtn">🛡 Verify Database Integrity</button>
+            <button type="button" class="btn" id="opsCheckpointBtn">⚡ Checkpoint WAL</button>
+            <span class="note" id="opsActionMsg"></span>
+          </div>
+          <div id="opsActionResult" style="margin-top:var(--s2);font-size:13px;padding:8px 12px;background:var(--surface-2);border:1px solid var(--line-soft);border-radius:var(--r-ctl)" hidden></div>
+        </div>
+        <div class="hr"></div>
+        <div class="card pad" id="opsJobsCard">
+          <h2>Background Jobs & Pipelines</h2>
+          <table id="opsJobsTable" style="margin-top:var(--s2)"></table>
+        </div>
+        <div class="hr"></div>
         <div class="card pad"><h2>Per cycle</h2><table id="driftTable"></table></div>
         <div class="hr"></div>
         <div class="grid g2">
@@ -675,6 +765,182 @@
     </div>
   </div>
 
+</div>
+
+<!-- ── Station Add / Edit Modal ───────────────────────────────────────── -->
+<div id="stationModal" class="modal-overlay" hidden>
+  <div class="modal-dialog">
+    <div class="modal-header">
+      <h2 class="modal-title" id="stationModalTitle">Add Camera Station</h2>
+      <button type="button" class="modal-close-btn" id="stationModalClose" title="Close dialog">&times;</button>
+    </div>
+    <form id="stationForm" class="modal-form" onsubmit="return false;">
+      <input type="hidden" id="stationFormMode" value="create">
+      <input type="hidden" id="stationFormOriginalId" value="">
+      
+      <div class="modal-body">
+        <div class="grid g2">
+          <div class="form-row">
+            <label for="stationFormId">Station ID <span style="color:var(--act)">*</span></label>
+            <input type="text" id="stationFormId" required placeholder="e.g. PN-C-025">
+          </div>
+          <div class="form-row">
+            <label for="stationFormName">Station Name <span style="color:var(--act)">*</span></label>
+            <input type="text" id="stationFormName" required placeholder="e.g. Bamboo Waterhole 2">
+          </div>
+        </div>
+
+        <div class="grid g2">
+          <div class="form-row">
+            <label for="stationFormLat">Latitude (Decimal °) <span style="color:var(--act)">*</span></label>
+            <input type="number" step="0.000001" id="stationFormLat" required placeholder="e.g. 21.754321">
+          </div>
+          <div class="form-row">
+            <label for="stationFormLon">Longitude (Decimal °) <span style="color:var(--act)">*</span></label>
+            <input type="number" step="0.000001" id="stationFormLon" required placeholder="e.g. 79.321456">
+          </div>
+        </div>
+
+        <div class="grid g2">
+          <div class="form-row">
+            <label for="stationFormZone">Reserve Zone</label>
+            <select id="stationFormZone">
+              <option value="core">Core Zone (Strict Protection)</option>
+              <option value="buffer">Buffer Zone (Multiple Use)</option>
+              <option value="corridor">Wildlife Corridor</option>
+            </select>
+          </div>
+          <div class="form-row">
+            <label for="stationFormVillageDist">Village Distance (km)</label>
+            <input type="number" step="0.1" id="stationFormVillageDist" value="4.5" placeholder="4.5">
+          </div>
+        </div>
+
+        <div class="grid g3">
+          <div class="form-row">
+            <label for="stationFormMake">Camera Make</label>
+            <input type="text" id="stationFormMake" placeholder="Reconyx">
+          </div>
+          <div class="form-row">
+            <label for="stationFormModel">Model</label>
+            <input type="text" id="stationFormModel" placeholder="HyperFire 2">
+          </div>
+          <div class="form-row">
+            <label for="stationFormSerial">Serial No.</label>
+            <input type="text" id="stationFormSerial" placeholder="HF2-98421">
+          </div>
+        </div>
+
+        <div class="grid g2">
+          <div class="form-row">
+            <label for="stationFormHint">Folder Match Hint</label>
+            <input type="text" id="stationFormHint" placeholder="CAM25 / 100RECON">
+          </div>
+          <div class="form-row">
+            <label for="stationFormStatus">Operational Status</label>
+            <select id="stationFormStatus">
+              <option value="active">🟢 Active & Recording</option>
+              <option value="offline">⚫ Offline / Retired</option>
+            </select>
+          </div>
+        </div>
+
+        <div id="stationFormError" class="auth-error" hidden style="margin-top:4px"></div>
+      </div>
+
+      <div class="modal-footer">
+        <button type="button" id="stationFormCancel" class="btn">Cancel</button>
+        <button type="button" id="stationFormDelete" class="btn danger" hidden>Delete Station</button>
+        <button type="submit" id="stationFormSubmit" class="primary">Save Station</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- ── Station Import Modal ────────────────────────────────────────────── -->
+<div id="stationImportModal" class="modal-overlay" hidden>
+  <div class="modal-dialog">
+    <div class="modal-header">
+      <h2 class="modal-title" id="stationImportModalTitle">Import Camera Stations</h2>
+      <button type="button" class="modal-close-btn" id="stationImportModalClose" title="Close dialog">&times;</button>
+    </div>
+    <form id="stationImportForm" class="modal-form" onsubmit="return false;">
+      <input type="hidden" id="stationImportType" value="csv">
+      
+      <div class="modal-body">
+        <p class="note" id="stationImportHelp" style="margin:0">Paste CSV text with columns: <code>station_id, name, lat, lon, zone, village_dist_km, folder_hint</code></p>
+        <div class="form-row" style="margin-top:var(--s2)">
+          <textarea id="stationImportText" rows="8"
+            style="width:100%;font-family:var(--f-data);font-size:12px;padding:10px;border:1px solid var(--line);border-radius:var(--r-ctl);resize:vertical;background:#fff;line-height:1.4"
+            placeholder="station_id,name,lat,lon,zone&#10;PN-C-025,Bamboo Trail,21.754,79.321,core"></textarea>
+        </div>
+        <div id="stationImportError" class="auth-error" hidden></div>
+        <div id="stationImportSuccess" style="color:var(--info);font-size:13px;padding:8px 12px;background:var(--surface-2);border:1px solid var(--line-soft);border-radius:var(--r-ctl)" hidden></div>
+      </div>
+
+      <div class="modal-footer">
+        <button type="button" id="stationImportCancel" class="btn">Close</button>
+        <button type="submit" id="stationImportSubmit" class="primary">Run Import</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- ── Reserve Boundaries Modal ──────────────────────────────────────────── -->
+<div id="reserveBoundariesModal" class="modal-overlay" hidden>
+  <div class="modal-dialog">
+    <div class="modal-header">
+      <h2 class="modal-title">Reserve Spatial Boundaries (GeoJSON)</h2>
+      <button type="button" class="modal-close-btn" id="reserveBoundariesClose" title="Close dialog">&times;</button>
+    </div>
+    <form id="reserveBoundariesForm" class="modal-form" onsubmit="return false;">
+      <div class="modal-body">
+        <p class="note" style="margin:0">Define geographic reserve boundaries for spatial maps and alert calculations. Paste a GeoJSON geometry or object with <code>core_geojson</code>, <code>buffer_geojson</code>, and <code>corridor_geojson</code>.</p>
+        <div class="form-row" style="margin-top:var(--s2)">
+          <label for="boundariesGeojsonText">Boundary GeoJSON</label>
+          <textarea id="boundariesGeojsonText" rows="9"
+            style="width:100%;font-family:var(--f-data);font-size:12px;padding:10px;border:1px solid var(--line);border-radius:var(--r-ctl);resize:vertical;background:#fff;line-height:1.4"
+            placeholder='{"core_geojson": {"type":"Polygon","coordinates":[[[79.2,21.7],[79.6,21.7],[79.6,21.9],[79.2,21.9],[79.2,21.7]]]}}'></textarea>
+        </div>
+        <div id="boundariesError" class="auth-error" hidden></div>
+        <div id="boundariesSuccess" style="color:var(--info);font-size:13px;padding:8px 12px;background:var(--surface-2);border:1px solid var(--line-soft);border-radius:var(--r-ctl)" hidden></div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" id="reserveBoundariesCancel" class="btn">Cancel</button>
+        <button type="submit" id="reserveBoundariesSubmit" class="primary">Save Boundaries</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- ── Merge Individual Modal ────────────────────────────────────────────── -->
+<div id="mergeIndividualModal" class="modal-overlay" hidden>
+  <div class="modal-dialog">
+    <div class="modal-header">
+      <h2 class="modal-title">Merge Individual Tiger</h2>
+      <button type="button" class="modal-close-btn" id="mergeIndividualClose" title="Close dialog">&times;</button>
+    </div>
+    <form id="mergeIndividualForm" class="modal-form" onsubmit="return false;">
+      <div class="modal-body">
+        <p class="note" style="margin:0">Fold a provisional or duplicated tiger record into an existing primary individual. Re-assigns all crops, sightings, and territory records.</p>
+        <div class="form-row" style="margin-top:var(--s3)">
+          <label for="mergeSourceId">Source Tiger ID (Will be superseded)</label>
+          <input type="text" id="mergeSourceId" readonly style="background:var(--surface-2);font-weight:bold">
+        </div>
+        <div class="form-row" style="margin-top:var(--s2)">
+          <label for="mergeTargetId">Target Tiger ID (Surviving entity)</label>
+          <select id="mergeTargetId" required style="width:100%;padding:8px;border:1px solid var(--line);border-radius:var(--r-ctl)">
+            <option value="">-- Select surviving tiger --</option>
+          </select>
+        </div>
+        <div id="mergeError" class="auth-error" hidden></div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" id="mergeIndividualCancel" class="btn">Cancel</button>
+        <button type="submit" id="mergeIndividualSubmit" class="btn danger">Confirm Merge</button>
+      </div>
+    </form>
+  </div>
 </div>
 
 <div id="guide" class="guide" hidden>

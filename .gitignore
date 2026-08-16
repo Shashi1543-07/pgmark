@@ -18,6 +18,10 @@ manual_test_100/
 testing data/
 *.zip
 *.pt
+!edge/models/backbones/yolo11n-pose.pt
+*.ckpt
+edge/models/side/*.ts
+edge/models/species/*.ts
 *.log
 .DS_Store
 .vscode/settings.json

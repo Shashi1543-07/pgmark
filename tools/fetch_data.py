@@ -1,28 +1,28 @@
-"""Downloads external datasets and model weights this project names, into
-data/raw/ (datasets, evaluation-only) or data/weights/ (production model
-weights edge/ actually loads at runtime).
+"""Developer-only downloader for evaluation datasets.
 
-    python -m tools.fetch_data --set cct20         # Caltech CT benchmark subset (blank detection)
-    python -m tools.fetch_data --set atrw           # ATRW re-ID + pose (identification)
-    python -m tools.fetch_data --set megadetector    # Stage B detector weights (MIT-licensed)
-    python -m tools.fetch_data --set all
+It is never part of a field installation workflow. Production model weights
+must arrive in the verified offline release bundle under edge/models/; this
+tool deliberately has no model-download option.
+
+    # developer build machine only
+    PUGMARK_DEVELOPER_BUILD=1 python -m tools.fetch_data --developer-network --set cct20
+    PUGMARK_DEVELOPER_BUILD=1 python -m tools.fetch_data --developer-network --set atrw
 
 Idempotent: a file already present at the expected size is not re-fetched.
-Nothing here trains anything -- this only gets bytes onto disk. data/raw/
-and data/weights/ are both gitignored. See docs/DATA.md and
-docs/MODEL_CHOICES.md for what each source is (and is not) for, and its
-licence.
+Nothing here trains anything -- this only gets evaluation bytes onto disk.
+It must not be included in an air-gapped field installer. See
+docs/DATA.md for what each dataset source is (and is not) for.
 """
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 import tarfile
 import urllib.request
 from pathlib import Path
 
 RAW = Path(__file__).resolve().parents[1] / "data" / "raw"
-WEIGHTS = Path(__file__).resolve().parents[1] / "data" / "weights"
 
 # (url, expected filename, expected size in bytes or None if unknown/small)
 CCT20 = [
@@ -44,19 +44,6 @@ ATRW = [
     ("https://storage.googleapis.com/public-datasets-lila/cvwc2019/train/"
      "atrw_anno_pose_train.tar.gz", "atrw_anno_pose_train.tar.gz", 568_505),
 ]
-
-# MDV6-mit-yolov9-c: MIT-licensed, compact (9.7M params) MegaDetector V6
-# variant. NOT the YOLOv10-compact build (2.3M params, AGPL-3.0) -- see
-# docs/MODEL_CHOICES.md for why the license constraint won out over the
-# smaller size. No ultralytics/AGPL code involved in running these files;
-# see edge/pipeline/vendor/yolo_mit/NOTICE.md.
-MEGADETECTOR = [
-    ("https://zenodo.org/records/15398270/files/MDV6-mit-yolov9-c.ckpt?download=1",
-     "MDV6-mit-yolov9-c.ckpt", None),
-    ("https://zenodo.org/records/15178680/files/config_v9s.yaml?download=1",
-     "config_v9s.yaml", None),
-]
-
 
 def _fetch(url: str, dest: Path, expect_bytes: int | None) -> None:
     if dest.exists() and (expect_bytes is None or abs(dest.stat().st_size - expect_bytes) < 1_000_000):
@@ -107,26 +94,23 @@ def fetch_atrw() -> None:
         _extract(dest, root)
 
 
-def fetch_megadetector() -> None:
-    root = WEIGHTS / "megadetector"
-    root.mkdir(parents=True, exist_ok=True)
-    for url, name, size in MEGADETECTOR:
-        _fetch(url, root / name, size)
-
-
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--set", choices=["cct20", "atrw", "megadetector", "all"], required=True)
+    ap.add_argument("--set", choices=["cct20", "atrw", "all"], required=True)
+    ap.add_argument("--developer-network", action="store_true",
+                    help="explicitly allow this developer-only dataset bootstrap")
     args = ap.parse_args()
+    if not args.developer_network or os.environ.get("PUGMARK_DEVELOPER_BUILD") != "1":
+        print("refusing network access: this command is excluded from field releases. "
+              "On a non-field build machine, set PUGMARK_DEVELOPER_BUILD=1 and pass "
+              "--developer-network explicitly.")
+        return 2
     if args.set in ("cct20", "all"):
         print("Caltech Camera Traps (CCT20 benchmark subset) -- blank detection")
         fetch_cct20()
     if args.set in ("atrw", "all"):
         print("ATRW -- re-identification")
         fetch_atrw()
-    if args.set in ("megadetector", "all"):
-        print("MegaDetector V6 (MDV6-mit-yolov9-c) -- Stage B detector")
-        fetch_megadetector()
     return 0
 
 

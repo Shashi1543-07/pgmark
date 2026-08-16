@@ -18,6 +18,12 @@ import os
 from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
 
+# These must be established before any model library is imported. They are
+# deliberately assigned (rather than setdefault) so a stale shell setting
+# cannot quietly re-enable a model downloader on the field laptop.
+for _offline_var in ("HF_HUB_OFFLINE", "TRANSFORMERS_OFFLINE", "YOLO_OFFLINE"):
+    os.environ[_offline_var] = "1"
+
 SCHEMA_VERSION = 1
 APP_VERSION = "0.1.0"
 
@@ -27,8 +33,52 @@ DB_PATH = DATA_DIR / "pugmark.db"
 QUARANTINE_DIR = DATA_DIR / "quarantine"
 CROPS_DIR = DATA_DIR / "crops"
 RESTRICTED_DIR = DATA_DIR / "restricted"
-WEIGHTS_DIR = DATA_DIR / "weights"
 UPLOADS_DIR = DATA_DIR / "uploads"
+# Model assets are application files, not mutable data. In particular they
+# must not live below PUGMARK_DATA: an operator may relocate that directory,
+# but the signed model bundle must stay with the release.
+MODELS_DIR = (ROOT / "edge" / "models").resolve()
+MODEL_MANIFEST_PATH = MODELS_DIR / "manifest.json"
+
+
+def local_model_path(relative_path: str) -> Path:
+    """Return an absolute path contained by the shipped model bundle.
+
+    This deliberately does not check existence. A missing asset is reported
+    by readiness/package verification, while import-time checks stay cheap
+    and do not make the server unstartable.
+    """
+    candidate = (MODELS_DIR / relative_path).resolve()
+    try:
+        candidate.relative_to(MODELS_DIR)
+    except ValueError as exc:
+        raise ValueError(f"model path escapes edge/models: {relative_path!r}") from exc
+    return candidate
+
+
+DETECTOR_CHECKPOINT_PATH = local_model_path("megadetector/MDV6-mit-yolov9-c.ckpt")
+DETECTOR_CONFIG_PATH = local_model_path("megadetector/config_v9s.yaml")
+KEYPOINTS_MODEL_PATH = local_model_path("keypoints/pose_2kp.pt")
+EMBEDDER_MODEL_PATH = local_model_path("identify/identify_embedder.pt")
+SPECIES_MODEL_PATH = local_model_path("species/species_classifier.ts")
+SIDE_MODEL_PATH = local_model_path("side/flank_side_classifier.ts")
+# Training may use this optional checkpoint, but it too must be supplied as a
+# local package asset. TorchVision's automatic ImageNet download is banned.
+RESNET50_BACKBONE_PATH = local_model_path("backbones/resnet50-imagenet.pth")
+
+
+def runtime_model_paths() -> dict[str, Path]:
+    """The complete set of model assets required by the current runtime."""
+    return {
+        "megadetector_checkpoint": DETECTOR_CHECKPOINT_PATH,
+        "megadetector_config": DETECTOR_CONFIG_PATH,
+        "keypoints": KEYPOINTS_MODEL_PATH,
+        "identify_embedder": EMBEDDER_MODEL_PATH,
+        "species_classifier": SPECIES_MODEL_PATH,
+        "flank_side_classifier": SIDE_MODEL_PATH,
+    }
+
+
 CONFIG_PATH = DATA_DIR / "config.json"
 
 HOST = os.environ.get("PUGMARK_HOST", "127.0.0.1")
@@ -107,6 +157,27 @@ class Ingest:
     scan and hash only, since triage's detector isn't built yet. Editable,
     and shown next to the estimate so nobody mistakes it for measured."""
 
+    scan_batch_size: int = 2000
+    """Maximum file records held by one ingest scan batch.  This bounds
+    scanner/queue memory on a 500k-frame SD-card import; it is deliberately
+    independent of model-inference batch size."""
+
+    metadata_bytes_per_image: int = 2048
+    """Conservative SQLite/JSON bookkeeping allowance used by the resource
+    preflight.  It is an estimate stated to the operator, not a disk quota."""
+
+    decode_working_set_mib: int = 64
+    """RAM reserved for decoding a single high-resolution image while a scan
+    batch is resident.  Tune from measurements on the release laptop."""
+
+    ram_safety_reserve_mib: int = 512
+    """Free RAM that remains unavailable to PUGMARK's scan so the operating
+    system and the officer's other work do not begin paging heavily."""
+
+    min_free_disk_mib: int = 1024
+    """Absolute free-space floor in addition to the card-sized quarantine and
+    metadata projection.  The preflight refuses before writing below it."""
+
 
 @dataclass
 class Triage:
@@ -173,6 +244,29 @@ class Triage:
 
 
 @dataclass
+class QualityEngine:
+    """Image and crop quality gate policy."""
+    min_laplacian_variance: float = 20.0  # Blur detection
+    min_mean_exposure: float = 18.0       # Underexposure floor
+    max_mean_exposure: float = 242.0      # Overexposure ceiling
+    max_highlight_saturation_frac: float = 0.30  # IR flash blowout limit
+    min_crop_pixels: int = 4096
+    nms_iou_threshold: float = 0.45
+    burst_fusion_enabled: bool = True
+
+
+@dataclass
+class StationMatching:
+    """Multi-signal station identifier scoring weights."""
+    weight_folder_hint: float = 0.40
+    weight_camera_serial: float = 0.25
+    weight_make_model: float = 0.15
+    weight_filename_pattern: float = 0.10
+    weight_deployment_history: float = 0.10
+    min_confidence_to_auto_assign: float = 0.75
+
+
+@dataclass
 class Identify:
     t_high: float = 0.95           # >= : auto-assign
     """Deliberately conservative, not the original 0.82 guess. Measured
@@ -202,38 +296,6 @@ class Identify:
     """Left and right flank patterns are DIFFERENT, not mirrored. Never
     score an L crop against an R catalogue. Turning this off is a bug."""
 
-    require_side_classifier: bool = True
-    """Bulk Stage 3 will not auto-assign or auto-enrol while this is True.
-
-    edge/pipeline/keypoints.py labels every prediction "right_shoulder"/
-    "right_hip" regardless of which flank is actually showing -- confirmed
-    empirically in docs/RESULTS.md's wild evaluation, where every held-out
-    image came back side='R' and none 'L'. On a real deployment roughly
-    half of captures show the left flank and would be scored against the
-    RIGHT-side catalogue. One photograph at a time that is a bad match a
-    human can catch; 50,000 at a time it is a corrupted catalogue.
-
-    While True, crops and embeddings are still computed and stored -- the
-    work is not thrown away -- but every decision goes to the review queue
-    with the reason stated. Set False only once a side classifier exists.
-    CLAUDE.md rule 8: refusing to answer is a valid output."""
-
-    species_gate: str = "review"
-    """strict | review | off.
-
-    MegaDetector's `animal` class is not `tiger`. v0.1.1 sent every animal
-    detection into the flank pipeline, so a leopard, sambar or wild dog
-    could be embedded, scored against the tiger catalogue, and below t_low
-    enrolled as a brand-new tiger. On a real reserve most animal detections
-    are not tigers, so that is the common case, not the rare one.
-
-      strict -- only detections confirmed as target_species proceed. With
-                no species classifier installed, that is none, and the run
-                says so rather than pretending.
-      review -- crops and embeddings are computed, decisions go to a human.
-                The honest default while no classifier exists.
-      off    -- v0.1.1's behaviour. Recorded in the audit log; not advised."""
-
     target_species: str = "tiger"
 
     rect_body_depth_ratio: float = 0.6
@@ -252,6 +314,71 @@ class Identify:
     along the body axis, as a fraction of the shoulder-hip distance --
     enough to catch a little neck and rump stripe pattern beyond the two
     anchor points, not so much that it pulls in background."""
+
+    cross_flank_window_s: int = 60
+    """Two opposite-side captures within this time window at the same station
+    are marked as cross-flank candidates (UNKNOWN_RELATIONSHIP) rather than
+    auto-enrolling a second individual."""
+
+
+@dataclass
+class Classifiers:
+    """Policy for the two local TorchScript classifiers.
+
+    Species and physical flank side are independent evidence. Their
+    confidence is never substituted for pose/keypoint quality.
+    """
+
+    species_min_confidence: float = 0.80
+    side_min_confidence: float = 0.85
+    """Calibrated, not guessed -- earlier revisions of the shipped side
+    classifier had confidence that did not track correctness at all (a
+    threshold sweep found ~22-30% precision at every threshold from 0 to
+    0.85, i.e. the model's confidence carried no real signal). Retrained
+    with a corrected label set (tools/build_atrw_side_manifest.py's
+    multi-keypoint-pair vote, not shoulder+hip alone) and a backbone
+    initialised from the local re-ID embedder rather than trained from
+    scratch (tools/train_classifiers.py --arch pretrained). On the held-out
+    validation split this now behaves like a real classifier: precision
+    rises from 71.5% at threshold 0 to 76.9% at 0.85, and drops off past
+    it (n too small to trust past 0.90). 0.85 sits at that precision peak,
+    not merely inherited -- see edge/models/side/flank_side_classifier.ts.json
+    for the confusion matrix this was measured from. Re-measure before
+    moving this value again."""
+    input_width: int = 224
+    input_height: int = 224
+
+
+@dataclass
+class ClassifierTraining:
+    """Offline-only training defaults for the Stage 2 TorchScript artifacts."""
+
+    epochs: int = 24
+    batch_size: int = 16
+    learning_rate: float = 0.001
+    seed: int = 20260815
+    grayscale_probability: float = 0.25
+    blur_radius_max: float = 1.5
+    brightness_min: float = 0.45
+    brightness_max: float = 1.35
+
+
+@dataclass
+class Device:
+    """Field inference-device policy.
+
+    Device selection is deliberately automatic and conservative: a field
+    operator cannot accidentally force CUDA just by carrying over a shell
+    variable from a development machine.  CUDA is used only when PyTorch can
+    query a usable device with enough currently free VRAM; otherwise every
+    model uses CPU.  These are throughput/recovery limits, not model
+    thresholds, and are still configuration so a release can state them.
+    """
+
+    cpu_batch_size: int = 4
+    cuda_batch_size: int = 16
+    cuda_min_free_vram_mib: int = 1024
+    cuda_oom_cpu_fallback: bool = True
 
 
 @dataclass
@@ -302,6 +429,13 @@ class Alerts:
     default_cycle_days: int = 90
     """Fallback cycle length used only when a reserve has too little run
     history to infer one from actual gaps between runs (see effort.py)."""
+
+    directional_trend_min_cycles: int = 2
+    directional_trend_max_angle_diff_deg: float = 50.0
+    village_proximity_warn_km: float = 2.5
+    activity_collapse_ratio: float = 0.25
+    travel_speed_max_kmh: float = 25.0
+    id_confidence_collapse_drop: float = 0.25
 
     @property
     def core_shift_km(self) -> float:
@@ -371,11 +505,24 @@ PERMISSIONS = {
 }
 
 
+TERMINAL_STATUSES = (
+    "INGESTED", "CORRUPT", "UNREADABLE", "BLANK", "PERSON", "VEHICLE",
+    "NON_TARGET_SPECIES", "UNKNOWN_SPECIES", "SIDE_UNKNOWN", "LOW_QUALITY",
+    "IDENTITY_REVIEW", "IDENTIFIED", "NEW_INDIVIDUAL", "DUPLICATE",
+    "ERROR_RETRYABLE", "ERROR_PERMANENT"
+)
+
+
 @dataclass
 class Config:
     ingest: Ingest = field(default_factory=Ingest)
+    station_matching: StationMatching = field(default_factory=StationMatching)
     triage: Triage = field(default_factory=Triage)
+    quality: QualityEngine = field(default_factory=QualityEngine)
     identify: Identify = field(default_factory=Identify)
+    classifiers: Classifiers = field(default_factory=Classifiers)
+    classifier_training: ClassifierTraining = field(default_factory=ClassifierTraining)
+    device: Device = field(default_factory=Device)
     occupancy: Occupancy = field(default_factory=Occupancy)
     alerts: Alerts = field(default_factory=Alerts)
     privacy: Privacy = field(default_factory=Privacy)
@@ -418,7 +565,9 @@ class Config:
 
 
 def ensure_dirs() -> None:
-    for d in (DATA_DIR, QUARANTINE_DIR, CROPS_DIR, RESTRICTED_DIR, WEIGHTS_DIR, UPLOADS_DIR):
+    # MODELS_DIR is deliberately absent: the application never creates an
+    # empty weights directory and never treats that as a reason to fetch.
+    for d in (DATA_DIR, QUARANTINE_DIR, CROPS_DIR, RESTRICTED_DIR, UPLOADS_DIR):
         d.mkdir(parents=True, exist_ok=True)
 
 

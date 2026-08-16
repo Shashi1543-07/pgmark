@@ -46,6 +46,7 @@ import json
 
 from edge import config, effort
 from edge.db import repo
+from edge.db import repo_ext
 from edge.pipeline import alerts as alerts_engine
 from edge.pipeline import occupancy as occupancy_geom
 
@@ -101,8 +102,8 @@ def compute_occupancy(run_id: str, actor: str = "system") -> dict:
             "confidently wrong)")
 
     min_stations = config.CONFIG.occupancy.min_stations_for_hull
-    by_ind = repo.occupancy_inputs(run_id)
-    eligible = set(repo.individuals_known_before(r["reserve_id"], r["started_at"]))
+    by_ind = repo_ext.occupancy_inputs(run_id)
+    eligible = set(repo_ext.individuals_known_before(r["reserve_id"], r["started_at"]))
 
     runs_sorted = sorted(repo.runs(r["reserve_id"], limit=10_000),
                          key=lambda x: x["started_at"])
@@ -136,8 +137,8 @@ def compute_occupancy(run_id: str, actor: str = "system") -> dict:
             "insufficient_reason": geo["insufficient_reason"],
         })
 
-    with repo.transaction() as conn:
-        repo.replace_occupancy(run_id, rows, conn)
+    with repo_ext.transaction() as conn:
+        repo_ext.replace_occupancy(run_id, rows, conn)
 
     repo.audit("occupancy.compute", actor=actor, entity_type="run", entity_id=run_id,
                after={"individuals": len(rows), "with_hull": with_hull,
@@ -170,8 +171,8 @@ def generate_alerts(run_id: str, actor: str = "system") -> dict:
     reason rather than as an empty list the UI has to interpret.
     """
     rows = alerts_engine.generate_for_run(run_id)
-    with repo.transaction() as conn:
-        stats = repo.replace_alerts(run_id, rows, conn)
+    with repo_ext.transaction() as conn:
+        stats = repo_ext.replace_alerts(run_id, rows, conn)
 
     raised = sum(1 for a in rows if not a["suppressed"])
     by_type: dict[str, int] = {}

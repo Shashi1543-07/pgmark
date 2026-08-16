@@ -18,7 +18,7 @@ rectification step to make "which side" meaningful in the first place --
 this path does not distinguish near/far side at all, so flipping does
 not invalidate anything the way it would for the keypoint-based crop.
 
-Writes data/weights/identify_embedder_no_rect.pt (gitignored) -- a
+Writes edge/models/identify/identify_embedder_no_rect.pt (gitignored) -- a
 second, separate model, not a replacement for the rectified one.
 """
 from __future__ import annotations
@@ -36,13 +36,14 @@ import numpy as np                      # noqa: E402
 import torch                            # noqa: E402
 import torchvision.transforms as T      # noqa: E402
 
+from edge import config                                            # noqa: E402
 from edge.pipeline.identify import (                              # noqa: E402
     IMAGENET_MEAN, IMAGENET_STD, RECT_HEIGHT, RECT_WIDTH, TripletEmbedder)
 from tools.atrw_dataset import held_out_identity_split, load_labelled  # noqa: E402
 from tools.train_identify import (                                # noqa: E402
     K_IMAGES, LR, MARGIN, P_IDENTITIES, batch_hard_triplet_loss, build_entities, sample_batch)
 
-WEIGHTS_PATH = Path(__file__).resolve().parents[1] / "data" / "weights" / "identify_embedder_no_rect.pt"
+WEIGHTS_PATH = config.local_model_path("identify/identify_embedder_no_rect.pt")
 
 AUGMENT = T.Compose([
     T.RandomRotation(20),
@@ -83,7 +84,10 @@ def main() -> int:
     print(f"training device: {device}"
           + (f" ({torch.cuda.get_device_name(0)})" if device.type == "cuda" else ""))
 
-    model = TripletEmbedder(pretrained=True).to(device)
+    backbone = config.RESNET50_BACKBONE_PATH if config.RESNET50_BACKBONE_PATH.exists() else None
+    if backbone is None:
+        print("no local ImageNet backbone supplied; training from scratch (no download attempted)")
+    model = TripletEmbedder(backbone_weights=backbone).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=LR)
     rng = random.Random(20260813)
 

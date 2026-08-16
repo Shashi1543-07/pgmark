@@ -25,7 +25,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from edge import config                                            # noqa: E402
 from edge.db import repo                                           # noqa: E402
-from tools.seed_demo import RESERVE, RESERVE_UTM_EPSG, build_activity, build_stations  # noqa: E402
+from tools.seed_demo import (                                      # noqa: E402
+    RESERVE, RESERVE_UTM_EPSG, build_activity, build_stations, _capture_existing_accounts)
 
 
 def main() -> None:
@@ -33,18 +34,33 @@ def main() -> None:
     existing_users = []
     existing_sessions = []
     if config.DB_PATH.exists():
-        try:
-            conn = repo.connect()
-            existing_users = repo._rows(conn.execute("SELECT * FROM users"))
-            existing_sessions = repo._rows(conn.execute("SELECT * FROM sessions WHERE revoked_at IS NULL"))
-        except Exception:
-            pass
+        # Same guarantee as tools/seed_demo.py's --reset: never silently
+        # discard real accounts because this read raced with something else
+        # holding the database open. See _capture_existing_accounts()'s own
+        # docstring for the incident that made this non-optional.
+        existing_users, existing_sessions = _capture_existing_accounts()
         repo.close_all()
-        config.DB_PATH.unlink()
-        for suffix in ("-wal", "-shm"):
-            p = Path(str(config.DB_PATH) + suffix)
-            if p.exists():
-                p.unlink()
+        try:
+            config.DB_PATH.unlink()
+            for suffix in ("-wal", "-shm"):
+                p = Path(str(config.DB_PATH) + suffix)
+                if p.exists():
+                    try:
+                        p.unlink()
+                    except Exception:
+                        pass
+        except OSError:
+            conn = repo.connect()
+            conn.execute("PRAGMA foreign_keys = OFF")
+            tables = [r["name"] for r in repo._rows(conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"))]
+            for t in tables:
+                if t != "schema_migrations":
+                    try:
+                        conn.execute(f"DELETE FROM {t}")
+                    except Exception:
+                        pass
+            conn.execute("PRAGMA foreign_keys = ON")
+            conn.commit()
     repo.migrate()
 
     boundary = {

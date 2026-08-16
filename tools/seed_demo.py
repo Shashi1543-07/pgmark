@@ -28,6 +28,7 @@ import hashlib
 import json
 import random
 import sys
+import time
 from collections import Counter
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -96,6 +97,14 @@ def hid(*parts) -> str:
     return hashlib.sha256("|".join(map(str, parts)).encode()).hexdigest()[:16]
 
 
+CAMERA_MAKES = [
+    ("Reconyx", "HyperFire 2", "HF2"),
+    ("Cuddeback", "Color X-Change", "CXC"),
+    ("Bushnell", "Trophy Cam HD", "BTC"),
+    ("Browning", "Strike Force Pro", "BSF"),
+]
+
+
 def build_stations() -> list[dict]:
     """A 2 km grid, which is how reserves actually deploy camera traps."""
     out, n = [], 0
@@ -107,6 +116,8 @@ def build_stations() -> list[dict]:
             edge_dist = max(abs(row - 2.5), abs(col - 2.5))
             zone = "core" if edge_dist <= 1.5 else "buffer"
             village_km = round(1.0 + edge_dist * 2.6 + RNG.uniform(-0.3, 0.3), 1)
+            make, model, prefix = RNG.choice(CAMERA_MAKES)
+            serial = f"{prefix}-{RNG.randint(10000, 99999)}"
             out.append({
                 "station_id": sid(n, zone),
                 "reserve_id": RESERVE,
@@ -117,6 +128,11 @@ def build_stations() -> list[dict]:
                 "village_dist_km": max(0.6, village_km),
                 "grid_cell": f"G{row}{col}",
                 "folder_hint": f"{NAMES[(n - 1) % len(NAMES)].split()[0].upper()}_{n:03d}",
+                "camera_make": make,
+                "camera_model": model,
+                "camera_serial": serial,
+                "active_from": "2025-01-01T00:00:00Z",
+                "status": "active",
             })
     return out
 
@@ -198,37 +214,101 @@ def patch_for(ind_id: str, home: dict, final: bool,
     return patch
 
 
+def _capture_existing_accounts() -> tuple[list[dict], list[dict]]:
+    """Read every real login account before --reset wipes the database.
+
+    A demo-data reset must never be able to silently regenerate the admin
+    account. This used to be a single best-effort read whose failure was
+    swallowed by a bare `except Exception: pass` -- so a transient lock (the
+    live server still holding its own connection to this same
+    data/pugmark.db while an operator resets demo data from another window,
+    which is exactly what happens when the server is left running) fell
+    straight through to main()'s ensure_admin() fallback below, minting a
+    brand-new random admin password nobody watching the browser ever saw,
+    while the reset itself reported success. Retried with backoff first
+    (same pattern as edge/pipeline/triage.py's Windows-resilient file
+    operations) because the lock is usually transient; if it is still
+    failing after that, refusing the whole reset is the safe outcome --
+    proceeding and guessing is not (CLAUDE.md rule 8).
+    """
+    last_exc: Exception | None = None
+    for attempt in range(5):
+        try:
+            conn = repo.connect()
+            users = repo._rows(conn.execute("SELECT * FROM users"))
+            sessions = repo._rows(conn.execute("SELECT * FROM sessions WHERE revoked_at IS NULL"))
+            return users, sessions
+        except Exception as exc:                                   # noqa: BLE001
+            last_exc = exc
+            repo.close_all()
+            time.sleep(0.2 * (attempt + 1))
+    raise RuntimeError(
+        "refusing to reset demo data: could not read the existing users/sessions "
+        f"tables before wiping the database ({type(last_exc).__name__}: {last_exc}). "
+        "Proceeding anyway would silently discard every real login account and mint "
+        "a brand-new admin password nobody would see. Stop anything else that has "
+        "data/pugmark.db open (e.g. the running server) and try again."
+    ) from last_exc
+
+
 def main(reset: bool = False) -> None:
     config.ensure_dirs()
     existing_users = []
     existing_sessions = []
     if reset and config.DB_PATH.exists():
-        try:
-            conn = repo.connect()
-            existing_users = repo._rows(conn.execute("SELECT * FROM users"))
-            existing_sessions = repo._rows(conn.execute("SELECT * FROM sessions WHERE revoked_at IS NULL"))
-        except Exception:
-            pass
+        existing_users, existing_sessions = _capture_existing_accounts()
         repo.close_all()
-        config.DB_PATH.unlink()
-        for suffix in ("-wal", "-shm"):
-            p = Path(str(config.DB_PATH) + suffix)
-            if p.exists():
-                p.unlink()
+        try:
+            config.DB_PATH.unlink()
+            for suffix in ("-wal", "-shm"):
+                p = Path(str(config.DB_PATH) + suffix)
+                if p.exists():
+                    try:
+                        p.unlink()
+                    except Exception:
+                        pass
+        except OSError:
+            conn = repo.connect()
+            conn.execute("PRAGMA foreign_keys = OFF")
+            tables = [r["name"] for r in repo._rows(conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"))]
+            for t in tables:
+                if t != "schema_migrations":
+                    try:
+                        conn.execute(f"DELETE FROM {t}")
+                    except Exception:
+                        pass
+            conn.execute("PRAGMA foreign_keys = ON")
+            conn.commit()
     repo.migrate()
-    conn = repo.connect()
-    if conn.execute("SELECT COUNT(*) c FROM reserves").fetchone()["c"]:
-        print("already seeded; use --reset to rebuild")
-        return
+    if not reset:
+        conn = repo.connect()
+        if conn.execute("SELECT COUNT(*) c FROM reserves").fetchone()["c"]:
+            print("already seeded; use --reset to rebuild")
+            return
 
-    boundary = {
+    core_boundary = {
         "type": "Polygon",
-        "coordinates": [[[79.20, 21.55], [79.40, 21.55],
-                         [79.40, 21.76], [79.20, 21.76], [79.20, 21.55]]],
+        "coordinates": [[[79.24, 21.59], [79.36, 21.59],
+                         [79.36, 21.71], [79.24, 21.71], [79.24, 21.59]]],
+    }
+    buffer_boundary = {
+        "type": "Polygon",
+        "coordinates": [[[79.18, 21.53], [79.42, 21.53],
+                         [79.42, 21.77], [79.18, 21.77], [79.18, 21.53]]],
+    }
+    corridor_boundary = {
+        "type": "LineString",
+        "coordinates": [[79.30, 21.77], [79.35, 21.82], [79.40, 21.88]],
+    }
+    res_boundaries = {
+        "type": "FeatureCollection",
+        "core_geojson": core_boundary,
+        "buffer_geojson": buffer_boundary,
+        "corridor_geojson": corridor_boundary,
     }
     repo.insert("reserves", {
         "reserve_id": RESERVE, "name": "Pench Tiger Reserve", "state": "Maharashtra",
-        "utm_epsg": RESERVE_UTM_EPSG, "boundary_geojson": json.dumps(boundary),
+        "utm_epsg": RESERVE_UTM_EPSG, "boundary_geojson": json.dumps(res_boundaries),
         "created_at": repo.now(),
     })
 

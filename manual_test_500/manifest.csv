@@ -1,0 +1,361 @@
+filename,category,ground_truth_id,description,expected_pipeline
+TIGER_REC_01_P01_003597.jpg,tiger,IND-TIGER-250,Repeat tiger #1 (Photo 1/4),Identify -> Stripe Match -> Confirmed Entity
+TIGER_REC_01_P02_002499.jpg,tiger,IND-TIGER-250,Repeat tiger #1 (Photo 2/4),Identify -> Stripe Match -> Confirmed Entity
+TIGER_REC_01_P03_000152.jpg,tiger,IND-TIGER-250,Repeat tiger #1 (Photo 3/4),Identify -> Stripe Match -> Confirmed Entity
+TIGER_REC_01_P04_001510.jpg,tiger,IND-TIGER-250,Repeat tiger #1 (Photo 4/4),Identify -> Stripe Match -> Confirmed Entity
+TIGER_REC_02_P01_003523.jpg,tiger,IND-TIGER-256,Repeat tiger #2 (Photo 1/4),Identify -> Stripe Match -> Confirmed Entity
+TIGER_REC_02_P02_001291.jpg,tiger,IND-TIGER-256,Repeat tiger #2 (Photo 2/4),Identify -> Stripe Match -> Confirmed Entity
+TIGER_REC_02_P03_003970.jpg,tiger,IND-TIGER-256,Repeat tiger #2 (Photo 3/4),Identify -> Stripe Match -> Confirmed Entity
+TIGER_REC_02_P04_004946.jpg,tiger,IND-TIGER-256,Repeat tiger #2 (Photo 4/4),Identify -> Stripe Match -> Confirmed Entity
+TIGER_REC_03_P01_003900.jpg,tiger,IND-TIGER-171,Repeat tiger #3 (Photo 1/4),Identify -> Stripe Match -> Confirmed Entity
+TIGER_REC_03_P02_003062.jpg,tiger,IND-TIGER-171,Repeat tiger #3 (Photo 2/4),Identify -> Stripe Match -> Confirmed Entity
+TIGER_REC_03_P03_000053.jpg,tiger,IND-TIGER-171,Repeat tiger #3 (Photo 3/4),Identify -> Stripe Match -> Confirmed Entity
+TIGER_REC_03_P04_000920.jpg,tiger,IND-TIGER-171,Repeat tiger #3 (Photo 4/4),Identify -> Stripe Match -> Confirmed Entity
+TIGER_REC_04_P01_002636.jpg,tiger,IND-TIGER-247,Repeat tiger #4 (Photo 1/4),Identify -> Stripe Match -> Confirmed Entity
+TIGER_REC_04_P02_004485.jpg,tiger,IND-TIGER-247,Repeat tiger #4 (Photo 2/4),Identify -> Stripe Match -> Confirmed Entity
+TIGER_REC_04_P03_004023.jpg,tiger,IND-TIGER-247,Repeat tiger #4 (Photo 3/4),Identify -> Stripe Match -> Confirmed Entity
+TIGER_REC_04_P04_004132.jpg,tiger,IND-TIGER-247,Repeat tiger #4 (Photo 4/4),Identify -> Stripe Match -> Confirmed Entity
+TIGER_REC_05_P01_002249.jpg,tiger,IND-TIGER-238,Repeat tiger #5 (Photo 1/4),Identify -> Stripe Match -> Confirmed Entity
+TIGER_REC_05_P02_001276.jpg,tiger,IND-TIGER-238,Repeat tiger #5 (Photo 2/4),Identify -> Stripe Match -> Confirmed Entity
+TIGER_REC_05_P03_003611.jpg,tiger,IND-TIGER-238,Repeat tiger #5 (Photo 3/4),Identify -> Stripe Match -> Confirmed Entity
+TIGER_REC_05_P04_004355.jpg,tiger,IND-TIGER-238,Repeat tiger #5 (Photo 4/4),Identify -> Stripe Match -> Confirmed Entity
+TIGER_REC_06_P01_003370.jpg,tiger,IND-TIGER-264,Repeat tiger #6 (Photo 1/4),Identify -> Stripe Match -> Confirmed Entity
+TIGER_REC_06_P02_003551.jpg,tiger,IND-TIGER-264,Repeat tiger #6 (Photo 2/4),Identify -> Stripe Match -> Confirmed Entity
+TIGER_REC_06_P03_000634.jpg,tiger,IND-TIGER-264,Repeat tiger #6 (Photo 3/4),Identify -> Stripe Match -> Confirmed Entity
+TIGER_REC_06_P04_002883.jpg,tiger,IND-TIGER-264,Repeat tiger #6 (Photo 4/4),Identify -> Stripe Match -> Confirmed Entity
+TIGER_REC_07_P01_001260.jpg,tiger,IND-TIGER-54,Repeat tiger #7 (Photo 1/4),Identify -> Stripe Match -> Confirmed Entity
+TIGER_REC_07_P02_003849.jpg,tiger,IND-TIGER-54,Repeat tiger #7 (Photo 2/4),Identify -> Stripe Match -> Confirmed Entity
+TIGER_REC_07_P03_001659.jpg,tiger,IND-TIGER-54,Repeat tiger #7 (Photo 3/4),Identify -> Stripe Match -> Confirmed Entity
+TIGER_REC_07_P04_003486.jpg,tiger,IND-TIGER-54,Repeat tiger #7 (Photo 4/4),Identify -> Stripe Match -> Confirmed Entity
+TIGER_REC_08_P01_001015.jpg,tiger,IND-TIGER-237,Repeat tiger #8 (Photo 1/4),Identify -> Stripe Match -> Confirmed Entity
+TIGER_REC_08_P02_005005.jpg,tiger,IND-TIGER-237,Repeat tiger #8 (Photo 2/4),Identify -> Stripe Match -> Confirmed Entity
+TIGER_REC_08_P03_000713.jpg,tiger,IND-TIGER-237,Repeat tiger #8 (Photo 3/4),Identify -> Stripe Match -> Confirmed Entity
+TIGER_REC_08_P04_004904.jpg,tiger,IND-TIGER-237,Repeat tiger #8 (Photo 4/4),Identify -> Stripe Match -> Confirmed Entity
+TIGER_REC_09_P01_003460.jpg,tiger,IND-TIGER-255,Repeat tiger #9 (Photo 1/4),Identify -> Stripe Match -> Confirmed Entity
+TIGER_REC_09_P02_000500.jpg,tiger,IND-TIGER-255,Repeat tiger #9 (Photo 2/4),Identify -> Stripe Match -> Confirmed Entity
+TIGER_REC_09_P03_003445.jpg,tiger,IND-TIGER-255,Repeat tiger #9 (Photo 3/4),Identify -> Stripe Match -> Confirmed Entity
+TIGER_REC_09_P04_004659.jpg,tiger,IND-TIGER-255,Repeat tiger #9 (Photo 4/4),Identify -> Stripe Match -> Confirmed Entity
+TIGER_REC_10_P01_004922.jpg,tiger,IND-TIGER-96,Repeat tiger #10 (Photo 1/4),Identify -> Stripe Match -> Confirmed Entity
+TIGER_REC_10_P02_000465.jpg,tiger,IND-TIGER-96,Repeat tiger #10 (Photo 2/4),Identify -> Stripe Match -> Confirmed Entity
+TIGER_REC_10_P03_001924.jpg,tiger,IND-TIGER-96,Repeat tiger #10 (Photo 3/4),Identify -> Stripe Match -> Confirmed Entity
+TIGER_REC_10_P04_002045.jpg,tiger,IND-TIGER-96,Repeat tiger #10 (Photo 4/4),Identify -> Stripe Match -> Confirmed Entity
+TIGER_REC_11_P01_001532.jpg,tiger,IND-TIGER-114,Repeat tiger #11 (Photo 1/4),Identify -> Stripe Match -> Confirmed Entity
+TIGER_REC_11_P02_002561.jpg,tiger,IND-TIGER-114,Repeat tiger #11 (Photo 2/4),Identify -> Stripe Match -> Confirmed Entity
+TIGER_REC_11_P03_000988.jpg,tiger,IND-TIGER-114,Repeat tiger #11 (Photo 3/4),Identify -> Stripe Match -> Confirmed Entity
+TIGER_REC_11_P04_002179.jpg,tiger,IND-TIGER-114,Repeat tiger #11 (Photo 4/4),Identify -> Stripe Match -> Confirmed Entity
+TIGER_REC_12_P01_005137.jpg,tiger,IND-TIGER-100,Repeat tiger #12 (Photo 1/4),Identify -> Stripe Match -> Confirmed Entity
+TIGER_REC_12_P02_001477.jpg,tiger,IND-TIGER-100,Repeat tiger #12 (Photo 2/4),Identify -> Stripe Match -> Confirmed Entity
+TIGER_REC_12_P03_002023.jpg,tiger,IND-TIGER-100,Repeat tiger #12 (Photo 3/4),Identify -> Stripe Match -> Confirmed Entity
+TIGER_REC_12_P04_004643.jpg,tiger,IND-TIGER-100,Repeat tiger #12 (Photo 4/4),Identify -> Stripe Match -> Confirmed Entity
+TIGER_REC_13_P01_000109.jpg,tiger,IND-TIGER-201,Repeat tiger #13 (Photo 1/4),Identify -> Stripe Match -> Confirmed Entity
+TIGER_REC_13_P02_002000.jpg,tiger,IND-TIGER-201,Repeat tiger #13 (Photo 2/4),Identify -> Stripe Match -> Confirmed Entity
+TIGER_REC_13_P03_000630.jpg,tiger,IND-TIGER-201,Repeat tiger #13 (Photo 3/4),Identify -> Stripe Match -> Confirmed Entity
+TIGER_REC_13_P04_000625.jpg,tiger,IND-TIGER-201,Repeat tiger #13 (Photo 4/4),Identify -> Stripe Match -> Confirmed Entity
+TIGER_REC_14_P01_000361.jpg,tiger,IND-TIGER-91,Repeat tiger #14 (Photo 1/4),Identify -> Stripe Match -> Confirmed Entity
+TIGER_REC_14_P02_003694.jpg,tiger,IND-TIGER-91,Repeat tiger #14 (Photo 2/4),Identify -> Stripe Match -> Confirmed Entity
+TIGER_REC_14_P03_000024.jpg,tiger,IND-TIGER-91,Repeat tiger #14 (Photo 3/4),Identify -> Stripe Match -> Confirmed Entity
+TIGER_REC_14_P04_002306.jpg,tiger,IND-TIGER-91,Repeat tiger #14 (Photo 4/4),Identify -> Stripe Match -> Confirmed Entity
+TIGER_REC_15_P01_002681.jpg,tiger,IND-TIGER-168,Repeat tiger #15 (Photo 1/4),Identify -> Stripe Match -> Confirmed Entity
+TIGER_REC_15_P02_001478.jpg,tiger,IND-TIGER-168,Repeat tiger #15 (Photo 2/4),Identify -> Stripe Match -> Confirmed Entity
+TIGER_REC_15_P03_003971.jpg,tiger,IND-TIGER-168,Repeat tiger #15 (Photo 3/4),Identify -> Stripe Match -> Confirmed Entity
+TIGER_REC_15_P04_003265.jpg,tiger,IND-TIGER-168,Repeat tiger #15 (Photo 4/4),Identify -> Stripe Match -> Confirmed Entity
+TIGER_REC_16_P01_003696.jpg,tiger,IND-TIGER-153,Repeat tiger #16 (Photo 1/4),Identify -> Stripe Match -> Confirmed Entity
+TIGER_REC_16_P02_000612.jpg,tiger,IND-TIGER-153,Repeat tiger #16 (Photo 2/4),Identify -> Stripe Match -> Confirmed Entity
+TIGER_REC_16_P03_003437.jpg,tiger,IND-TIGER-153,Repeat tiger #16 (Photo 3/4),Identify -> Stripe Match -> Confirmed Entity
+TIGER_REC_16_P04_000396.jpg,tiger,IND-TIGER-153,Repeat tiger #16 (Photo 4/4),Identify -> Stripe Match -> Confirmed Entity
+TIGER_REC_17_P01_003925.jpg,tiger,IND-TIGER-45,Repeat tiger #17 (Photo 1/4),Identify -> Stripe Match -> Confirmed Entity
+TIGER_REC_17_P02_001787.jpg,tiger,IND-TIGER-45,Repeat tiger #17 (Photo 2/4),Identify -> Stripe Match -> Confirmed Entity
+TIGER_REC_17_P03_002714.jpg,tiger,IND-TIGER-45,Repeat tiger #17 (Photo 3/4),Identify -> Stripe Match -> Confirmed Entity
+TIGER_REC_17_P04_001141.jpg,tiger,IND-TIGER-45,Repeat tiger #17 (Photo 4/4),Identify -> Stripe Match -> Confirmed Entity
+TIGER_REC_18_P01_004690.jpg,tiger,IND-TIGER-67,Repeat tiger #18 (Photo 1/4),Identify -> Stripe Match -> Confirmed Entity
+TIGER_REC_18_P02_004305.jpg,tiger,IND-TIGER-67,Repeat tiger #18 (Photo 2/4),Identify -> Stripe Match -> Confirmed Entity
+TIGER_REC_18_P03_005080.jpg,tiger,IND-TIGER-67,Repeat tiger #18 (Photo 3/4),Identify -> Stripe Match -> Confirmed Entity
+TIGER_REC_18_P04_003234.jpg,tiger,IND-TIGER-67,Repeat tiger #18 (Photo 4/4),Identify -> Stripe Match -> Confirmed Entity
+TIGER_REC_19_P01_004972.jpg,tiger,IND-TIGER-130,Repeat tiger #19 (Photo 1/4),Identify -> Stripe Match -> Confirmed Entity
+TIGER_REC_19_P02_001196.jpg,tiger,IND-TIGER-130,Repeat tiger #19 (Photo 2/4),Identify -> Stripe Match -> Confirmed Entity
+TIGER_REC_19_P03_004899.jpg,tiger,IND-TIGER-130,Repeat tiger #19 (Photo 3/4),Identify -> Stripe Match -> Confirmed Entity
+TIGER_REC_19_P04_002610.jpg,tiger,IND-TIGER-130,Repeat tiger #19 (Photo 4/4),Identify -> Stripe Match -> Confirmed Entity
+TIGER_REC_20_P01_002566.jpg,tiger,IND-TIGER-22,Repeat tiger #20 (Photo 1/4),Identify -> Stripe Match -> Confirmed Entity
+TIGER_REC_20_P02_002709.jpg,tiger,IND-TIGER-22,Repeat tiger #20 (Photo 2/4),Identify -> Stripe Match -> Confirmed Entity
+TIGER_REC_20_P03_003808.jpg,tiger,IND-TIGER-22,Repeat tiger #20 (Photo 3/4),Identify -> Stripe Match -> Confirmed Entity
+TIGER_REC_20_P04_004455.jpg,tiger,IND-TIGER-22,Repeat tiger #20 (Photo 4/4),Identify -> Stripe Match -> Confirmed Entity
+ANIMAL_DEER_001_59da8af2-23d2-11e8-a6a3-ec086b02610b.jpg,other_animal,deer,Non-target wildlife (deer),Stage 2B Animal Detected -> Species Refusal / Not Tiger
+ANIMAL_DEER_002_59f460e8-23d2-11e8-a6a3-ec086b02610b.jpg,other_animal,deer,Non-target wildlife (deer),Stage 2B Animal Detected -> Species Refusal / Not Tiger
+ANIMAL_DEER_003_5995afad-23d2-11e8-a6a3-ec086b02610b.jpg,other_animal,deer,Non-target wildlife (deer),Stage 2B Animal Detected -> Species Refusal / Not Tiger
+ANIMAL_DEER_004_58ddd79d-23d2-11e8-a6a3-ec086b02610b.jpg,other_animal,deer,Non-target wildlife (deer),Stage 2B Animal Detected -> Species Refusal / Not Tiger
+ANIMAL_DEER_005_588f65ce-23d2-11e8-a6a3-ec086b02610b.jpg,other_animal,deer,Non-target wildlife (deer),Stage 2B Animal Detected -> Species Refusal / Not Tiger
+ANIMAL_DEER_006_59104a2c-23d2-11e8-a6a3-ec086b02610b.jpg,other_animal,deer,Non-target wildlife (deer),Stage 2B Animal Detected -> Species Refusal / Not Tiger
+ANIMAL_DEER_007_58d7a126-23d2-11e8-a6a3-ec086b02610b.jpg,other_animal,deer,Non-target wildlife (deer),Stage 2B Animal Detected -> Species Refusal / Not Tiger
+ANIMAL_DEER_008_58ede14d-23d2-11e8-a6a3-ec086b02610b.jpg,other_animal,deer,Non-target wildlife (deer),Stage 2B Animal Detected -> Species Refusal / Not Tiger
+ANIMAL_DEER_009_58629317-23d2-11e8-a6a3-ec086b02610b.jpg,other_animal,deer,Non-target wildlife (deer),Stage 2B Animal Detected -> Species Refusal / Not Tiger
+ANIMAL_DEER_010_5946b7e3-23d2-11e8-a6a3-ec086b02610b.jpg,other_animal,deer,Non-target wildlife (deer),Stage 2B Animal Detected -> Species Refusal / Not Tiger
+ANIMAL_DEER_011_5897b1b5-23d2-11e8-a6a3-ec086b02610b.jpg,other_animal,deer,Non-target wildlife (deer),Stage 2B Animal Detected -> Species Refusal / Not Tiger
+ANIMAL_DEER_012_58c033c6-23d2-11e8-a6a3-ec086b02610b.jpg,other_animal,deer,Non-target wildlife (deer),Stage 2B Animal Detected -> Species Refusal / Not Tiger
+ANIMAL_DEER_013_59452c70-23d2-11e8-a6a3-ec086b02610b.jpg,other_animal,deer,Non-target wildlife (deer),Stage 2B Animal Detected -> Species Refusal / Not Tiger
+ANIMAL_DEER_014_58fbed6b-23d2-11e8-a6a3-ec086b02610b.jpg,other_animal,deer,Non-target wildlife (deer),Stage 2B Animal Detected -> Species Refusal / Not Tiger
+ANIMAL_DEER_015_586c87ed-23d2-11e8-a6a3-ec086b02610b.jpg,other_animal,deer,Non-target wildlife (deer),Stage 2B Animal Detected -> Species Refusal / Not Tiger
+ANIMAL_DEER_016_58cb13db-23d2-11e8-a6a3-ec086b02610b.jpg,other_animal,deer,Non-target wildlife (deer),Stage 2B Animal Detected -> Species Refusal / Not Tiger
+ANIMAL_DEER_017_59439cac-23d2-11e8-a6a3-ec086b02610b.jpg,other_animal,deer,Non-target wildlife (deer),Stage 2B Animal Detected -> Species Refusal / Not Tiger
+ANIMAL_DEER_018_58d615b3-23d2-11e8-a6a3-ec086b02610b.jpg,other_animal,deer,Non-target wildlife (deer),Stage 2B Animal Detected -> Species Refusal / Not Tiger
+ANIMAL_COYOTE_019_59e44165-23d2-11e8-a6a3-ec086b02610b.jpg,other_animal,coyote,Non-target wildlife (coyote),Stage 2B Animal Detected -> Species Refusal / Not Tiger
+ANIMAL_COYOTE_020_5998ceae-23d2-11e8-a6a3-ec086b02610b.jpg,other_animal,coyote,Non-target wildlife (coyote),Stage 2B Animal Detected -> Species Refusal / Not Tiger
+ANIMAL_COYOTE_021_59d751c2-23d2-11e8-a6a3-ec086b02610b.jpg,other_animal,coyote,Non-target wildlife (coyote),Stage 2B Animal Detected -> Species Refusal / Not Tiger
+ANIMAL_COYOTE_022_59fe23fb-23d2-11e8-a6a3-ec086b02610b.jpg,other_animal,coyote,Non-target wildlife (coyote),Stage 2B Animal Detected -> Species Refusal / Not Tiger
+ANIMAL_COYOTE_023_59cb3797-23d2-11e8-a6a3-ec086b02610b.jpg,other_animal,coyote,Non-target wildlife (coyote),Stage 2B Animal Detected -> Species Refusal / Not Tiger
+ANIMAL_COYOTE_024_5987b263-23d2-11e8-a6a3-ec086b02610b.jpg,other_animal,coyote,Non-target wildlife (coyote),Stage 2B Animal Detected -> Species Refusal / Not Tiger
+ANIMAL_COYOTE_025_59cf4536-23d2-11e8-a6a3-ec086b02610b.jpg,other_animal,coyote,Non-target wildlife (coyote),Stage 2B Animal Detected -> Species Refusal / Not Tiger
+ANIMAL_COYOTE_026_5a197a4c-23d2-11e8-a6a3-ec086b02610b.jpg,other_animal,coyote,Non-target wildlife (coyote),Stage 2B Animal Detected -> Species Refusal / Not Tiger
+ANIMAL_COYOTE_027_59c31a46-23d2-11e8-a6a3-ec086b02610b.jpg,other_animal,coyote,Non-target wildlife (coyote),Stage 2B Animal Detected -> Species Refusal / Not Tiger
+ANIMAL_COYOTE_028_5968c0c0-23d2-11e8-a6a3-ec086b02610b.jpg,other_animal,coyote,Non-target wildlife (coyote),Stage 2B Animal Detected -> Species Refusal / Not Tiger
+ANIMAL_COYOTE_029_5a07ce47-23d2-11e8-a6a3-ec086b02610b.jpg,other_animal,coyote,Non-target wildlife (coyote),Stage 2B Animal Detected -> Species Refusal / Not Tiger
+ANIMAL_COYOTE_030_59af959b-23d2-11e8-a6a3-ec086b02610b.jpg,other_animal,coyote,Non-target wildlife (coyote),Stage 2B Animal Detected -> Species Refusal / Not Tiger
+ANIMAL_COYOTE_031_597e6274-23d2-11e8-a6a3-ec086b02610b.jpg,other_animal,coyote,Non-target wildlife (coyote),Stage 2B Animal Detected -> Species Refusal / Not Tiger
+ANIMAL_COYOTE_032_59f2c3db-23d2-11e8-a6a3-ec086b02610b.jpg,other_animal,coyote,Non-target wildlife (coyote),Stage 2B Animal Detected -> Species Refusal / Not Tiger
+ANIMAL_COYOTE_033_5a015c1a-23d2-11e8-a6a3-ec086b02610b.jpg,other_animal,coyote,Non-target wildlife (coyote),Stage 2B Animal Detected -> Species Refusal / Not Tiger
+ANIMAL_COYOTE_034_59c4c00c-23d2-11e8-a6a3-ec086b02610b.jpg,other_animal,coyote,Non-target wildlife (coyote),Stage 2B Animal Detected -> Species Refusal / Not Tiger
+ANIMAL_COYOTE_035_599fc0e9-23d2-11e8-a6a3-ec086b02610b.jpg,other_animal,coyote,Non-target wildlife (coyote),Stage 2B Animal Detected -> Species Refusal / Not Tiger
+ANIMAL_COYOTE_036_59bac7cd-23d2-11e8-a6a3-ec086b02610b.jpg,other_animal,coyote,Non-target wildlife (coyote),Stage 2B Animal Detected -> Species Refusal / Not Tiger
+ANIMAL_BOBCAT_037_59f798c4-23d2-11e8-a6a3-ec086b02610b.jpg,other_animal,bobcat,Non-target wildlife (bobcat),Stage 2B Animal Detected -> Species Refusal / Not Tiger
+ANIMAL_BOBCAT_038_59fe2365-23d2-11e8-a6a3-ec086b02610b.jpg,other_animal,bobcat,Non-target wildlife (bobcat),Stage 2B Animal Detected -> Species Refusal / Not Tiger
+ANIMAL_BOBCAT_039_59b485d1-23d2-11e8-a6a3-ec086b02610b.jpg,other_animal,bobcat,Non-target wildlife (bobcat),Stage 2B Animal Detected -> Species Refusal / Not Tiger
+ANIMAL_BOBCAT_040_59d8ed5e-23d2-11e8-a6a3-ec086b02610b.jpg,other_animal,bobcat,Non-target wildlife (bobcat),Stage 2B Animal Detected -> Species Refusal / Not Tiger
+ANIMAL_BOBCAT_041_59ef8c44-23d2-11e8-a6a3-ec086b02610b.jpg,other_animal,bobcat,Non-target wildlife (bobcat),Stage 2B Animal Detected -> Species Refusal / Not Tiger
+ANIMAL_BOBCAT_042_5998cdb5-23d2-11e8-a6a3-ec086b02610b.jpg,other_animal,bobcat,Non-target wildlife (bobcat),Stage 2B Animal Detected -> Species Refusal / Not Tiger
+ANIMAL_BOBCAT_043_596d6565-23d2-11e8-a6a3-ec086b02610b.jpg,other_animal,bobcat,Non-target wildlife (bobcat),Stage 2B Animal Detected -> Species Refusal / Not Tiger
+ANIMAL_BOBCAT_044_59adfdd5-23d2-11e8-a6a3-ec086b02610b.jpg,other_animal,bobcat,Non-target wildlife (bobcat),Stage 2B Animal Detected -> Species Refusal / Not Tiger
+ANIMAL_BOBCAT_045_5a1b1624-23d2-11e8-a6a3-ec086b02610b.jpg,other_animal,bobcat,Non-target wildlife (bobcat),Stage 2B Animal Detected -> Species Refusal / Not Tiger
+ANIMAL_BOBCAT_046_59ddc319-23d2-11e8-a6a3-ec086b02610b.jpg,other_animal,bobcat,Non-target wildlife (bobcat),Stage 2B Animal Detected -> Species Refusal / Not Tiger
+ANIMAL_BOBCAT_047_5a04963f-23d2-11e8-a6a3-ec086b02610b.jpg,other_animal,bobcat,Non-target wildlife (bobcat),Stage 2B Animal Detected -> Species Refusal / Not Tiger
+ANIMAL_BOBCAT_048_5a0e3540-23d2-11e8-a6a3-ec086b02610b.jpg,other_animal,bobcat,Non-target wildlife (bobcat),Stage 2B Animal Detected -> Species Refusal / Not Tiger
+ANIMAL_BOBCAT_049_599be7d2-23d2-11e8-a6a3-ec086b02610b.jpg,other_animal,bobcat,Non-target wildlife (bobcat),Stage 2B Animal Detected -> Species Refusal / Not Tiger
+ANIMAL_BOBCAT_050_59af976b-23d2-11e8-a6a3-ec086b02610b.jpg,other_animal,bobcat,Non-target wildlife (bobcat),Stage 2B Animal Detected -> Species Refusal / Not Tiger
+ANIMAL_BOBCAT_051_5a2e1424-23d2-11e8-a6a3-ec086b02610b.jpg,other_animal,bobcat,Non-target wildlife (bobcat),Stage 2B Animal Detected -> Species Refusal / Not Tiger
+ANIMAL_BOBCAT_052_59a62ae6-23d2-11e8-a6a3-ec086b02610b.jpg,other_animal,bobcat,Non-target wildlife (bobcat),Stage 2B Animal Detected -> Species Refusal / Not Tiger
+ANIMAL_BOBCAT_053_598ad12f-23d2-11e8-a6a3-ec086b02610b.jpg,other_animal,bobcat,Non-target wildlife (bobcat),Stage 2B Animal Detected -> Species Refusal / Not Tiger
+ANIMAL_BOBCAT_054_598495c9-23d2-11e8-a6a3-ec086b02610b.jpg,other_animal,bobcat,Non-target wildlife (bobcat),Stage 2B Animal Detected -> Species Refusal / Not Tiger
+ANIMAL_RACCOON_055_5a231108-23d2-11e8-a6a3-ec086b02610b.jpg,other_animal,raccoon,Non-target wildlife (raccoon),Stage 2B Animal Detected -> Species Refusal / Not Tiger
+ANIMAL_RACCOON_056_597cd78c-23d2-11e8-a6a3-ec086b02610b.jpg,other_animal,raccoon,Non-target wildlife (raccoon),Stage 2B Animal Detected -> Species Refusal / Not Tiger
+ANIMAL_RACCOON_057_5998cf4c-23d2-11e8-a6a3-ec086b02610b.jpg,other_animal,raccoon,Non-target wildlife (raccoon),Stage 2B Animal Detected -> Species Refusal / Not Tiger
+ANIMAL_RACCOON_058_597cd4b3-23d2-11e8-a6a3-ec086b02610b.jpg,other_animal,raccoon,Non-target wildlife (raccoon),Stage 2B Animal Detected -> Species Refusal / Not Tiger
+ANIMAL_RACCOON_059_59fe21de-23d2-11e8-a6a3-ec086b02610b.jpg,other_animal,raccoon,Non-target wildlife (raccoon),Stage 2B Animal Detected -> Species Refusal / Not Tiger
+ANIMAL_RACCOON_060_599a5cf9-23d2-11e8-a6a3-ec086b02610b.jpg,other_animal,raccoon,Non-target wildlife (raccoon),Stage 2B Animal Detected -> Species Refusal / Not Tiger
+ANIMAL_RACCOON_061_59a62bb7-23d2-11e8-a6a3-ec086b02610b.jpg,other_animal,raccoon,Non-target wildlife (raccoon),Stage 2B Animal Detected -> Species Refusal / Not Tiger
+ANIMAL_RACCOON_062_59cf46af-23d2-11e8-a6a3-ec086b02610b.jpg,other_animal,raccoon,Non-target wildlife (raccoon),Stage 2B Animal Detected -> Species Refusal / Not Tiger
+ANIMAL_RACCOON_063_596a4d3c-23d2-11e8-a6a3-ec086b02610b.jpg,other_animal,raccoon,Non-target wildlife (raccoon),Stage 2B Animal Detected -> Species Refusal / Not Tiger
+ANIMAL_RACCOON_064_599d7e94-23d2-11e8-a6a3-ec086b02610b.jpg,other_animal,raccoon,Non-target wildlife (raccoon),Stage 2B Animal Detected -> Species Refusal / Not Tiger
+ANIMAL_RACCOON_065_5a02fb65-23d2-11e8-a6a3-ec086b02610b.jpg,other_animal,raccoon,Non-target wildlife (raccoon),Stage 2B Animal Detected -> Species Refusal / Not Tiger
+ANIMAL_RACCOON_066_59c80310-23d2-11e8-a6a3-ec086b02610b.jpg,other_animal,raccoon,Non-target wildlife (raccoon),Stage 2B Animal Detected -> Species Refusal / Not Tiger
+ANIMAL_RACCOON_067_598c5b70-23d2-11e8-a6a3-ec086b02610b.jpg,other_animal,raccoon,Non-target wildlife (raccoon),Stage 2B Animal Detected -> Species Refusal / Not Tiger
+ANIMAL_RACCOON_068_5a1e5021-23d2-11e8-a6a3-ec086b02610b.jpg,other_animal,raccoon,Non-target wildlife (raccoon),Stage 2B Animal Detected -> Species Refusal / Not Tiger
+ANIMAL_RACCOON_069_59c17a29-23d2-11e8-a6a3-ec086b02610b.jpg,other_animal,raccoon,Non-target wildlife (raccoon),Stage 2B Animal Detected -> Species Refusal / Not Tiger
+ANIMAL_RACCOON_070_59b4859f-23d2-11e8-a6a3-ec086b02610b.jpg,other_animal,raccoon,Non-target wildlife (raccoon),Stage 2B Animal Detected -> Species Refusal / Not Tiger
+ANIMAL_RACCOON_071_59ccd152-23d2-11e8-a6a3-ec086b02610b.jpg,other_animal,raccoon,Non-target wildlife (raccoon),Stage 2B Animal Detected -> Species Refusal / Not Tiger
+ANIMAL_RACCOON_072_5a0495ea-23d2-11e8-a6a3-ec086b02610b.jpg,other_animal,raccoon,Non-target wildlife (raccoon),Stage 2B Animal Detected -> Species Refusal / Not Tiger
+ANIMAL_DOG_073_5965a97f-23d2-11e8-a6a3-ec086b02610b.jpg,other_animal,dog,Non-target wildlife (dog),Stage 2B Animal Detected -> Species Refusal / Not Tiger
+ANIMAL_DOG_074_59cf47a8-23d2-11e8-a6a3-ec086b02610b.jpg,other_animal,dog,Non-target wildlife (dog),Stage 2B Animal Detected -> Species Refusal / Not Tiger
+ANIMAL_DOG_075_59b1310d-23d2-11e8-a6a3-ec086b02610b.jpg,other_animal,dog,Non-target wildlife (dog),Stage 2B Animal Detected -> Species Refusal / Not Tiger
+ANIMAL_DOG_076_59cf47a5-23d2-11e8-a6a3-ec086b02610b.jpg,other_animal,dog,Non-target wildlife (dog),Stage 2B Animal Detected -> Species Refusal / Not Tiger
+ANIMAL_DOG_077_5a231245-23d2-11e8-a6a3-ec086b02610b.jpg,other_animal,dog,Non-target wildlife (dog),Stage 2B Animal Detected -> Species Refusal / Not Tiger
+ANIMAL_DOG_078_599106ab-23d2-11e8-a6a3-ec086b02610b.jpg,other_animal,dog,Non-target wildlife (dog),Stage 2B Animal Detected -> Species Refusal / Not Tiger
+ANIMAL_DOG_079_5976a518-23d2-11e8-a6a3-ec086b02610b.jpg,other_animal,dog,Non-target wildlife (dog),Stage 2B Animal Detected -> Species Refusal / Not Tiger
+ANIMAL_DOG_080_59f5ffab-23d2-11e8-a6a3-ec086b02610b.jpg,other_animal,dog,Non-target wildlife (dog),Stage 2B Animal Detected -> Species Refusal / Not Tiger
+ANIMAL_DOG_081_5a096b02-23d2-11e8-a6a3-ec086b02610b.jpg,other_animal,dog,Non-target wildlife (dog),Stage 2B Animal Detected -> Species Refusal / Not Tiger
+ANIMAL_DOG_082_59d7540b-23d2-11e8-a6a3-ec086b02610b.jpg,other_animal,dog,Non-target wildlife (dog),Stage 2B Animal Detected -> Species Refusal / Not Tiger
+ANIMAL_DOG_083_59a17a3c-23d2-11e8-a6a3-ec086b02610b.jpg,other_animal,dog,Non-target wildlife (dog),Stage 2B Animal Detected -> Species Refusal / Not Tiger
+ANIMAL_DOG_084_59c668e1-23d2-11e8-a6a3-ec086b02610b.jpg,other_animal,dog,Non-target wildlife (dog),Stage 2B Animal Detected -> Species Refusal / Not Tiger
+ANIMAL_DOG_085_59eab95a-23d2-11e8-a6a3-ec086b02610b.jpg,other_animal,dog,Non-target wildlife (dog),Stage 2B Animal Detected -> Species Refusal / Not Tiger
+ANIMAL_DOG_086_596a4fca-23d2-11e8-a6a3-ec086b02610b.jpg,other_animal,dog,Non-target wildlife (dog),Stage 2B Animal Detected -> Species Refusal / Not Tiger
+ANIMAL_DOG_087_59f79856-23d2-11e8-a6a3-ec086b02610b.jpg,other_animal,dog,Non-target wildlife (dog),Stage 2B Animal Detected -> Species Refusal / Not Tiger
+ANIMAL_DOG_088_59df5bc9-23d2-11e8-a6a3-ec086b02610b.jpg,other_animal,dog,Non-target wildlife (dog),Stage 2B Animal Detected -> Species Refusal / Not Tiger
+ANIMAL_DOG_089_5a164058-23d2-11e8-a6a3-ec086b02610b.jpg,other_animal,dog,Non-target wildlife (dog),Stage 2B Animal Detected -> Species Refusal / Not Tiger
+ANIMAL_DOG_090_5a217786-23d2-11e8-a6a3-ec086b02610b.jpg,other_animal,dog,Non-target wildlife (dog),Stage 2B Animal Detected -> Species Refusal / Not Tiger
+ANIMAL_FOX_091_5903cb7e-23d2-11e8-a6a3-ec086b02610b.jpg,other_animal,fox,Non-target wildlife (fox),Stage 2B Animal Detected -> Species Refusal / Not Tiger
+ANIMAL_FOX_092_592de2f3-23d2-11e8-a6a3-ec086b02610b.jpg,other_animal,fox,Non-target wildlife (fox),Stage 2B Animal Detected -> Species Refusal / Not Tiger
+ANIMAL_FOX_093_58df697d-23d2-11e8-a6a3-ec086b02610b.jpg,other_animal,fox,Non-target wildlife (fox),Stage 2B Animal Detected -> Species Refusal / Not Tiger
+ANIMAL_FOX_094_59247937-23d2-11e8-a6a3-ec086b02610b.jpg,other_animal,fox,Non-target wildlife (fox),Stage 2B Animal Detected -> Species Refusal / Not Tiger
+ANIMAL_FOX_095_58a6e7d6-23d2-11e8-a6a3-ec086b02610b.jpg,other_animal,fox,Non-target wildlife (fox),Stage 2B Animal Detected -> Species Refusal / Not Tiger
+ANIMAL_OPOSSUM_096_59df5b8b-23d2-11e8-a6a3-ec086b02610b.jpg,other_animal,opossum,Non-target wildlife (opossum),Stage 2B Animal Detected -> Species Refusal / Not Tiger
+ANIMAL_OPOSSUM_097_59c31b86-23d2-11e8-a6a3-ec086b02610b.jpg,other_animal,opossum,Non-target wildlife (opossum),Stage 2B Animal Detected -> Species Refusal / Not Tiger
+ANIMAL_OPOSSUM_098_5a27db71-23d2-11e8-a6a3-ec086b02610b.jpg,other_animal,opossum,Non-target wildlife (opossum),Stage 2B Animal Detected -> Species Refusal / Not Tiger
+ANIMAL_OPOSSUM_099_59fae6f8-23d2-11e8-a6a3-ec086b02610b.jpg,other_animal,opossum,Non-target wildlife (opossum),Stage 2B Animal Detected -> Species Refusal / Not Tiger
+ANIMAL_OPOSSUM_100_59df5e8f-23d2-11e8-a6a3-ec086b02610b.jpg,other_animal,opossum,Non-target wildlife (opossum),Stage 2B Animal Detected -> Species Refusal / Not Tiger
+ANIMAL_OPOSSUM_101_596eee6a-23d2-11e8-a6a3-ec086b02610b.jpg,other_animal,opossum,Non-target wildlife (opossum),Stage 2B Animal Detected -> Species Refusal / Not Tiger
+ANIMAL_OPOSSUM_102_5976a36b-23d2-11e8-a6a3-ec086b02610b.jpg,other_animal,opossum,Non-target wildlife (opossum),Stage 2B Animal Detected -> Species Refusal / Not Tiger
+ANIMAL_OPOSSUM_103_597e62c4-23d2-11e8-a6a3-ec086b02610b.jpg,other_animal,opossum,Non-target wildlife (opossum),Stage 2B Animal Detected -> Species Refusal / Not Tiger
+ANIMAL_OPOSSUM_104_59e77ce1-23d2-11e8-a6a3-ec086b02610b.jpg,other_animal,opossum,Non-target wildlife (opossum),Stage 2B Animal Detected -> Species Refusal / Not Tiger
+ANIMAL_OPOSSUM_105_59c4c272-23d2-11e8-a6a3-ec086b02610b.jpg,other_animal,opossum,Non-target wildlife (opossum),Stage 2B Animal Detected -> Species Refusal / Not Tiger
+ANIMAL_OPOSSUM_106_5a197b4b-23d2-11e8-a6a3-ec086b02610b.jpg,other_animal,opossum,Non-target wildlife (opossum),Stage 2B Animal Detected -> Species Refusal / Not Tiger
+ANIMAL_OPOSSUM_107_59d8ecb8-23d2-11e8-a6a3-ec086b02610b.jpg,other_animal,opossum,Non-target wildlife (opossum),Stage 2B Animal Detected -> Species Refusal / Not Tiger
+ANIMAL_OPOSSUM_108_59ccd2cd-23d2-11e8-a6a3-ec086b02610b.jpg,other_animal,opossum,Non-target wildlife (opossum),Stage 2B Animal Detected -> Species Refusal / Not Tiger
+ANIMAL_OPOSSUM_109_59eab936-23d2-11e8-a6a3-ec086b02610b.jpg,other_animal,opossum,Non-target wildlife (opossum),Stage 2B Animal Detected -> Species Refusal / Not Tiger
+ANIMAL_OPOSSUM_110_59ac6c4a-23d2-11e8-a6a3-ec086b02610b.jpg,other_animal,opossum,Non-target wildlife (opossum),Stage 2B Animal Detected -> Species Refusal / Not Tiger
+ANIMAL_OPOSSUM_111_5a2c84a7-23d2-11e8-a6a3-ec086b02610b.jpg,other_animal,opossum,Non-target wildlife (opossum),Stage 2B Animal Detected -> Species Refusal / Not Tiger
+ANIMAL_OPOSSUM_112_599d7d1c-23d2-11e8-a6a3-ec086b02610b.jpg,other_animal,opossum,Non-target wildlife (opossum),Stage 2B Animal Detected -> Species Refusal / Not Tiger
+ANIMAL_OPOSSUM_113_59ac6b66-23d2-11e8-a6a3-ec086b02610b.jpg,other_animal,opossum,Non-target wildlife (opossum),Stage 2B Animal Detected -> Species Refusal / Not Tiger
+ANIMAL_RODENT_114_59fe2206-23d2-11e8-a6a3-ec086b02610b.jpg,other_animal,rodent,Non-target wildlife (rodent),Stage 2B Animal Detected -> Species Refusal / Not Tiger
+ANIMAL_RODENT_115_596d6426-23d2-11e8-a6a3-ec086b02610b.jpg,other_animal,rodent,Non-target wildlife (rodent),Stage 2B Animal Detected -> Species Refusal / Not Tiger
+ANIMAL_RODENT_116_59f463d3-23d2-11e8-a6a3-ec086b02610b.jpg,other_animal,rodent,Non-target wildlife (rodent),Stage 2B Animal Detected -> Species Refusal / Not Tiger
+ANIMAL_RODENT_117_596a4fdf-23d2-11e8-a6a3-ec086b02610b.jpg,other_animal,rodent,Non-target wildlife (rodent),Stage 2B Animal Detected -> Species Refusal / Not Tiger
+ANIMAL_RODENT_118_599d7cc0-23d2-11e8-a6a3-ec086b02610b.jpg,other_animal,rodent,Non-target wildlife (rodent),Stage 2B Animal Detected -> Species Refusal / Not Tiger
+ANIMAL_RODENT_119_59edf2c2-23d2-11e8-a6a3-ec086b02610b.jpg,other_animal,rodent,Non-target wildlife (rodent),Stage 2B Animal Detected -> Species Refusal / Not Tiger
+ANIMAL_RODENT_120_598ad0a3-23d2-11e8-a6a3-ec086b02610b.jpg,other_animal,rodent,Non-target wildlife (rodent),Stage 2B Animal Detected -> Species Refusal / Not Tiger
+ANIMAL_RODENT_121_59d752f5-23d2-11e8-a6a3-ec086b02610b.jpg,other_animal,rodent,Non-target wildlife (rodent),Stage 2B Animal Detected -> Species Refusal / Not Tiger
+ANIMAL_RODENT_122_596eeee7-23d2-11e8-a6a3-ec086b02610b.jpg,other_animal,rodent,Non-target wildlife (rodent),Stage 2B Animal Detected -> Species Refusal / Not Tiger
+ANIMAL_RODENT_123_5a1cb1f9-23d2-11e8-a6a3-ec086b02610b.jpg,other_animal,rodent,Non-target wildlife (rodent),Stage 2B Animal Detected -> Species Refusal / Not Tiger
+ANIMAL_RODENT_124_59ec539d-23d2-11e8-a6a3-ec086b02610b.jpg,other_animal,rodent,Non-target wildlife (rodent),Stage 2B Animal Detected -> Species Refusal / Not Tiger
+ANIMAL_RODENT_125_59d41b65-23d2-11e8-a6a3-ec086b02610b.jpg,other_animal,rodent,Non-target wildlife (rodent),Stage 2B Animal Detected -> Species Refusal / Not Tiger
+ANIMAL_RODENT_126_59e103f5-23d2-11e8-a6a3-ec086b02610b.jpg,other_animal,rodent,Non-target wildlife (rodent),Stage 2B Animal Detected -> Species Refusal / Not Tiger
+ANIMAL_RODENT_127_5a2c8539-23d2-11e8-a6a3-ec086b02610b.jpg,other_animal,rodent,Non-target wildlife (rodent),Stage 2B Animal Detected -> Species Refusal / Not Tiger
+ANIMAL_RODENT_128_597830cc-23d2-11e8-a6a3-ec086b02610b.jpg,other_animal,rodent,Non-target wildlife (rodent),Stage 2B Animal Detected -> Species Refusal / Not Tiger
+ANIMAL_RODENT_129_599fc042-23d2-11e8-a6a3-ec086b02610b.jpg,other_animal,rodent,Non-target wildlife (rodent),Stage 2B Animal Detected -> Species Refusal / Not Tiger
+ANIMAL_RODENT_130_59edf2e0-23d2-11e8-a6a3-ec086b02610b.jpg,other_animal,rodent,Non-target wildlife (rodent),Stage 2B Animal Detected -> Species Refusal / Not Tiger
+ANIMAL_RODENT_131_59df5f13-23d2-11e8-a6a3-ec086b02610b.jpg,other_animal,rodent,Non-target wildlife (rodent),Stage 2B Animal Detected -> Species Refusal / Not Tiger
+ANIMAL_BIRD_132_59a7bde9-23d2-11e8-a6a3-ec086b02610b.jpg,other_animal,bird,Non-target wildlife (bird),Stage 2B Animal Detected -> Species Refusal / Not Tiger
+ANIMAL_BIRD_133_59be3ee5-23d2-11e8-a6a3-ec086b02610b.jpg,other_animal,bird,Non-target wildlife (bird),Stage 2B Animal Detected -> Species Refusal / Not Tiger
+ANIMAL_BIRD_134_59a30b57-23d2-11e8-a6a3-ec086b02610b.jpg,other_animal,bird,Non-target wildlife (bird),Stage 2B Animal Detected -> Species Refusal / Not Tiger
+ANIMAL_BIRD_135_5a1cb14f-23d2-11e8-a6a3-ec086b02610b.jpg,other_animal,bird,Non-target wildlife (bird),Stage 2B Animal Detected -> Species Refusal / Not Tiger
+ANIMAL_BIRD_136_59adfdfd-23d2-11e8-a6a3-ec086b02610b.jpg,other_animal,bird,Non-target wildlife (bird),Stage 2B Animal Detected -> Species Refusal / Not Tiger
+ANIMAL_BIRD_137_59be3f96-23d2-11e8-a6a3-ec086b02610b.jpg,other_animal,bird,Non-target wildlife (bird),Stage 2B Animal Detected -> Species Refusal / Not Tiger
+ANIMAL_BIRD_138_5a17dfdb-23d2-11e8-a6a3-ec086b02610b.jpg,other_animal,bird,Non-target wildlife (bird),Stage 2B Animal Detected -> Species Refusal / Not Tiger
+ANIMAL_BIRD_139_5983088c-23d2-11e8-a6a3-ec086b02610b.jpg,other_animal,bird,Non-target wildlife (bird),Stage 2B Animal Detected -> Species Refusal / Not Tiger
+ANIMAL_BIRD_140_5968bf7c-23d2-11e8-a6a3-ec086b02610b.jpg,other_animal,bird,Non-target wildlife (bird),Stage 2B Animal Detected -> Species Refusal / Not Tiger
+BLANK_001_59f94786-23d2-11e8-a6a3-ec086b02610b.jpg,blank,none,Empty camera-trap frame,Stage 2A Motion Energy / Stage 2B Blank Triage -> Quarantined
+BLANK_002_59817950-23d2-11e8-a6a3-ec086b02610b.jpg,blank,none,Empty camera-trap frame,Stage 2A Motion Energy / Stage 2B Blank Triage -> Quarantined
+BLANK_003_59f46365-23d2-11e8-a6a3-ec086b02610b.jpg,blank,none,Empty camera-trap frame,Stage 2A Motion Energy / Stage 2B Blank Triage -> Quarantined
+BLANK_004_598625fd-23d2-11e8-a6a3-ec086b02610b.jpg,blank,none,Empty camera-trap frame,Stage 2A Motion Energy / Stage 2B Blank Triage -> Quarantined
+BLANK_005_5a02fb16-23d2-11e8-a6a3-ec086b02610b.jpg,blank,none,Empty camera-trap frame,Stage 2A Motion Energy / Stage 2B Blank Triage -> Quarantined
+BLANK_006_59b12ff7-23d2-11e8-a6a3-ec086b02610b.jpg,blank,none,Empty camera-trap frame,Stage 2A Motion Energy / Stage 2B Blank Triage -> Quarantined
+BLANK_007_59b2e8c7-23d2-11e8-a6a3-ec086b02610b.jpg,blank,none,Empty camera-trap frame,Stage 2A Motion Energy / Stage 2B Blank Triage -> Quarantined
+BLANK_008_5991044d-23d2-11e8-a6a3-ec086b02610b.jpg,blank,none,Empty camera-trap frame,Stage 2A Motion Energy / Stage 2B Blank Triage -> Quarantined
+BLANK_009_5976a4c1-23d2-11e8-a6a3-ec086b02610b.jpg,blank,none,Empty camera-trap frame,Stage 2A Motion Energy / Stage 2B Blank Triage -> Quarantined
+BLANK_010_59ac6b21-23d2-11e8-a6a3-ec086b02610b.jpg,blank,none,Empty camera-trap frame,Stage 2A Motion Energy / Stage 2B Blank Triage -> Quarantined
+BLANK_011_5a1b140e-23d2-11e8-a6a3-ec086b02610b.jpg,blank,none,Empty camera-trap frame,Stage 2A Motion Energy / Stage 2B Blank Triage -> Quarantined
+BLANK_012_596a4ec2-23d2-11e8-a6a3-ec086b02610b.jpg,blank,none,Empty camera-trap frame,Stage 2A Motion Energy / Stage 2B Blank Triage -> Quarantined
+BLANK_013_5a1e504b-23d2-11e8-a6a3-ec086b02610b.jpg,blank,none,Empty camera-trap frame,Stage 2A Motion Energy / Stage 2B Blank Triage -> Quarantined
+BLANK_014_598179cf-23d2-11e8-a6a3-ec086b02610b.jpg,blank,none,Empty camera-trap frame,Stage 2A Motion Energy / Stage 2B Blank Triage -> Quarantined
+BLANK_015_59df5e80-23d2-11e8-a6a3-ec086b02610b.jpg,blank,none,Empty camera-trap frame,Stage 2A Motion Energy / Stage 2B Blank Triage -> Quarantined
+BLANK_016_59b2e8a0-23d2-11e8-a6a3-ec086b02610b.jpg,blank,none,Empty camera-trap frame,Stage 2A Motion Energy / Stage 2B Blank Triage -> Quarantined
+BLANK_017_5a27db77-23d2-11e8-a6a3-ec086b02610b.jpg,blank,none,Empty camera-trap frame,Stage 2A Motion Energy / Stage 2B Blank Triage -> Quarantined
+BLANK_018_59ffbb8b-23d2-11e8-a6a3-ec086b02610b.jpg,blank,none,Empty camera-trap frame,Stage 2A Motion Energy / Stage 2B Blank Triage -> Quarantined
+BLANK_019_599a59ff-23d2-11e8-a6a3-ec086b02610b.jpg,blank,none,Empty camera-trap frame,Stage 2A Motion Energy / Stage 2B Blank Triage -> Quarantined
+BLANK_020_5998cf72-23d2-11e8-a6a3-ec086b02610b.jpg,blank,none,Empty camera-trap frame,Stage 2A Motion Energy / Stage 2B Blank Triage -> Quarantined
+BLANK_021_59c8034d-23d2-11e8-a6a3-ec086b02610b.jpg,blank,none,Empty camera-trap frame,Stage 2A Motion Energy / Stage 2B Blank Triage -> Quarantined
+BLANK_022_59bca43b-23d2-11e8-a6a3-ec086b02610b.jpg,blank,none,Empty camera-trap frame,Stage 2A Motion Energy / Stage 2B Blank Triage -> Quarantined
+BLANK_023_5a197bc2-23d2-11e8-a6a3-ec086b02610b.jpg,blank,none,Empty camera-trap frame,Stage 2A Motion Energy / Stage 2B Blank Triage -> Quarantined
+BLANK_024_597cd5f2-23d2-11e8-a6a3-ec086b02610b.jpg,blank,none,Empty camera-trap frame,Stage 2A Motion Energy / Stage 2B Blank Triage -> Quarantined
+BLANK_025_5a14a53b-23d2-11e8-a6a3-ec086b02610b.jpg,blank,none,Empty camera-trap frame,Stage 2A Motion Energy / Stage 2B Blank Triage -> Quarantined
+BLANK_026_5a2637f1-23d2-11e8-a6a3-ec086b02610b.jpg,blank,none,Empty camera-trap frame,Stage 2A Motion Energy / Stage 2B Blank Triage -> Quarantined
+BLANK_027_59bac7c0-23d2-11e8-a6a3-ec086b02610b.jpg,blank,none,Empty camera-trap frame,Stage 2A Motion Energy / Stage 2B Blank Triage -> Quarantined
+BLANK_028_5a29649a-23d2-11e8-a6a3-ec086b02610b.jpg,blank,none,Empty camera-trap frame,Stage 2A Motion Energy / Stage 2B Blank Triage -> Quarantined
+BLANK_029_5a1fe86a-23d2-11e8-a6a3-ec086b02610b.jpg,blank,none,Empty camera-trap frame,Stage 2A Motion Energy / Stage 2B Blank Triage -> Quarantined
+BLANK_030_59e77d41-23d2-11e8-a6a3-ec086b02610b.jpg,blank,none,Empty camera-trap frame,Stage 2A Motion Energy / Stage 2B Blank Triage -> Quarantined
+BLANK_031_59d751fc-23d2-11e8-a6a3-ec086b02610b.jpg,blank,none,Empty camera-trap frame,Stage 2A Motion Energy / Stage 2B Blank Triage -> Quarantined
+BLANK_032_5a17df5e-23d2-11e8-a6a3-ec086b02610b.jpg,blank,none,Empty camera-trap frame,Stage 2A Motion Energy / Stage 2B Blank Triage -> Quarantined
+BLANK_033_59bac98f-23d2-11e8-a6a3-ec086b02610b.jpg,blank,none,Empty camera-trap frame,Stage 2A Motion Energy / Stage 2B Blank Triage -> Quarantined
+BLANK_034_599a5cf3-23d2-11e8-a6a3-ec086b02610b.jpg,blank,none,Empty camera-trap frame,Stage 2A Motion Energy / Stage 2B Blank Triage -> Quarantined
+BLANK_035_59fe219b-23d2-11e8-a6a3-ec086b02610b.jpg,blank,none,Empty camera-trap frame,Stage 2A Motion Energy / Stage 2B Blank Triage -> Quarantined
+BLANK_036_59a30b83-23d2-11e8-a6a3-ec086b02610b.jpg,blank,none,Empty camera-trap frame,Stage 2A Motion Energy / Stage 2B Blank Triage -> Quarantined
+BLANK_037_59e5df2c-23d2-11e8-a6a3-ec086b02610b.jpg,blank,none,Empty camera-trap frame,Stage 2A Motion Energy / Stage 2B Blank Triage -> Quarantined
+BLANK_038_59830754-23d2-11e8-a6a3-ec086b02610b.jpg,blank,none,Empty camera-trap frame,Stage 2A Motion Energy / Stage 2B Blank Triage -> Quarantined
+BLANK_039_5a27d982-23d2-11e8-a6a3-ec086b02610b.jpg,blank,none,Empty camera-trap frame,Stage 2A Motion Energy / Stage 2B Blank Triage -> Quarantined
+BLANK_040_598179aa-23d2-11e8-a6a3-ec086b02610b.jpg,blank,none,Empty camera-trap frame,Stage 2A Motion Energy / Stage 2B Blank Triage -> Quarantined
+BLANK_041_5968c108-23d2-11e8-a6a3-ec086b02610b.jpg,blank,none,Empty camera-trap frame,Stage 2A Motion Energy / Stage 2B Blank Triage -> Quarantined
+BLANK_042_5a130a2c-23d2-11e8-a6a3-ec086b02610b.jpg,blank,none,Empty camera-trap frame,Stage 2A Motion Energy / Stage 2B Blank Triage -> Quarantined
+BLANK_043_59af96f6-23d2-11e8-a6a3-ec086b02610b.jpg,blank,none,Empty camera-trap frame,Stage 2A Motion Energy / Stage 2B Blank Triage -> Quarantined
+BLANK_044_59f12824-23d2-11e8-a6a3-ec086b02610b.jpg,blank,none,Empty camera-trap frame,Stage 2A Motion Energy / Stage 2B Blank Triage -> Quarantined
+BLANK_045_59ec5359-23d2-11e8-a6a3-ec086b02610b.jpg,blank,none,Empty camera-trap frame,Stage 2A Motion Energy / Stage 2B Blank Triage -> Quarantined
+BLANK_046_598f78bf-23d2-11e8-a6a3-ec086b02610b.jpg,blank,none,Empty camera-trap frame,Stage 2A Motion Energy / Stage 2B Blank Triage -> Quarantined
+BLANK_047_597b4a0a-23d2-11e8-a6a3-ec086b02610b.jpg,blank,none,Empty camera-trap frame,Stage 2A Motion Energy / Stage 2B Blank Triage -> Quarantined
+BLANK_048_5a1fe91c-23d2-11e8-a6a3-ec086b02610b.jpg,blank,none,Empty camera-trap frame,Stage 2A Motion Energy / Stage 2B Blank Triage -> Quarantined
+BLANK_049_599fc094-23d2-11e8-a6a3-ec086b02610b.jpg,blank,none,Empty camera-trap frame,Stage 2A Motion Energy / Stage 2B Blank Triage -> Quarantined
+BLANK_050_5995af61-23d2-11e8-a6a3-ec086b02610b.jpg,blank,none,Empty camera-trap frame,Stage 2A Motion Energy / Stage 2B Blank Triage -> Quarantined
+BLANK_051_59849807-23d2-11e8-a6a3-ec086b02610b.jpg,blank,none,Empty camera-trap frame,Stage 2A Motion Energy / Stage 2B Blank Triage -> Quarantined
+BLANK_052_59e77d3f-23d2-11e8-a6a3-ec086b02610b.jpg,blank,none,Empty camera-trap frame,Stage 2A Motion Energy / Stage 2B Blank Triage -> Quarantined
+BLANK_053_599104fb-23d2-11e8-a6a3-ec086b02610b.jpg,blank,none,Empty camera-trap frame,Stage 2A Motion Energy / Stage 2B Blank Triage -> Quarantined
+BLANK_054_59b131bc-23d2-11e8-a6a3-ec086b02610b.jpg,blank,none,Empty camera-trap frame,Stage 2A Motion Energy / Stage 2B Blank Triage -> Quarantined
+BLANK_055_598f788e-23d2-11e8-a6a3-ec086b02610b.jpg,blank,none,Empty camera-trap frame,Stage 2A Motion Energy / Stage 2B Blank Triage -> Quarantined
+BLANK_056_5a2e143b-23d2-11e8-a6a3-ec086b02610b.jpg,blank,none,Empty camera-trap frame,Stage 2A Motion Energy / Stage 2B Blank Triage -> Quarantined
+BLANK_057_596734f1-23d2-11e8-a6a3-ec086b02610b.jpg,blank,none,Empty camera-trap frame,Stage 2A Motion Energy / Stage 2B Blank Triage -> Quarantined
+BLANK_058_5a02fca0-23d2-11e8-a6a3-ec086b02610b.jpg,blank,none,Empty camera-trap frame,Stage 2A Motion Energy / Stage 2B Blank Triage -> Quarantined
+BLANK_059_59fc7d8a-23d2-11e8-a6a3-ec086b02610b.jpg,blank,none,Empty camera-trap frame,Stage 2A Motion Energy / Stage 2B Blank Triage -> Quarantined
+BLANK_060_59b61769-23d2-11e8-a6a3-ec086b02610b.jpg,blank,none,Empty camera-trap frame,Stage 2A Motion Energy / Stage 2B Blank Triage -> Quarantined
+BLANK_061_59d5b54c-23d2-11e8-a6a3-ec086b02610b.jpg,blank,none,Empty camera-trap frame,Stage 2A Motion Energy / Stage 2B Blank Triage -> Quarantined
+BLANK_062_5a1b142e-23d2-11e8-a6a3-ec086b02610b.jpg,blank,none,Empty camera-trap frame,Stage 2A Motion Energy / Stage 2B Blank Triage -> Quarantined
+BLANK_063_59fe21f6-23d2-11e8-a6a3-ec086b02610b.jpg,blank,none,Empty camera-trap frame,Stage 2A Motion Energy / Stage 2B Blank Triage -> Quarantined
+BLANK_064_59b614fb-23d2-11e8-a6a3-ec086b02610b.jpg,blank,none,Empty camera-trap frame,Stage 2A Motion Energy / Stage 2B Blank Triage -> Quarantined
+BLANK_065_59817bd3-23d2-11e8-a6a3-ec086b02610b.jpg,blank,none,Empty camera-trap frame,Stage 2A Motion Energy / Stage 2B Blank Triage -> Quarantined
+BLANK_066_598f7727-23d2-11e8-a6a3-ec086b02610b.jpg,blank,none,Empty camera-trap frame,Stage 2A Motion Energy / Stage 2B Blank Triage -> Quarantined
+BLANK_067_59738936-23d2-11e8-a6a3-ec086b02610b.jpg,blank,none,Empty camera-trap frame,Stage 2A Motion Energy / Stage 2B Blank Triage -> Quarantined
+BLANK_068_5a063113-23d2-11e8-a6a3-ec086b02610b.jpg,blank,none,Empty camera-trap frame,Stage 2A Motion Energy / Stage 2B Blank Triage -> Quarantined
+BLANK_069_59a94bb7-23d2-11e8-a6a3-ec086b02610b.jpg,blank,none,Empty camera-trap frame,Stage 2A Motion Energy / Stage 2B Blank Triage -> Quarantined
+BLANK_070_59cf4478-23d2-11e8-a6a3-ec086b02610b.jpg,blank,none,Empty camera-trap frame,Stage 2A Motion Energy / Stage 2B Blank Triage -> Quarantined
+BLANK_071_59bfdc50-23d2-11e8-a6a3-ec086b02610b.jpg,blank,none,Empty camera-trap frame,Stage 2A Motion Energy / Stage 2B Blank Triage -> Quarantined
+BLANK_072_59b2e8a8-23d2-11e8-a6a3-ec086b02610b.jpg,blank,none,Empty camera-trap frame,Stage 2A Motion Energy / Stage 2B Blank Triage -> Quarantined
+BLANK_073_59d752ae-23d2-11e8-a6a3-ec086b02610b.jpg,blank,none,Empty camera-trap frame,Stage 2A Motion Energy / Stage 2B Blank Triage -> Quarantined
+BLANK_074_5a0c9ab8-23d2-11e8-a6a3-ec086b02610b.jpg,blank,none,Empty camera-trap frame,Stage 2A Motion Energy / Stage 2B Blank Triage -> Quarantined
+BLANK_075_59e1039b-23d2-11e8-a6a3-ec086b02610b.jpg,blank,none,Empty camera-trap frame,Stage 2A Motion Energy / Stage 2B Blank Triage -> Quarantined
+BLANK_076_598c5cc5-23d2-11e8-a6a3-ec086b02610b.jpg,blank,none,Empty camera-trap frame,Stage 2A Motion Energy / Stage 2B Blank Triage -> Quarantined
+BLANK_077_59641e87-23d2-11e8-a6a3-ec086b02610b.jpg,blank,none,Empty camera-trap frame,Stage 2A Motion Energy / Stage 2B Blank Triage -> Quarantined
+BLANK_078_59a499dd-23d2-11e8-a6a3-ec086b02610b.jpg,blank,none,Empty camera-trap frame,Stage 2A Motion Energy / Stage 2B Blank Triage -> Quarantined
+BLANK_079_59ac6a9c-23d2-11e8-a6a3-ec086b02610b.jpg,blank,none,Empty camera-trap frame,Stage 2A Motion Energy / Stage 2B Blank Triage -> Quarantined
+BLANK_080_59a7be2d-23d2-11e8-a6a3-ec086b02610b.jpg,blank,none,Empty camera-trap frame,Stage 2A Motion Energy / Stage 2B Blank Triage -> Quarantined
+BLANK_081_5a0fd093-23d2-11e8-a6a3-ec086b02610b.jpg,blank,none,Empty camera-trap frame,Stage 2A Motion Energy / Stage 2B Blank Triage -> Quarantined
+BLANK_082_597e635a-23d2-11e8-a6a3-ec086b02610b.jpg,blank,none,Empty camera-trap frame,Stage 2A Motion Energy / Stage 2B Blank Triage -> Quarantined
+BLANK_083_59d5b76c-23d2-11e8-a6a3-ec086b02610b.jpg,blank,none,Empty camera-trap frame,Stage 2A Motion Energy / Stage 2B Blank Triage -> Quarantined
+BLANK_084_5a015c68-23d2-11e8-a6a3-ec086b02610b.jpg,blank,none,Empty camera-trap frame,Stage 2A Motion Energy / Stage 2B Blank Triage -> Quarantined
+BLANK_085_59a7bdbc-23d2-11e8-a6a3-ec086b02610b.jpg,blank,none,Empty camera-trap frame,Stage 2A Motion Energy / Stage 2B Blank Triage -> Quarantined
+BLANK_086_59d7513a-23d2-11e8-a6a3-ec086b02610b.jpg,blank,none,Empty camera-trap frame,Stage 2A Motion Energy / Stage 2B Blank Triage -> Quarantined
+BLANK_087_5998cc30-23d2-11e8-a6a3-ec086b02610b.jpg,blank,none,Empty camera-trap frame,Stage 2A Motion Energy / Stage 2B Blank Triage -> Quarantined
+BLANK_088_59d8ed01-23d2-11e8-a6a3-ec086b02610b.jpg,blank,none,Empty camera-trap frame,Stage 2A Motion Energy / Stage 2B Blank Triage -> Quarantined
+BLANK_089_59be4139-23d2-11e8-a6a3-ec086b02610b.jpg,blank,none,Empty camera-trap frame,Stage 2A Motion Energy / Stage 2B Blank Triage -> Quarantined
+BLANK_090_59a94d57-23d2-11e8-a6a3-ec086b02610b.jpg,blank,none,Empty camera-trap frame,Stage 2A Motion Energy / Stage 2B Blank Triage -> Quarantined
+BLANK_091_5a1fe6da-23d2-11e8-a6a3-ec086b02610b.jpg,blank,none,Empty camera-trap frame,Stage 2A Motion Energy / Stage 2B Blank Triage -> Quarantined
+BLANK_092_59ec5494-23d2-11e8-a6a3-ec086b02610b.jpg,blank,none,Empty camera-trap frame,Stage 2A Motion Energy / Stage 2B Blank Triage -> Quarantined
+BLANK_093_5976a320-23d2-11e8-a6a3-ec086b02610b.jpg,blank,none,Empty camera-trap frame,Stage 2A Motion Energy / Stage 2B Blank Triage -> Quarantined
+BLANK_094_59d8ec1c-23d2-11e8-a6a3-ec086b02610b.jpg,blank,none,Empty camera-trap frame,Stage 2A Motion Energy / Stage 2B Blank Triage -> Quarantined
+BLANK_095_59830947-23d2-11e8-a6a3-ec086b02610b.jpg,blank,none,Empty camera-trap frame,Stage 2A Motion Energy / Stage 2B Blank Triage -> Quarantined
+BLANK_096_59aadb04-23d2-11e8-a6a3-ec086b02610b.jpg,blank,none,Empty camera-trap frame,Stage 2A Motion Energy / Stage 2B Blank Triage -> Quarantined
+BLANK_097_5989431d-23d2-11e8-a6a3-ec086b02610b.jpg,blank,none,Empty camera-trap frame,Stage 2A Motion Energy / Stage 2B Blank Triage -> Quarantined
+BLANK_098_59738651-23d2-11e8-a6a3-ec086b02610b.jpg,blank,none,Empty camera-trap frame,Stage 2A Motion Energy / Stage 2B Blank Triage -> Quarantined
+BLANK_099_59817cb1-23d2-11e8-a6a3-ec086b02610b.jpg,blank,none,Empty camera-trap frame,Stage 2A Motion Energy / Stage 2B Blank Triage -> Quarantined
+BLANK_100_59d41979-23d2-11e8-a6a3-ec086b02610b.jpg,blank,none,Empty camera-trap frame,Stage 2A Motion Energy / Stage 2B Blank Triage -> Quarantined
+BLANK_101_59ec555b-23d2-11e8-a6a3-ec086b02610b.jpg,blank,none,Empty camera-trap frame,Stage 2A Motion Energy / Stage 2B Blank Triage -> Quarantined
+BLANK_102_5965aa0b-23d2-11e8-a6a3-ec086b02610b.jpg,blank,none,Empty camera-trap frame,Stage 2A Motion Energy / Stage 2B Blank Triage -> Quarantined
+BLANK_103_59d7528a-23d2-11e8-a6a3-ec086b02610b.jpg,blank,none,Empty camera-trap frame,Stage 2A Motion Energy / Stage 2B Blank Triage -> Quarantined
+BLANK_104_59b2eab5-23d2-11e8-a6a3-ec086b02610b.jpg,blank,none,Empty camera-trap frame,Stage 2A Motion Energy / Stage 2B Blank Triage -> Quarantined
+BLANK_105_5a231013-23d2-11e8-a6a3-ec086b02610b.jpg,blank,none,Empty camera-trap frame,Stage 2A Motion Energy / Stage 2B Blank Triage -> Quarantined
+BLANK_106_59f2c268-23d2-11e8-a6a3-ec086b02610b.jpg,blank,none,Empty camera-trap frame,Stage 2A Motion Energy / Stage 2B Blank Triage -> Quarantined
+BLANK_107_59830866-23d2-11e8-a6a3-ec086b02610b.jpg,blank,none,Empty camera-trap frame,Stage 2A Motion Energy / Stage 2B Blank Triage -> Quarantined
+BLANK_108_5a217597-23d2-11e8-a6a3-ec086b02610b.jpg,blank,none,Empty camera-trap frame,Stage 2A Motion Energy / Stage 2B Blank Triage -> Quarantined
+BLANK_109_5a116be8-23d2-11e8-a6a3-ec086b02610b.jpg,blank,none,Empty camera-trap frame,Stage 2A Motion Energy / Stage 2B Blank Triage -> Quarantined
+BLANK_110_5a015cfe-23d2-11e8-a6a3-ec086b02610b.jpg,blank,none,Empty camera-trap frame,Stage 2A Motion Energy / Stage 2B Blank Triage -> Quarantined
+BLANK_111_59e44102-23d2-11e8-a6a3-ec086b02610b.jpg,blank,none,Empty camera-trap frame,Stage 2A Motion Energy / Stage 2B Blank Triage -> Quarantined
+BLANK_112_59f79a1b-23d2-11e8-a6a3-ec086b02610b.jpg,blank,none,Empty camera-trap frame,Stage 2A Motion Energy / Stage 2B Blank Triage -> Quarantined
+BLANK_113_5a1fe719-23d2-11e8-a6a3-ec086b02610b.jpg,blank,none,Empty camera-trap frame,Stage 2A Motion Energy / Stage 2B Blank Triage -> Quarantined
+BLANK_114_59d0e1f0-23d2-11e8-a6a3-ec086b02610b.jpg,blank,none,Empty camera-trap frame,Stage 2A Motion Energy / Stage 2B Blank Triage -> Quarantined
+BLANK_115_59f5fc7f-23d2-11e8-a6a3-ec086b02610b.jpg,blank,none,Empty camera-trap frame,Stage 2A Motion Energy / Stage 2B Blank Triage -> Quarantined
+BLANK_116_5a2af612-23d2-11e8-a6a3-ec086b02610b.jpg,blank,none,Empty camera-trap frame,Stage 2A Motion Energy / Stage 2B Blank Triage -> Quarantined
+BLANK_117_59d27ba5-23d2-11e8-a6a3-ec086b02610b.jpg,blank,none,Empty camera-trap frame,Stage 2A Motion Energy / Stage 2B Blank Triage -> Quarantined
+BLANK_118_5995ad4a-23d2-11e8-a6a3-ec086b02610b.jpg,blank,none,Empty camera-trap frame,Stage 2A Motion Energy / Stage 2B Blank Triage -> Quarantined
+BLANK_119_598307e5-23d2-11e8-a6a3-ec086b02610b.jpg,blank,none,Empty camera-trap frame,Stage 2A Motion Energy / Stage 2B Blank Triage -> Quarantined
+BLANK_120_59849727-23d2-11e8-a6a3-ec086b02610b.jpg,blank,none,Empty camera-trap frame,Stage 2A Motion Energy / Stage 2B Blank Triage -> Quarantined
+BLANK_121_59a7bb65-23d2-11e8-a6a3-ec086b02610b.jpg,blank,none,Empty camera-trap frame,Stage 2A Motion Energy / Stage 2B Blank Triage -> Quarantined
+BLANK_122_5a07cdf8-23d2-11e8-a6a3-ec086b02610b.jpg,blank,none,Empty camera-trap frame,Stage 2A Motion Energy / Stage 2B Blank Triage -> Quarantined
+BLANK_123_598ace8f-23d2-11e8-a6a3-ec086b02610b.jpg,blank,none,Empty camera-trap frame,Stage 2A Motion Energy / Stage 2B Blank Triage -> Quarantined
+BLANK_124_599a595a-23d2-11e8-a6a3-ec086b02610b.jpg,blank,none,Empty camera-trap frame,Stage 2A Motion Energy / Stage 2B Blank Triage -> Quarantined
+BLANK_125_59b93a20-23d2-11e8-a6a3-ec086b02610b.jpg,blank,none,Empty camera-trap frame,Stage 2A Motion Energy / Stage 2B Blank Triage -> Quarantined
+BLANK_126_59d5b71a-23d2-11e8-a6a3-ec086b02610b.jpg,blank,none,Empty camera-trap frame,Stage 2A Motion Energy / Stage 2B Blank Triage -> Quarantined
+BLANK_127_5a063116-23d2-11e8-a6a3-ec086b02610b.jpg,blank,none,Empty camera-trap frame,Stage 2A Motion Energy / Stage 2B Blank Triage -> Quarantined
+BLANK_128_596a4c75-23d2-11e8-a6a3-ec086b02610b.jpg,blank,none,Empty camera-trap frame,Stage 2A Motion Energy / Stage 2B Blank Triage -> Quarantined
+BLANK_129_59fc7fb9-23d2-11e8-a6a3-ec086b02610b.jpg,blank,none,Empty camera-trap frame,Stage 2A Motion Energy / Stage 2B Blank Triage -> Quarantined
+BLANK_130_598f76c8-23d2-11e8-a6a3-ec086b02610b.jpg,blank,none,Empty camera-trap frame,Stage 2A Motion Energy / Stage 2B Blank Triage -> Quarantined
+BLANK_131_599be82b-23d2-11e8-a6a3-ec086b02610b.jpg,blank,none,Empty camera-trap frame,Stage 2A Motion Energy / Stage 2B Blank Triage -> Quarantined
+BLANK_132_598dea13-23d2-11e8-a6a3-ec086b02610b.jpg,blank,none,Empty camera-trap frame,Stage 2A Motion Energy / Stage 2B Blank Triage -> Quarantined
+BLANK_133_5a2178cf-23d2-11e8-a6a3-ec086b02610b.jpg,blank,none,Empty camera-trap frame,Stage 2A Motion Energy / Stage 2B Blank Triage -> Quarantined
+BLANK_134_59d75405-23d2-11e8-a6a3-ec086b02610b.jpg,blank,none,Empty camera-trap frame,Stage 2A Motion Energy / Stage 2B Blank Triage -> Quarantined
+BLANK_135_5a1fe7f0-23d2-11e8-a6a3-ec086b02610b.jpg,blank,none,Empty camera-trap frame,Stage 2A Motion Energy / Stage 2B Blank Triage -> Quarantined
+BLANK_136_5a27daf5-23d2-11e8-a6a3-ec086b02610b.jpg,blank,none,Empty camera-trap frame,Stage 2A Motion Energy / Stage 2B Blank Triage -> Quarantined
+BLANK_137_59fae4d3-23d2-11e8-a6a3-ec086b02610b.jpg,blank,none,Empty camera-trap frame,Stage 2A Motion Energy / Stage 2B Blank Triage -> Quarantined
+BLANK_138_59da8cad-23d2-11e8-a6a3-ec086b02610b.jpg,blank,none,Empty camera-trap frame,Stage 2A Motion Energy / Stage 2B Blank Triage -> Quarantined
+BLANK_139_59e91b31-23d2-11e8-a6a3-ec086b02610b.jpg,blank,none,Empty camera-trap frame,Stage 2A Motion Energy / Stage 2B Blank Triage -> Quarantined
+BLANK_140_59a62c4b-23d2-11e8-a6a3-ec086b02610b.jpg,blank,none,Empty camera-trap frame,Stage 2A Motion Energy / Stage 2B Blank Triage -> Quarantined

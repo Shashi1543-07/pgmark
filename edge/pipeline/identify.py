@@ -59,11 +59,15 @@ import torch.nn.functional as F
 import torchvision
 
 from edge import config
+from edge.pipeline.device import get_device_manager
 
 EMBED_MODEL_VERSION = "trihard-resnet50@1.0.0"
 EMBED_DIM = 256
 
-WEIGHTS_PATH = Path(__file__).resolve().parents[2] / "data" / "weights" / "identify_embedder.pt"
+# Inference can only load the bundled, fully-trained checkpoint. Keeping the
+# path here (rather than in a user cache) makes an air-gapped installation
+# reproducible and lets the release verifier hash exactly what is executed.
+WEIGHTS_PATH = config.EMBEDDER_MODEL_PATH
 
 # docs/DATA.md §1: 256 wide x 128 tall -- swapped from pedestrian re-ID's
 # 128 wide x 256 tall, because tiger boxes are horizontal-major.
@@ -108,42 +112,94 @@ class QualityResult:
     side: str | None
     quality: float
     reason: str
+    blur_var: float | None = None
+    mean_exposure: float | None = None
+    saturation_frac: float | None = None
 
 
-def quality_gate(keypoints: Keypoints, crop_shape: tuple[int, int], cfg: config.Identify
-                  ) -> QualityResult:
-    """Refuses rather than guesses (CLAUDE.md rule 8). Two independent
-    failure modes, reported separately because they mean different
-    things to a reviewer: an unresolvable side (structural -- no amount
-    of confidence tuning fixes it) versus a resolvable side whose
-    keypoints are too uncertain to trust a warp built from them
-    (tunable via Identify.min_quality)."""
+def nms_filter(detections: list[dict], iou_thresh: float = 0.45) -> list[dict]:
+    """Non-Maximum Suppression: filter heavily overlapping boxes of the same class."""
+    if len(detections) <= 1:
+        return detections
+
+    def box_iou(b1, b2):
+        x1 = max(b1["x"], b2["x"])
+        y1 = max(b1["y"], b2["y"])
+        x2 = min(b1["x"] + b1["w"], b2["x"] + b2["w"])
+        y2 = min(b1["y"] + b1["h"], b2["y"] + b2["h"])
+        inter = max(0.0, x2 - x1) * max(0.0, y2 - y1)
+        area1 = b1["w"] * b1["h"]
+        area2 = b2["w"] * b2["h"]
+        union = area1 + area2 - inter
+        return inter / union if union > 0 else 0.0
+
+    sorted_dets = sorted(detections, key=lambda d: d.get("conf", 0.0), reverse=True)
+    kept = []
+    for d in sorted_dets:
+        if not any(box_iou(d, k) > iou_thresh for k in kept):
+            kept.append(d)
+    return kept
+
+
+def quality_gate(keypoints: Keypoints, crop_shape: tuple[int, int],
+                 cfg: config.Identify | None = None,
+                 image: np.ndarray | None = None) -> QualityResult:
+    """Refuses rather than guesses (CLAUDE.md rule 8). Evaluates side visibility,
+    crop pixel dimensions, blur (Laplacian variance), exposure, and IR highlight clipping."""
+    cfg = cfg or config.CONFIG.identify
+    q_cfg = getattr(config.CONFIG, "quality", config.QualityEngine())
     side = infer_side(keypoints)
     if side is None:
         return QualityResult(False, None, 0.0, "side is not determinable from keypoint "
                               "visibility -- both or neither shoulder+hip pair is labelled")
 
     h, w = crop_shape[:2]
-    if h * w < cfg.min_crop_pixels:
+    min_px = getattr(q_cfg, "min_crop_pixels", cfg.min_crop_pixels)
+    if h * w < min_px:
         return QualityResult(False, side, 0.0,
-                              f"crop is {w}x{h}={h*w}px, below the {cfg.min_crop_pixels}px floor")
+                              f"crop is {w}x{h}={h*w}px, below the {min_px}px floor")
 
-    # Confidence-weighted quality over the NEAR side's two points only --
-    # rectify_flank() below never uses the far side (checked against real
-    # data: it is unlabelled in every side-resolved ATRW crop), so scoring
-    # it here would silently cap every quality at 0.5 regardless of how
-    # good the side actually used is. COCO visibility 2 (labelled,
-    # visible) counts fully; 1 (labelled, occluded -- an estimated
-    # position) counts half.
+    # Confidence-weighted quality over the NEAR side's two points
     near = ("right_shoulder", "right_hip") if side == "R" else ("left_shoulder", "left_hip")
     weights = {0: 0.0, 1: 0.5, 2: 1.0}
     scores = [weights.get(keypoints[name][2], 0.0) for name in near if name in keypoints]
-    quality = round(sum(scores) / len(near), 3) if scores else 0.0
+    base_quality = round(sum(scores) / len(near), 3) if scores else 0.0
 
+    # Image quality engine checks
+    blur_var, mean_exp, sat_frac = None, None, None
+    quality = base_quality
+
+    if image is not None and image.size > 0:
+        try:
+            grey = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY) if len(image.shape) == 3 else image
+            blur_var = float(cv2.Laplacian(grey, cv2.CV_64F).var())
+            mean_exp = float(np.mean(grey))
+            sat_frac = float(np.mean(grey >= 250))
+
+            # Penalize or flag blur
+            if blur_var < q_cfg.min_laplacian_variance:
+                quality *= 0.6
+                if quality < cfg.min_quality:
+                    return QualityResult(False, side, quality,
+                                          f"motion blur detected (Laplacian var {blur_var:.1f} < {q_cfg.min_laplacian_variance})",
+                                          blur_var, mean_exp, sat_frac)
+
+            # Penalize extreme exposure
+            if mean_exp < q_cfg.min_mean_exposure or mean_exp > q_cfg.max_mean_exposure:
+                quality *= 0.7
+
+            # Penalize IR saturation blowout
+            if sat_frac > q_cfg.max_highlight_saturation_frac:
+                quality *= 0.7
+        except Exception:
+            pass
+
+    quality = round(quality, 3)
     if quality < cfg.min_quality:
         return QualityResult(False, side, quality,
-                              f"quality {quality} below Identify.min_quality {cfg.min_quality}")
-    return QualityResult(True, side, quality, "ok")
+                              f"quality {quality} below Identify.min_quality {cfg.min_quality}",
+                              blur_var, mean_exp, sat_frac)
+    return QualityResult(True, side, quality, "ok", blur_var, mean_exp, sat_frac)
 
 
 # ── rectification ───────────────────────────────────────────────────────
@@ -198,16 +254,31 @@ def rectify_flank(image: np.ndarray, keypoints: Keypoints, side: str, cfg: confi
 # ── the embedder ─────────────────────────────────────────────────────────
 
 class TripletEmbedder(nn.Module):
-    """ImageNet-pretrained ResNet-50 backbone, TriHard triplet-loss
+    """ResNet-50 backbone, TriHard triplet-loss
     baseline (docs/DATA.md §2 -- 47.2 cross-camera mAP in the paper,
     against PPbM's 51.7 for a seven-part pose model that is not a
     24-hour trade). Final FC replaced with an L2-normalised embedding
     head so matching is a plain dot product."""
 
-    def __init__(self, embed_dim: int = EMBED_DIM, pretrained: bool = True):
+    def __init__(self, embed_dim: int = EMBED_DIM,
+                 backbone_weights: Path | None = None):
         super().__init__()
-        weights = torchvision.models.ResNet50_Weights.IMAGENET1K_V2 if pretrained else None
-        backbone = torchvision.models.resnet50(weights=weights)
+        # TorchVision downloads ImageNet weights when passed a named weights
+        # enum. Constructing with None is the only safe default; a packaging
+        # or training workflow may then explicitly supply a local checkpoint.
+        backbone = torchvision.models.resnet50(weights=None)
+        if backbone_weights is not None:
+            resolved = Path(backbone_weights).resolve()
+            try:
+                resolved.relative_to(config.MODELS_DIR)
+            except ValueError as exc:
+                raise ValueError("backbone weights must be under edge/models") from exc
+            if not resolved.is_file():
+                raise FileNotFoundError(f"local backbone weights not found: {resolved}")
+            state = torch.load(resolved, map_location="cpu", weights_only=True)
+            # TorchVision checkpoints are normally either the state dict or
+            # wrapped in state_dict; accepting both remains local-only.
+            backbone.load_state_dict(state.get("state_dict", state))
         self.backbone = nn.Sequential(*list(backbone.children())[:-1])   # drop backbone's own FC
         self.fc = nn.Linear(2048, embed_dim)
 
@@ -224,12 +295,22 @@ def preprocess(rect_bgr: np.ndarray) -> torch.Tensor:
     return torch.from_numpy(rgb.transpose(2, 0, 1)).float()
 
 
+def embed_many(model: TripletEmbedder, rects_bgr: list[np.ndarray]) -> list[np.ndarray]:
+    """Embed canonical crops in bounded batches with CUDA OOM recovery."""
+    def embed_batch(batch: list[np.ndarray], device: torch.device) -> list[np.ndarray]:
+        model.to(device)
+        model.eval()
+        with torch.inference_mode():
+            tensor = torch.stack([preprocess(rect) for rect in batch]).to(device)
+            output = model(tensor).float().cpu().numpy()
+        return [row.copy() for row in output]
+
+    return get_device_manager().run_batches(rects_bgr, embed_batch)
+
+
 def embed(model: TripletEmbedder, rect_bgr: np.ndarray) -> np.ndarray:
-    model.eval()
-    with torch.no_grad():
-        x = preprocess(rect_bgr).unsqueeze(0)
-        out = model(x)
-    return out.squeeze(0).numpy()
+    """Single-crop compatibility wrapper around the bounded batch path."""
+    return embed_many(model, [rect_bgr])[0]
 
 
 def load_embedder(weights_path, embed_dim: int = EMBED_DIM) -> TripletEmbedder:
@@ -238,11 +319,24 @@ def load_embedder(weights_path, embed_dim: int = EMBED_DIM) -> TripletEmbedder:
     are meaningless, and a caller that thinks it has a real embedder
     when it does not will corrupt the catalogue with confident nonsense
     matches. Raise, do not degrade quietly (CLAUDE.md rule 8)."""
-    model = TripletEmbedder(embed_dim=embed_dim, pretrained=False)
-    state = torch.load(weights_path, map_location="cpu", weights_only=True)
-    model.load_state_dict(state)
-    model.eval()
-    return model
+    resolved = Path(weights_path).resolve()
+    try:
+        resolved.relative_to(config.MODELS_DIR)
+    except ValueError as exc:
+        raise ValueError("embedder weights must be under edge/models") from exc
+    if not resolved.is_file():
+        raise FileNotFoundError(
+            f"identification weights not found at {resolved} -- install the verified "
+            "offline model bundle, then run `python -m tools.verify_offline_release`")
+    def load_on(device: torch.device) -> TripletEmbedder:
+        model = TripletEmbedder(embed_dim=embed_dim)
+        state = torch.load(resolved, map_location="cpu", weights_only=True)
+        model.load_state_dict(state)
+        model.to(device)
+        model.eval()
+        return model
+
+    return get_device_manager().run_one(load_on)
 
 
 def serialize_embedding(embedding: np.ndarray) -> bytes:

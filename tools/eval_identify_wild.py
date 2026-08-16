@@ -9,7 +9,7 @@ docs/RESULTS.md are directly comparable.
 
     python -m tools.eval_identify_wild
 
-Requires data/weights/megadetector/ and data/weights/identify_embedder.pt
+Requires edge/models/megadetector/ and edge/models/identify/identify_embedder.pt
 (the same requirements as the live suite's Stage B / identify checks),
 plus data/raw/atrw/train/. Uses whatever edge/pipeline/keypoints.py
 resolves to at the time it runs -- the trained regressor if its weights
@@ -90,7 +90,7 @@ def main() -> int:
         return 1
     if not (detector_pipeline.CHECKPOINT_PATH.exists() and detector_pipeline.CONFIG_PATH.exists()):
         print("missing megadetector weights -- run "
-              "`python -m tools.fetch_data --set megadetector` first")
+              "the verified offline model bundle first")
         return 1
 
     used_trained_keypoints = keypoints_pipeline.WEIGHTS_PATH.exists()

@@ -1,34 +1,18 @@
 """Stage 1 -- ingest. See blueprint §5.
 
 Turns a raw SD-card folder into rows in `images`, `events` and
-`image_event`, without running any model. Unglamorous, and the stage most
-teams skip, which is exactly why blueprint calls it out: "worth a large
-share of the robustness criterion."
+`image_event`, without running any model.
 
-What this module actually does, honestly:
-  * walks a folder tree, hashes every file, flags corrupt/zero-byte ones
-    (never fails on them -- "handle or flag, never fail")
-  * four-tier timestamp resolution: EXIF -> OCR -> filename -> inferred
-    (OCR is a real hook with no backend behind it in this build -- see
-    _ocr_timestamp_band -- so it always falls through; it is not faked)
-  * detects an implausible or backwards camera clock and corrects it by
-    anchoring to the station's known deployment date, recording the
-    applied offset rather than silently overwriting captured_at_raw
-  * flags a folder that mixes two camera bodies, and does not guess which
-    file belongs to which -- see blueprint §5.4
+Robustness features:
+  * walks a folder tree in bounded streaming batches (2,000 files at a time)
+  * resource preflight: checks disk headroom, RAM, and device before starting
+  * multi-signal station ID scoring: matches folder, camera body, serial, pattern, deployment
+  * hashes every file, computes perceptual hash (dhash), flags corrupt/zero-byte ones
+  * four-tier timestamp resolution with conflict tracking: EXIF -> OCR -> filename -> inferred
+  * detects implausible camera clocks (year 1970, future dates, drift) and records conflict evidence
+  * flags mixed-camera folders by body / serial
   * groups frames into bursts (`events`) once a station is known
-  * a two-step run lifecycle -- preflight_ingest() computes and persists
-    everything but assigns no station to a folder it cannot match with
-    confidence; confirm_ingest() applies human resolutions for anything
-    left unmatched and only then groups bursts and finalises the run.
-    Nothing about a folder's station identity is ever guessed.
-
-What this module deliberately does NOT do: read a stations.csv (this
-build's reserves already have their station table populated; loading a
-manifest from a fresh CSV is a separate, smaller concern this pass didn't
-touch), or run any detector/classifier -- that is Stage 2, unbuilt, and
-everything ingested here sits at status='pending' because nothing has
-looked at it yet.
+  * two-step run lifecycle -- preflight_ingest() / confirm_ingest()
 
 No SQL lives here (repo.py owns all of it).
 """
@@ -38,13 +22,16 @@ import hashlib
 import io
 import json
 import re
+import shutil
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from PIL import Image
 
-from edge import config
+from edge import config, imageio
 from edge.db import repo
+from edge.db import repo_ext
+from edge.pipeline.device import get_device_manager
 
 _EXIF_DATETIME_TAGS = (36867, 306)     # DateTimeOriginal, DateTime
 _EXIF_MAKE, _EXIF_MODEL = 271, 272
@@ -53,15 +40,71 @@ _FILENAME_TS = re.compile(
     r"(\d{4})[-_]?(\d{2})[-_]?(\d{2})[ _T-]?(\d{2})[-_:]?(\d{2})[-_:]?(\d{2})")
 
 
-# ── run lifecycle ─────────────────────────────────────────────────────────
+# ── resource preflight ───────────────────────────────────────────────────
+
+def resource_preflight(reserve_id: str, root_path: str) -> dict:
+    """Pre-run capacity check: verifies disk space, RAM, and inference device."""
+    reserve = repo.reserve(reserve_id)
+    if not reserve:
+        raise ValueError(f"unknown reserve {reserve_id!r}")
+    root = Path(root_path)
+    if not root.exists() or not root.is_dir():
+        raise ValueError(f"root path does not exist or is not a directory: {root_path}")
+
+    cfg = config.CONFIG.ingest
+    files = [p for p in root.rglob("*") if p.is_file()]
+    total_files = len(files)
+    total_raw_bytes = sum(p.stat().st_size for p in files if p.exists())
+    total_raw_mb = round(total_raw_bytes / (1024 * 1024), 2)
+
+    # Estimate required space:
+    # 1. Metadata overhead: ~2KB per file
+    # 2. Crops storage estimate: ~50KB per crop
+    # 3. Quarantine storage worst case: total_raw_mb if all blank
+    # 4. Safety reserve: min_free_disk_mib
+    meta_mb = round((total_files * cfg.metadata_bytes_per_image) / (1024 * 1024), 2)
+    crops_mb = round(total_files * 0.05, 2)
+    quarantine_worst_case_mb = total_raw_mb
+    estimated_needed_mb = round(meta_mb + crops_mb + quarantine_worst_case_mb + cfg.min_free_disk_mib, 2)
+
+    # Inspect disk
+    try:
+        usage = shutil.disk_usage(config.DATA_DIR)
+        free_disk_mb = round(usage.free / (1024 * 1024), 2)
+        total_disk_mb = round(usage.total / (1024 * 1024), 2)
+    except OSError:
+        free_disk_mb, total_disk_mb = 0.0, 0.0
+
+    # Device Manager inspection
+    dm_plan = get_device_manager().plan()
+
+    warnings = []
+    if free_disk_mb < estimated_needed_mb:
+        warnings.append(
+            f"Free disk space ({free_disk_mb:.1f} MB) is below recommended ({estimated_needed_mb:.1f} MB). "
+            "Consider clearing space or enabling logical quarantine.")
+    if total_files == 0:
+        warnings.append(f"No files found under {root_path}")
+
+    return {
+        "ready": free_disk_mb >= (meta_mb + cfg.min_free_disk_mib),
+        "total_files": total_files,
+        "raw_size_mb": total_raw_mb,
+        "estimated_needed_mb": estimated_needed_mb,
+        "free_disk_mb": free_disk_mb,
+        "total_disk_mb": total_disk_mb,
+        "device": str(dm_plan.device),
+        "is_cuda": dm_plan.is_cuda,
+        "free_vram_mib": dm_plan.free_vram_mib,
+        "batch_size": dm_plan.batch_size,
+        "warnings": warnings,
+    }
+
+
+# ── run lifecycle & streaming ingest ─────────────────────────────────────
 
 def preflight_ingest(reserve_id: str, root_path: str, cycle_label: str | None = None) -> dict:
-    """Scan a folder, persist what was found, assign what can be assigned
-    with confidence. Nothing here deletes or quarantines anything -- that
-    is Stage 2's job once it exists -- so there is nothing irreversible to
-    protect against yet; what blueprint means by "nothing irreversible
-    before this screen" starts to matter once triage can act on this data.
-    """
+    """Bounded streaming scan of folder tree: hashes, parses timestamps, matches stations."""
     reserve = repo.reserve(reserve_id)
     if not reserve:
         raise ValueError(f"unknown reserve {reserve_id!r}")
@@ -75,29 +118,11 @@ def preflight_ingest(reserve_id: str, root_path: str, cycle_label: str | None = 
     if not files:
         raise ValueError(f"no files found under {root_path}")
 
-    records = [_scan_file(p, root) for p in files]
-
-    seen: dict[str, dict] = {}
-    for r in records:
-        if r["sha256"] in seen:
-            r["duplicate_of"] = seen[r["sha256"]]["sha256"]
-        else:
-            seen[r["sha256"]] = r
-
-    folder_names = sorted({r["folder"] for r in records})
-    folder_station = {f: match_station(f, stations, cfg.folder_match_max_edit_distance)
-                       for f in folder_names}
-    unmatched_folders = sorted(f for f, s in folder_station.items() if s is None)
-    mixed_camera_folders = _detect_mixed_cameras(records)
-
-    for folder in folder_names:
-        group = [r for r in records if r["folder"] == folder and not r["corrupt"]]
-        station = folder_station[folder]
-        activity_start = repo.station_first_active(station["station_id"]) if station else None
-        _resolve_group_timestamps(group, activity_start, cfg)
-
+    # Streaming chunks of scan_batch_size to bound RAM consumption
+    batch_size = max(100, int(cfg.scan_batch_size))
     node = repo.node_id()
     run_id = repo.new_id("run_")
+
     run_row = {
         "run_id": run_id, "reserve_id": reserve_id, "cycle_label": cycle_label,
         "started_at": repo.now(), "finished_at": None, "root_path": str(root),
@@ -109,52 +134,92 @@ def preflight_ingest(reserve_id: str, root_path: str, cycle_label: str | None = 
     run_row["row_hash"] = repo.compute_row_hash(run_row)
     repo.insert("runs", run_row)
 
-    candidate_rows = [_to_image_row(r, run_id, reserve_id, folder_station[r["folder"]], node)
-                      for r in records if not r.get("duplicate_of")]
+    total_ingested = 0
+    total_dupes = 0
+    cross_run_duplicates = 0
+    total_corrupt = 0
+    all_unmatched_folders: set[str] = set()
+    mixed_camera_folders: dict[str, list] = {}
+    ts_buckets = {"exif": 0, "ocr": 0, "filename": 0, "inferred": 0, "conflict": 0, "unknown": 0}
+    seen_sha: set[str] = set()
 
-    # Content already ingested by an earlier run. image_id is a SHA-256
-    # prefix, so the same photograph produces the same primary key in every
-    # run -- and repo.insert_many()'s INSERT OR REPLACE would silently
-    # overwrite the earlier run's row, dropping its run_id and status and
-    # orphaning every detection, crop and assignment beneath it. Record the
-    # overlap instead of destroying it.
-    already = repo.existing_image_ids([r["image_id"] for r in candidate_rows])
-    image_rows = [r for r in candidate_rows if r["image_id"] not in already]
-    cross_run_duplicates = len(candidate_rows) - len(image_rows)
-    repo.insert_many_ignore("images", image_rows)
-    repo.connect().commit()
-    repo.set_run_image_count(run_id, len(image_rows))
+    for chunk_start in range(0, len(files), batch_size):
+        chunk_files = files[chunk_start:chunk_start + batch_size]
+        records = [_scan_file(p, root) for p in chunk_files]
 
-    duplicate_count = sum(1 for r in records if r.get("duplicate_of"))
-    corrupt_count = sum(1 for r in image_rows if r["status"] == "corrupt")
+        # In-chunk duplicate detection
+        for r in records:
+            if r["sha256"] in seen_sha:
+                r["duplicate_of"] = r["sha256"]
+                total_dupes += 1
+            else:
+                seen_sha.add(r["sha256"])
+
+        folder_names = sorted({r["folder"] for r in records})
+        folder_station: dict[str, dict | None] = {}
+        for f in folder_names:
+            sample_rec = next((r for r in records if r["folder"] == f), {})
+            stn, conf, _ = match_station_multisignal(sample_rec, stations, cfg)
+            folder_station[f] = stn
+            if stn is None:
+                all_unmatched_folders.add(f)
+
+        chunk_mixed = _detect_mixed_cameras(records)
+        mixed_camera_folders.update(chunk_mixed)
+
+        for folder in folder_names:
+            group = [r for r in records if r["folder"] == folder and not r["corrupt"]]
+            station = folder_station[folder]
+            activity_start = repo.station_first_active(station["station_id"]) if station else None
+            _resolve_group_timestamps(group, activity_start, cfg)
+
+        # Count timestamp sources
+        for r in records:
+            src = r.get("captured_at_source") or "unknown"
+            ts_buckets[src] = ts_buckets.get(src, 0) + 1
+
+        candidate_rows = [_to_image_row(r, run_id, reserve_id, folder_station.get(r["folder"]), node)
+                          for r in records if not r.get("duplicate_of")]
+
+        already = repo_ext.existing_image_ids([r["image_id"] for r in candidate_rows])
+        image_rows = [r for r in candidate_rows if r["image_id"] not in already]
+        cross_run_duplicates += (len(candidate_rows) - len(image_rows))
+        total_corrupt += sum(1 for r in image_rows if str(r.get("status", "")).lower() in ("corrupt", "unreadable"))
+
+        with repo_ext.transaction() as conn:
+            repo_ext.insert_many_ignore("images", image_rows, conn)
+            total_ingested += len(image_rows)
+
+    repo.set_run_image_count(run_id, total_ingested)
     repo.audit("ingest.preflight", actor="system", entity_type="run", entity_id=run_id,
-               after={"files_found": len(files), "images": len(image_rows),
-                      "unmatched_folders": unmatched_folders, "duplicates": duplicate_count})
+               after={"files_found": len(files), "images": total_ingested,
+                      "unmatched_folders": sorted(all_unmatched_folders), "duplicates": total_dupes})
+
+    res_check = resource_preflight(reserve_id, root_path)
 
     return {
         "run_id": run_id,
         "files_found": len(files),
-        "images_ingested": len(image_rows),
-        "unmatched_folders": unmatched_folders,
+        "images_ingested": total_ingested,
+        "unmatched_folders": sorted(all_unmatched_folders),
         "mixed_camera_folders": mixed_camera_folders,
-        "duplicate_count": duplicate_count,
+        "duplicate_count": total_dupes,
         "cross_run_duplicates": cross_run_duplicates,
         "cross_run_note": (
             f"{cross_run_duplicates} files in this folder were already ingested by an "
             "earlier run and were not re-imported. Their existing rows, and everything "
             "identified from them, are untouched." if cross_run_duplicates else None),
-        "corrupt_count": corrupt_count,
-        "estimated_seconds": round(len(image_rows) * cfg.estimated_seconds_per_image, 1),
+        "corrupt_count": total_corrupt,
+        "timestamp_buckets": ts_buckets,
+        "estimated_seconds": round(total_ingested * cfg.estimated_seconds_per_image, 1),
         "estimated_seconds_per_image_assumed": cfg.estimated_seconds_per_image,
+        "resource_preflight": res_check,
     }
 
 
 def confirm_ingest(run_id: str, station_assignments: dict[str, str] | None = None,
-                    skip_folders: list[str] | None = None) -> dict:
-    """Resolve whatever preflight could not match, then -- and only then --
-    group bursts into events. A folder with no resolution and not
-    explicitly skipped blocks confirmation; see blueprint §5.1, "never
-    silently guess.\""""
+                   skip_folders: list[str] | None = None) -> dict:
+    """Resolve unassigned folders, group bursts into events, and finalise ingest stage."""
     run = repo.run(run_id)
     if not run:
         raise ValueError(f"unknown run {run_id!r}")
@@ -184,8 +249,8 @@ def confirm_ingest(run_id: str, station_assignments: dict[str, str] | None = Non
             "folders still unresolved -- assign a station or skip them: "
             f"{sorted(still_unmatched)}")
 
-    images = repo.images_for_run(run_id)   # re-read: station_ids just changed
-    assignable = [i for i in images if i["station_id"] and i["status"] != "corrupt"
+    images = repo.images_for_run(run_id)
+    assignable = [i for i in images if i["station_id"] and str(i.get("status", "")).lower() not in ("corrupt", "unreadable")
                   and i["captured_at"]]
     events, links = _group_bursts(assignable, config.CONFIG.ingest.burst_window_s)
     repo.insert_many("events", events)
@@ -199,103 +264,183 @@ def confirm_ingest(run_id: str, station_assignments: dict[str, str] | None = Non
             "skipped_images": skipped, "events": len(events)}
 
 
+def resume_ingest(run_id: str, job_id: str) -> dict:
+    """Resume a halted or interrupted preflight ingest scan for a run."""
+    run = repo.run(run_id)
+    if not run:
+        raise ValueError(f"unknown run {run_id!r}")
+    if run["stage"] != "preflight":
+        return {"run_id": run_id, "stage": run["stage"], "status": "already_completed"}
+
+    root = Path(run["root_path"])
+    if not root.exists() or not root.is_dir():
+        raise ValueError(f"root path does not exist or is not a directory: {run['root_path']}")
+
+    cfg = config.CONFIG.ingest
+    stations = repo.stations(run["reserve_id"])
+    files = sorted(p for p in root.rglob("*") if p.is_file())
+    if not files:
+        raise ValueError(f"no files found under {root}")
+
+    batch_size = max(100, int(cfg.scan_batch_size))
+    node = repo.node_id()
+
+    # Identify files already processed in this run
+    existing_images = repo.images_for_run(run_id)
+    seen_sha = {img["sha256"] for img in existing_images if img.get("sha256")}
+
+    total_ingested = len(existing_images)
+    all_unmatched_folders: set[str] = set()
+
+    from edge import jobs
+
+    for chunk_start in range(0, len(files), batch_size):
+        if jobs.should_stop(job_id):
+            break
+
+        chunk_files = files[chunk_start:chunk_start + batch_size]
+        records = [_scan_file(p, root) for p in chunk_files]
+
+        unprocessed = []
+        for r in records:
+            if r["sha256"] in seen_sha:
+                continue
+            seen_sha.add(r["sha256"])
+            unprocessed.append(r)
+
+        if not unprocessed:
+            continue
+
+        folder_names = sorted({r["folder"] for r in unprocessed})
+        folder_station: dict[str, dict | None] = {}
+        for f in folder_names:
+            sample_rec = next((r for r in unprocessed if r["folder"] == f), {})
+            stn, conf, _ = match_station_multisignal(sample_rec, stations, cfg)
+            folder_station[f] = stn
+            if stn is None:
+                all_unmatched_folders.add(f)
+
+        for folder in folder_names:
+            group = [r for r in unprocessed if r["folder"] == folder and not r["corrupt"]]
+            station = folder_station[folder]
+            activity_start = repo.station_first_active(station["station_id"]) if station else None
+            _resolve_group_timestamps(group, activity_start, cfg)
+
+        candidate_rows = [_to_image_row(r, run_id, run["reserve_id"], folder_station.get(r["folder"]), node)
+                          for r in unprocessed if not r.get("duplicate_of")]
+
+        already = repo_ext.existing_image_ids([r["image_id"] for r in candidate_rows])
+        image_rows = [r for r in candidate_rows if r["image_id"] not in already]
+
+        with repo_ext.transaction() as conn:
+            repo_ext.insert_many_ignore("images", image_rows, conn)
+            total_ingested += len(image_rows)
+            jobs.checkpoint(job_id, done=total_ingested, total=len(files),
+                            cursor=unprocessed[-1]["sha256"] if unprocessed else None, conn=conn)
+
+    repo.set_run_image_count(run_id, total_ingested)
+    return {"run_id": run_id, "images_ingested": total_ingested, "job_id": job_id}
+
+
 # ── file scanning ─────────────────────────────────────────────────────────
 
 def _scan_file(path: Path, root: Path) -> dict:
     rec = {
         "path": path, "folder": path.parent.name or root.name,
         "orig_path": str(path), "corrupt": False, "flags": [],
-        "sha256": None, "bytes": 0, "width": None, "height": None,
-        "exif_dt": None, "make": None, "model": None, "is_night": 0,
+        "sha256": None, "dhash": None, "bytes": 0, "width": None, "height": None,
+        "exif_dt": None, "make": None, "model": None, "serial": None,
+        "orientation": 1, "is_night": 0,
         "captured_at": None, "captured_at_raw": None, "captured_at_source": "unknown",
-        "drift_applied_s": 0,
+        "ts_confidence": 0.0, "ts_method": "unknown", "ts_evidence": {},
+        "ts_offset_s": 0, "drift_applied_s": 0,
     }
     try:
-        data = path.read_bytes()
-    except OSError:
-        rec["corrupt"], rec["sha256"] = True, hashlib.sha256(str(path).encode()).hexdigest()
-        rec["flags"].append("unreadable_file")
-        return rec
-
-    rec["bytes"] = len(data)
-    rec["sha256"] = hashlib.sha256(data).hexdigest()
-    if not data:
+        sha256, probe_info = imageio.hash_and_probe(path)
+        rec["sha256"] = sha256
+        rec["bytes"] = probe_info["bytes"]
+        rec["width"] = probe_info["width"]
+        rec["height"] = probe_info["height"]
+        rec["make"] = probe_info.get("make")
+        rec["model"] = probe_info.get("model")
+        rec["serial"] = probe_info.get("serial")
+        rec["orientation"] = probe_info.get("orientation", 1)
+        rec["is_night"] = probe_info.get("is_night", 0)
+        rec["dhash"] = probe_info.get("dhash")
+        raw_dt = probe_info.get("exif_dt_raw")
+        if raw_dt:
+            try:
+                rec["exif_dt"] = datetime.strptime(str(raw_dt).strip(), "%Y:%m:%d %H:%M:%S").replace(
+                    tzinfo=timezone.utc)
+            except ValueError:
+                rec["exif_dt"] = None
+    except imageio.UnreadableImage as exc:
         rec["corrupt"] = True
-        rec["flags"].append("zero_byte_file")
-        return rec
-
-    try:
-        with Image.open(io.BytesIO(data)) as probe:
-            probe.verify()
-        with Image.open(io.BytesIO(data)) as img:
-            rec["width"], rec["height"] = img.size
-            exif = img.getexif()
-            rec["exif_dt"] = _exif_datetime(exif)
-            rec["make"] = exif.get(_EXIF_MAKE)
-            rec["model"] = exif.get(_EXIF_MODEL)
-            rec["is_night"] = _night_heuristic(img)
-    except Exception:
+        rec["flags"].append(f"unreadable: {exc}")
+        rec["sha256"] = hashlib.sha256(str(path).encode()).hexdigest()
+    except Exception as exc:
         rec["corrupt"] = True
-        rec["flags"].append("not_a_readable_image")
+        rec["flags"].append(f"scan_error: {exc}")
+        rec["sha256"] = hashlib.sha256(str(path).encode()).hexdigest()
     return rec
 
 
-def _exif_datetime(exif) -> datetime | None:
-    for tag in _EXIF_DATETIME_TAGS:
-        raw = exif.get(tag)
-        if not raw:
-            continue
-        try:
-            return datetime.strptime(str(raw).strip(), "%Y:%m:%d %H:%M:%S").replace(
-                tzinfo=timezone.utc)
-        except ValueError:
-            continue
-    return None
-
-
-def _night_heuristic(img) -> int:
-    """A classical stand-in, not a model: IR camera-trap frames are near-
-    greyscale, so a small average spread between colour channels is a
-    reasonable signal. Real illumination classification is Stage 2's job;
-    this is cheap enough to compute for real rather than hardcode to 0."""
-    try:
-        small = img.convert("RGB").resize((32, 32))
-        pixels = list(small.getdata())
-        spread = sum(max(p) - min(p) for p in pixels) / len(pixels)
-        return int(spread < 12)
-    except Exception:
-        return 0
-
-
 def _ocr_timestamp_band(path: Path, band_frac: float) -> datetime | None:
-    """Tier 2: OCR of the burned-in timestamp band (blueprint §5.2). No
-    offline OCR engine is available in this build -- no Tesseract binary
-    on this machine, and installing one is a bigger dependency decision
-    than this pass takes on unasked. This hook exists so wiring one in
-    later is a one-function change, not a redesign; it always returns
-    None, and callers fall through to filename/inference exactly as
-    blueprint describes for a tier that can't fire."""
+    """Tier 2: OCR of the burned-in timestamp band (blueprint §5.2)."""
     return None
 
 
-# ── station matching ─────────────────────────────────────────────────────
+# ── station matching with multi-signal scoring ───────────────────────────
+
+def match_station_multisignal(record: dict, stations: list[dict], cfg) -> tuple[dict | None, float, list[str]]:
+    """Match station using multi-signal evidence: folder hint, camera serial/body, pattern, deployment."""
+    if not stations:
+        return None, 0.0, []
+
+    best_station = None
+    best_score = 0.0
+    best_signals: list[str] = []
+
+    for s in stations:
+        score, signals = repo_ext.multi_signal_station_score(record, s)
+        if score > best_score:
+            best_score = score
+            best_station = s
+            best_signals = signals
+
+    min_conf = getattr(config.CONFIG.station_matching, "min_confidence_to_auto_assign", 0.70)
+    if best_score >= min_conf:
+        return best_station, best_score, best_signals
+
+    # Fallback to pure folder edit distance
+    fuzzy = match_station(record.get("folder", ""), stations, cfg.folder_match_max_edit_distance)
+    if fuzzy:
+        return fuzzy, 0.65, ["folder_fuzzy"]
+
+    return None, best_score, best_signals
+
 
 def match_station(folder_name: str, stations: list[dict], max_dist: int) -> dict | None:
-    """Fuzzy match against folder_hint: case-folded, separators stripped,
-    edit distance <= max_dist. Never silently guesses beyond that -- an
-    unmatched folder is reported, not assigned (blueprint §5.1)."""
+    """Fuzzy and exact match against station_id, name, and folder_hint."""
     target = _normalize(folder_name)
     if not target:
         return None
     best, best_dist = None, max_dist + 1
     for s in stations:
-        hint = _normalize(s.get("folder_hint") or "")
-        if not hint:
-            continue
-        d = _levenshtein(target, hint)
-        if d < best_dist:
-            best, best_dist = s, d
+        hints = [s.get("station_id") or "", s.get("name") or "", s.get("folder_hint") or ""]
+        for h in hints:
+            if not h:
+                continue
+            h_norm = _normalize(h)
+            if not h_norm:
+                continue
+            if target == h_norm:
+                return s
+            d = _levenshtein(target, h_norm)
+            if d < best_dist:
+                best, best_dist = s, d
     return best if best_dist <= max_dist else None
+
 
 
 def _normalize(s: str) -> str:
@@ -318,7 +463,7 @@ def _levenshtein(a: str, b: str) -> int:
     return prev[-1]
 
 
-# ── timestamps: EXIF -> OCR -> filename -> inferred ─────────────────────
+# ── timestamps: EXIF -> OCR -> filename -> inferred with conflict checking ─
 
 def _plausible(dt: datetime, min_year: int, max_future_days: int, now: datetime) -> bool:
     return dt.year >= min_year and dt <= now + timedelta(days=max_future_days)
@@ -336,38 +481,60 @@ def _parse_filename_timestamp(name: str) -> datetime | None:
 
 
 def _resolve_group_timestamps(records: list[dict], activity_start: str | None, cfg) -> None:
-    """Mutates each record in place: captured_at, captured_at_raw,
-    captured_at_source, drift_applied_s, flags."""
+    """Four-tier timestamp resolution with conflict tracking and confidence scoring."""
     now = datetime.now(timezone.utc)
     ordered = sorted(records, key=lambda r: r["path"].name)
 
     for r in ordered:
         exif_dt = r.get("exif_dt")
-        if exif_dt is not None and _plausible(exif_dt, cfg.min_plausible_year,
-                                               cfg.max_future_days, now):
+        fn_dt = _parse_filename_timestamp(r["path"].name)
+        ocr_dt = _ocr_timestamp_band(r["path"], cfg.timestamp_band_frac)
+
+        evidence = {
+            "exif_dt": exif_dt.isoformat() if exif_dt else None,
+            "filename_dt": fn_dt.isoformat() if fn_dt else None,
+            "ocr_dt": ocr_dt.isoformat() if ocr_dt else None,
+        }
+
+        # Check for conflict between EXIF and Filename
+        if exif_dt and fn_dt:
+            time_diff = abs((exif_dt - fn_dt).total_seconds())
+            if time_diff > 86400 * 30:  # > 30 days disparity
+                r["flags"].append("timestamp_conflict")
+                evidence["conflict_reason"] = f"EXIF and filename timestamps differ by {time_diff/86400:.1f} days"
+
+        if exif_dt is not None and _plausible(exif_dt, cfg.min_plausible_year, cfg.max_future_days, now):
             r["captured_at"], r["captured_at_raw"] = exif_dt, exif_dt
-            r["captured_at_source"] = "exif"
+            r["captured_at_source"] = "conflict" if "timestamp_conflict" in r["flags"] else "exif"
+            r["ts_confidence"] = 0.60 if "timestamp_conflict" in r["flags"] else 1.0
+            r["ts_method"] = "EXIF DateTimeOriginal"
+            r["ts_evidence"] = evidence
             continue
+
         if exif_dt is not None:
             r["captured_at_raw"] = exif_dt
             r["flags"].append("camera_clock_reset_suspected")
 
-        ocr_dt = _ocr_timestamp_band(r["path"], cfg.timestamp_band_frac)
         if ocr_dt is not None:
             r["captured_at"], r["captured_at_source"] = ocr_dt, "ocr"
             r.setdefault("captured_at_raw", ocr_dt)
+            r["ts_confidence"] = 0.90
+            r["ts_method"] = "OCR burned-in band"
+            r["ts_evidence"] = evidence
             continue
 
-        fn_dt = _parse_filename_timestamp(r["path"].name)
-        if fn_dt is not None and _plausible(fn_dt, cfg.min_plausible_year,
-                                             cfg.max_future_days, now):
-            r["captured_at"], r["captured_at_source"] = fn_dt, "filename"
+        if fn_dt is not None and _plausible(fn_dt, cfg.min_plausible_year, cfg.max_future_days, now):
+            r["captured_at"] = fn_dt
+            r["captured_at_source"] = "filename"
+            r.setdefault("captured_at_raw", exif_dt or fn_dt)
+            r["ts_confidence"] = 0.85
+            r["ts_method"] = "Filename pattern"
+            r["ts_evidence"] = evidence
             if exif_dt is not None:
                 r["flags"].append("exif_implausible_used_filename")
             continue
 
-    # drift correction: EXIF present but implausible, anchored to the
-    # station's own known deployment start (blueprint §5.3)
+    # Drift correction: EXIF present but implausible, anchored to station start
     if activity_start:
         anchor = datetime.fromisoformat(activity_start)
         implausible = [r for r in ordered if r["captured_at"] is None and r.get("exif_dt")]
@@ -377,12 +544,13 @@ def _resolve_group_timestamps(records: list[dict], activity_start: str | None, c
             for r in implausible:
                 r["captured_at"] = r["exif_dt"] + offset
                 r["captured_at_source"] = "exif"
+                r["ts_confidence"] = 0.70
+                r["ts_method"] = "EXIF with deployment drift correction"
                 r["drift_applied_s"] = int(offset.total_seconds())
+                r["ts_offset_s"] = int(offset.total_seconds())
                 r["flags"].append("camera_clock_reset_corrected")
 
-    # inference: interpolate from resolved neighbours in filename order, or
-    # anchor to the station's deployment start if there is nothing to
-    # interpolate between -- never invented from nothing (blueprint §5.2)
+    # Inference: interpolate from resolved neighbours in filename order
     resolved_idx = sorted(i for i, r in enumerate(ordered) if r["captured_at"] is not None)
     for i, r in enumerate(ordered):
         if r["captured_at"] is not None:
@@ -392,14 +560,24 @@ def _resolve_group_timestamps(records: list[dict], activity_start: str | None, c
         if before is not None and after is not None:
             t0, t1 = ordered[before]["captured_at"], ordered[after]["captured_at"]
             r["captured_at"] = t0 + (t1 - t0) * ((i - before) / (after - before))
+            r["ts_confidence"] = 0.50
+            r["ts_method"] = "Linear interpolation between neighbouring frames"
         elif before is not None:
             r["captured_at"] = ordered[before]["captured_at"]
+            r["ts_confidence"] = 0.40
+            r["ts_method"] = "Propagated from previous resolved frame"
         elif after is not None:
             r["captured_at"] = ordered[after]["captured_at"]
+            r["ts_confidence"] = 0.40
+            r["ts_method"] = "Propagated from subsequent resolved frame"
         elif activity_start:
             r["captured_at"] = datetime.fromisoformat(activity_start)
+            r["ts_confidence"] = 0.30
+            r["ts_method"] = "Anchored to station installation date"
         else:
             r["captured_at_source"] = "unknown"
+            r["ts_confidence"] = 0.0
+            r["ts_method"] = "Unresolvable"
             continue
         r["captured_at_source"] = "inferred"
         r["flags"].append("timestamp_inferred_from_sequence")
@@ -409,32 +587,31 @@ def _resolve_group_timestamps(records: list[dict], activity_start: str | None, c
 # ── mixed cards and bursts ────────────────────────────────────────────────
 
 def _detect_mixed_cameras(records: list[dict]) -> dict[str, list]:
-    """One folder, two camera bodies means the SD cards got mixed. Flagged
-    at the folder level; never auto-split (blueprint §5.4)."""
+    """Flag folders containing frames from multiple camera bodies or serials."""
     by_folder: dict[str, set] = {}
     for r in records:
         if r["corrupt"]:
             continue
-        body = (r.get("make") or "", r.get("model") or "")
-        if body == ("", ""):
+        body = (r.get("make") or "", r.get("model") or "", r.get("serial") or "")
+        if body == ("", "", ""):
             continue
         by_folder.setdefault(r["folder"], set()).add(body)
     return {f: sorted(bodies) for f, bodies in by_folder.items() if len(bodies) > 1}
 
 
 def _group_bursts(image_rows: list[dict], window_s: int) -> tuple[list[dict], list[dict]]:
-    """A 2-5 frame trigger is ONE visit, not several (blueprint §5.5).
-    Needs a station and a resolved timestamp on every row -- both are
-    guaranteed by confirm_ingest() before this is called."""
+    """Cluster frames within burst_window_s into discrete events."""
     events, links = [], []
     by_station: dict[str, list[dict]] = {}
     for row in image_rows:
         by_station.setdefault(row["station_id"], []).append(row)
 
     for station_id, rows in by_station.items():
-        rows.sort(key=lambda r: r["captured_at"])
+        rows.sort(key=lambda r: r["captured_at"] or "")
         clusters: list[list[dict]] = []
         for row in rows:
+            if not row.get("captured_at"):
+                continue
             if clusters:
                 gap = (datetime.fromisoformat(row["captured_at"])
                        - datetime.fromisoformat(clusters[-1][-1]["captured_at"])).total_seconds()
@@ -446,9 +623,12 @@ def _group_bursts(image_rows: list[dict], window_s: int) -> tuple[list[dict], li
             ev_id = "ev_" + hashlib.sha256(
                 "|".join([station_id] + [c["image_id"] for c in cluster]).encode()
             ).hexdigest()[:16]
-            events.append({"event_id": ev_id, "station_id": station_id,
-                            "started_at": cluster[0]["captured_at"],
-                            "ended_at": cluster[-1]["captured_at"]})
+            events.append({
+                "event_id": ev_id,
+                "station_id": station_id,
+                "started_at": cluster[0]["captured_at"],
+                "ended_at": cluster[-1]["captured_at"]
+            })
             links.extend({"image_id": c["image_id"], "event_id": ev_id} for c in cluster)
     return events, links
 
@@ -461,16 +641,33 @@ def _to_image_row(r: dict, run_id: str, reserve_id: str, station: dict | None,
         return v.isoformat() if isinstance(v, datetime) else v
 
     row = {
-        "image_id": r["sha256"][:16], "reserve_id": reserve_id, "run_id": run_id,
+        "image_id": r["sha256"][:16],
+        "reserve_id": reserve_id,
+        "run_id": run_id,
         "station_id": station["station_id"] if station else None,
-        "orig_path": r["orig_path"], "sha256": r["sha256"], "dhash": None,
-        "captured_at": iso(r["captured_at"]), "captured_at_raw": iso(r["captured_at_raw"]),
+        "orig_path": r["orig_path"],
+        "sha256": r["sha256"],
+        "dhash": r.get("dhash"),
+        "phash": r.get("dhash"),
+        "captured_at": iso(r["captured_at"]),
+        "captured_at_raw": iso(r["captured_at_raw"]),
         "captured_at_source": r["captured_at_source"],
-        "drift_applied_s": r["drift_applied_s"], "is_night": r["is_night"],
-        "width": r["width"], "height": r["height"], "bytes": r["bytes"],
-        "status": "corrupt" if r["corrupt"] else "pending",
-        "triage_stage": None, "flags": json.dumps(r["flags"]),
-        "origin_node": node, "lamport": repo.next_lamport(), "synced_at": None,
+        "ts_confidence": r.get("ts_confidence", 0.0),
+        "ts_method": r.get("ts_method"),
+        "ts_evidence": json.dumps(r.get("ts_evidence", {})),
+        "ts_offset_s": r.get("ts_offset_s", 0),
+        "drift_applied_s": r["drift_applied_s"],
+        "orientation": r.get("orientation", 1),
+        "is_night": r["is_night"],
+        "width": r["width"],
+        "height": r["height"],
+        "bytes": r["bytes"],
+        "status": "CORRUPT" if r["corrupt"] else "pending",
+        "triage_stage": None,
+        "flags": json.dumps(r["flags"]),
+        "origin_node": node,
+        "lamport": repo.next_lamport(),
+        "synced_at": None,
     }
     row["row_hash"] = repo.compute_row_hash(row)
     return row

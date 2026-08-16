@@ -3,7 +3,8 @@ See docs/DATA.md §7, docs/MODEL_CHOICES.md, docs/RESULTS.md.
 
     python -m tools.eval_identify
 
-Requires data/weights/identify_embedder.pt (python -m tools.train_identify).
+Requires edge/models/identify/identify_embedder.pt from the verified offline
+release bundle (or local offline training output).
 
 **Not the official ATRW test set** -- see tools/atrw_dataset.py's module
 docstring: its labels were withheld by the CVWC2019 organizers and were

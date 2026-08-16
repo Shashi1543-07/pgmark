@@ -55,10 +55,14 @@ import numpy as np
 from PIL import Image
 
 from edge import config
+from edge.pipeline.device import get_device_manager
 
 Keypoints = dict
 
-WEIGHTS_PATH = config.WEIGHTS_DIR / "keypoints" / "run" / "weights" / "best.pt"
+# This is an absolute path under edge/models, never Ultralytics' cache or a
+# model name. Passing a local path to YOLO prevents its normal convenience
+# behaviour from resolving/downloading a named checkpoint.
+WEIGHTS_PATH = config.KEYPOINTS_MODEL_PATH
 CONF_THRESHOLD = 0.5
 """Below this per-keypoint confidence, YOLO11-pose's own output is
 treated as v=0 (not visible) rather than v=2 -- quality_gate() then
@@ -135,7 +139,11 @@ def estimate_keypoints_trained(box: tuple[float, float, float, float],
             return None
         crop = img.crop((px0, py0, px1, py1))
 
-    results = model.predict(np.asarray(crop), verbose=False)
+    # Ultralytics receives an explicit device selected by the shared manager.
+    # A CUDA OOM retries this local pose inference on CPU; it never attempts a
+    # hub lookup or silently substitutes a different checkpoint.
+    results = get_device_manager().run_one(
+        lambda device: model.predict(np.asarray(crop), verbose=False, device=str(device)))
     if not results or results[0].keypoints is None or len(results[0].keypoints.xy) == 0:
         return None
 
@@ -165,3 +173,36 @@ def estimate_keypoints(box: tuple[float, float, float, float], image_path: str) 
     with Image.open(image_path) as img:
         image_size = img.size
     return estimate_keypoints_stub(box, image_size)
+
+
+def apply_physical_side(keypoints: Keypoints, side: str) -> Keypoints | None:
+    """Relabel the near-side pose pair using an independent side decision.
+
+    The pose model's ``right_*`` names are a channel convention, not a
+    physical-side prediction.  This function is intentionally called only
+    after the dedicated flank classifier has returned ``L`` or ``R``.  It
+    preserves the two measured coordinates while clearing the opposite trunk
+    pair, so ``identify.quality_gate`` and rectification use the actual side
+    and cannot silently query the wrong catalogue.
+
+    ``None`` means pose geometry does not contain one complete near-side
+    pair; callers must refuse rather than invent anchors.
+    """
+    if side not in ("L", "R"):
+        raise ValueError(f"physical side must be 'L' or 'R', got {side!r}")
+
+    pairs = {
+        "R": ("right_shoulder", "right_hip"),
+        "L": ("left_shoulder", "left_hip"),
+    }
+    def visible(pair: tuple[str, str]) -> bool:
+        return all(name in keypoints and keypoints[name][2] > 0 for name in pair)
+
+    source = next((pair for pair in pairs.values() if visible(pair)), None)
+    if source is None:
+        return None
+    out = {name: value for name, value in keypoints.items()
+           if name not in ("right_shoulder", "right_hip", "left_shoulder", "left_hip")}
+    destination = pairs[side]
+    out[destination[0]], out[destination[1]] = keypoints[source[0]], keypoints[source[1]]
+    return out

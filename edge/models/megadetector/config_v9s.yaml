@@ -1,0 +1,153 @@
+name: v9-s
+
+task:
+  task: inference
+  fast_inference: null
+  data:
+    source: null
+    image_size: ${image_size}
+    data_augment: {}
+  nms:
+    min_confidence: 0.5
+    min_iou: 0.5
+    max_bbox: 300
+  save_predict: false
+
+dataset:
+  path: /home/v-druizlopez/ssdprivate/MegaDB_resized/all_images_splitted_640
+  train: train
+  validation: val
+  class_num: 3
+  class_list: [animal, person, vehicle]
+  auto_download: null
+
+model:
+  name: v9-s
+  anchor:
+    reg_max: 16
+  model:
+    backbone:
+      - Conv:
+          source: 0
+          args: {out_channels: 32, kernel_size: 3, stride: 2}
+      - Conv:
+          args: {out_channels: 64, kernel_size: 3, stride: 2}
+      - ELAN:
+          args: {out_channels: 64, part_channels: 64}
+      - AConv:
+          args: {out_channels: 128}
+      - RepNCSPELAN:
+          args:
+            out_channels: 128
+            part_channels: 128
+            csp_args: {repeat_num: 3}
+          tags: B3
+      - AConv:
+          args: {out_channels: 192}
+      - RepNCSPELAN:
+          args:
+            out_channels: 192
+            part_channels: 192
+            csp_args: {repeat_num: 3}
+          tags: B4
+      - AConv:
+          args: {out_channels: 256}
+      - RepNCSPELAN:
+          args:
+            out_channels: 256
+            part_channels: 256
+            csp_args: {repeat_num: 3}
+          tags: B5
+
+    neck:
+      - SPPELAN:
+          args: {out_channels: 256}
+          tags: N3
+      - UpSample:
+          args: {scale_factor: 2, mode: nearest}
+      - Concat:
+          source: [-1, B4]
+      - RepNCSPELAN:
+          args:
+            out_channels: 192
+            part_channels: 192
+            csp_args: {repeat_num: 3}
+          tags: N4
+
+    head:
+      - UpSample:
+          args: {scale_factor: 2, mode: nearest}
+      - Concat:
+          source: [-1, B3]
+      - RepNCSPELAN:
+          args:
+            out_channels: 128
+            part_channels: 128
+            csp_args: {repeat_num: 3}
+          tags: P3
+      - AConv:
+          args: {out_channels: 96}
+      - Concat:
+          source: [-1, N4]
+      - RepNCSPELAN:
+          args:
+            out_channels: 192
+            part_channels: 192
+            csp_args: {repeat_num: 3}
+          tags: P4
+      - AConv:
+          args: {out_channels: 128}
+      - Concat:
+          source: [-1, N3]
+      - RepNCSPELAN:
+          args:
+            out_channels: 256
+            part_channels: 256
+            csp_args: {repeat_num: 3}
+          tags: P5
+
+    detection:
+      - MultiheadDetection:
+          source: [P3, P4, P5]
+          tags: Main
+          output: true
+
+    auxiliary:
+      - SPPELAN:
+          source: B5
+          args: {out_channels: 256}
+          tags: A5
+      - UpSample:
+          args: {scale_factor: 2, mode: nearest}
+      - Concat:
+          source: [-1, B4]
+      - RepNCSPELAN:
+          args:
+            out_channels: 192
+            part_channels: 192
+            csp_args: {repeat_num: 3}
+          tags: A4
+      - UpSample:
+          args: {scale_factor: 2, mode: nearest}
+      - Concat:
+          source: [-1, B3]
+      - RepNCSPELAN:
+          args:
+            out_channels: 128
+            part_channels: 128
+            csp_args: {repeat_num: 3}
+          tags: A3
+      - MultiheadDetection:
+          source: [A3, A4, A5]
+          tags: AUX
+          output: true
+
+device: 0
+cpu_num: 16
+image_size: [640, 640]
+out_path: runs
+exist_ok: true
+lucky_number: 10
+use_wandb: false
+use_tensorboard: false
+weight: true

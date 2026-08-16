@@ -1,0 +1,1725 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>PUGMARK · Complete Software Guide & Hackathon Technical Master</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,600;1,6..72,400&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg-primary: #090c0b;
+      --bg-surface: #121715;
+      --bg-elevated: #1a221f;
+      --bg-card: #151d1a;
+      --border-subtle: #22302a;
+      --border-strong: #32463d;
+      --tiger-amber: #f59e0b;
+      --tiger-orange: #ea580c;
+      --tiger-gold: #fbbf24;
+      --forest-emerald: #10b981;
+      --forest-dark: #064e3b;
+      --alert-red: #ef4444;
+      --accent-cyan: #06b6d4;
+      --text-main: #f9fafb;
+      --text-muted: #9ca3af;
+      --text-dim: #6b7280;
+      --font-sans: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      --font-serif: 'Newsreader', Georgia, serif;
+      --font-mono: 'JetBrains Mono', Consolas, monospace;
+      --radius-sm: 6px;
+      --radius-md: 10px;
+      --radius-lg: 16px;
+      --radius-xl: 24px;
+      --shadow-sm: 0 2px 8px rgba(0,0,0,0.35);
+      --shadow-md: 0 8px 24px rgba(0,0,0,0.45);
+      --shadow-lg: 0 16px 40px rgba(0,0,0,0.65);
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    
+    html, body {
+      width: 100%;
+      min-height: 100%;
+      background-color: var(--bg-primary);
+      color: var(--text-main);
+      font-family: var(--font-sans);
+      line-height: 1.6;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    /* ── Sticky Top Navigation (Fully Responsive & Swipeable) ────────── */
+    .top-nav {
+      position: sticky;
+      top: 0;
+      z-index: 1000;
+      background: rgba(9, 12, 11, 0.94);
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
+      border-bottom: 1px solid var(--border-subtle);
+      padding: 10px 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    @media (min-width: 992px) {
+      .top-nav {
+        flex-direction: row;
+        align-items: center;
+        justify-content: space-between;
+        padding: 12px 28px;
+      }
+    }
+
+    .nav-brand-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      width: 100%;
+    }
+
+    @media (min-width: 992px) {
+      .nav-brand-row {
+        width: auto;
+      }
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-weight: 800;
+      font-size: 1.15rem;
+      letter-spacing: -0.4px;
+      color: #fff;
+    }
+
+    .brand-badge {
+      background: linear-gradient(135deg, var(--tiger-orange), var(--tiger-amber));
+      color: #fff;
+      padding: 2px 8px;
+      border-radius: var(--radius-sm);
+      font-size: 0.7rem;
+      font-weight: 800;
+      letter-spacing: 0.5px;
+      text-transform: uppercase;
+    }
+
+    .hackathon-meta {
+      font-size: 0.78rem;
+      color: var(--text-muted);
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .hackathon-meta strong {
+      color: var(--forest-emerald);
+    }
+
+    @media (max-width: 640px) {
+      .hackathon-meta {
+        display: none;
+      }
+    }
+
+    /* Scrollable Tab Bar */
+    .nav-tabs-wrapper {
+      width: 100%;
+      overflow-x: auto;
+      scrollbar-width: none;
+      -webkit-overflow-scrolling: touch;
+      padding-bottom: 2px;
+    }
+
+    @media (min-width: 992px) {
+      .nav-tabs-wrapper {
+        width: auto;
+      }
+    }
+
+    .nav-tabs-wrapper::-webkit-scrollbar {
+      display: none;
+    }
+
+    .nav-tabs {
+      display: flex;
+      gap: 4px;
+      background: var(--bg-surface);
+      padding: 4px;
+      border-radius: var(--radius-md);
+      border: 1px solid var(--border-subtle);
+      width: max-content;
+    }
+
+    .tab-btn {
+      background: transparent;
+      border: none;
+      color: var(--text-muted);
+      padding: 6px 12px;
+      font-family: var(--font-sans);
+      font-size: 0.8rem;
+      font-weight: 600;
+      border-radius: var(--radius-sm);
+      cursor: pointer;
+      white-space: nowrap;
+      transition: all 0.16s ease;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .tab-btn:hover {
+      color: #fff;
+      background: var(--bg-elevated);
+    }
+
+    .tab-btn.active {
+      background: var(--tiger-orange);
+      color: #fff;
+      box-shadow: var(--shadow-sm);
+    }
+
+    /* ── Hero Section ──────────────────────────────────────────────────── */
+    .hero {
+      padding: clamp(28px, 4vw, 48px) 16px 20px;
+      max-width: 1240px;
+      margin: 0 auto;
+      text-align: center;
+    }
+
+    .hero-pre {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 3px 10px;
+      border-radius: 999px;
+      background: rgba(16, 185, 129, 0.12);
+      border: 1px solid rgba(16, 185, 129, 0.3);
+      color: var(--forest-emerald);
+      font-size: 0.75rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-bottom: 12px;
+    }
+
+    .hero h1 {
+      font-size: clamp(1.6rem, 4vw, 2.8rem);
+      font-weight: 800;
+      line-height: 1.15;
+      letter-spacing: -0.8px;
+      margin-bottom: 10px;
+      background: linear-gradient(135deg, #ffffff 30%, #e5e7eb 70%, var(--tiger-gold) 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+
+    .hero p {
+      font-size: clamp(0.9rem, 1.8vw, 1.05rem);
+      color: var(--text-muted);
+      max-width: 780px;
+      margin: 0 auto 20px;
+      line-height: 1.6;
+    }
+
+    /* ── Pitch Timer Card ──────────────────────────────────────────────── */
+    .pitch-timer-card {
+      background: var(--bg-surface);
+      border: 1px solid var(--border-strong);
+      border-radius: var(--radius-lg);
+      padding: 16px 20px;
+      max-width: 720px;
+      margin: 0 auto;
+      box-shadow: var(--shadow-md);
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    @media (min-width: 600px) {
+      .pitch-timer-card {
+        flex-direction: row;
+        align-items: center;
+        justify-content: space-between;
+      }
+    }
+
+    .timer-info-block {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      text-align: left;
+    }
+
+    .timer-val {
+      font-family: var(--font-mono);
+      font-size: clamp(2.2rem, 5vw, 2.8rem);
+      font-weight: 800;
+      color: var(--tiger-gold);
+      line-height: 1;
+      min-width: 120px;
+    }
+
+    .timer-details {
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+    }
+
+    .timer-stage {
+      font-size: 0.84rem;
+      font-weight: 700;
+      color: var(--forest-emerald);
+      text-transform: uppercase;
+      letter-spacing: 0.4px;
+    }
+
+    .timer-sub {
+      font-size: 0.74rem;
+      color: var(--text-dim);
+    }
+
+    .timer-progress-track {
+      width: 100%;
+      height: 5px;
+      background: var(--bg-elevated);
+      border-radius: 999px;
+      overflow: hidden;
+      margin-top: 4px;
+    }
+
+    .timer-progress-bar {
+      width: 100%;
+      height: 100%;
+      background: linear-gradient(90deg, var(--forest-emerald), var(--tiger-amber), var(--alert-red));
+      transition: width 1s linear;
+    }
+
+    .timer-controls {
+      display: flex;
+      gap: 8px;
+    }
+
+    .btn-timer {
+      padding: 8px 16px;
+      font-size: 0.82rem;
+      font-weight: 700;
+      border-radius: var(--radius-sm);
+      cursor: pointer;
+      border: 1px solid var(--border-subtle);
+      background: var(--bg-elevated);
+      color: #fff;
+      transition: all 0.15s ease;
+      white-space: nowrap;
+    }
+
+    .btn-timer.primary {
+      background: var(--tiger-orange);
+      border-color: var(--tiger-orange);
+    }
+
+    .btn-timer:hover {
+      transform: translateY(-1px);
+    }
+
+    /* ── Main Container & Layout ───────────────────────────────────────── */
+    .container {
+      max-width: 1240px;
+      margin: 0 auto;
+      padding: 12px 16px 80px;
+    }
+
+    .tab-content {
+      display: none;
+    }
+
+    .tab-content.active {
+      display: block;
+      animation: fadeIn 0.18s ease;
+    }
+
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(4px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    /* ── Fluid Grids ───────────────────────────────────────────────────── */
+    .grid-2 {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 16px;
+    }
+
+    @media (min-width: 780px) {
+      .grid-2 {
+        grid-template-columns: 1fr 1fr;
+      }
+    }
+
+    .grid-3 {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 16px;
+    }
+
+    @media (min-width: 700px) {
+      .grid-3 {
+        grid-template-columns: repeat(2, 1fr);
+      }
+    }
+
+    @media (min-width: 1040px) {
+      .grid-3 {
+        grid-template-columns: repeat(3, 1fr);
+      }
+    }
+
+    /* ── Cards & Containers ────────────────────────────────────────────── */
+    .card {
+      background: var(--bg-surface);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-lg);
+      padding: clamp(16px, 3.5vw, 24px);
+      box-shadow: var(--shadow-sm);
+      position: relative;
+    }
+
+    .card.highlight {
+      border-color: var(--tiger-amber);
+    }
+
+    .card h2 {
+      font-size: clamp(1.15rem, 2.5vw, 1.4rem);
+      font-weight: 700;
+      letter-spacing: -0.3px;
+      margin-bottom: 10px;
+      color: #fff;
+    }
+
+    .card h3 {
+      font-size: 1.05rem;
+      font-weight: 700;
+      color: var(--tiger-gold);
+      margin: 14px 0 6px;
+    }
+
+    .card p {
+      color: var(--text-muted);
+      font-size: 0.9rem;
+      line-height: 1.6;
+      margin-bottom: 10px;
+    }
+
+    .tag-pill {
+      display: inline-block;
+      padding: 2px 7px;
+      border-radius: var(--radius-sm);
+      font-size: 0.7rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.4px;
+      background: rgba(245, 158, 11, 0.15);
+      color: var(--tiger-amber);
+      border: 1px solid rgba(245, 158, 11, 0.3);
+      margin-bottom: 8px;
+    }
+
+    .tag-pill.green {
+      background: rgba(16, 185, 129, 0.15);
+      color: var(--forest-emerald);
+      border-color: rgba(16, 185, 129, 0.3);
+    }
+
+    .tag-pill.cyan {
+      background: rgba(6, 182, 212, 0.15);
+      color: var(--accent-cyan);
+      border-color: rgba(6, 182, 212, 0.3);
+    }
+
+    /* ── Tab Deep-Dive Feature Showcase ────────────────────────────────── */
+    .software-tab-card {
+      background: var(--bg-surface);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-lg);
+      padding: 20px;
+      margin-bottom: 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      border-left: 4px solid var(--forest-emerald);
+    }
+
+    .software-tab-card.amber {
+      border-left-color: var(--tiger-amber);
+    }
+
+    .software-tab-card.cyan {
+      border-left-color: var(--accent-cyan);
+    }
+
+    .software-tab-header {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+    }
+
+    .software-tab-title {
+      font-size: 1.15rem;
+      font-weight: 700;
+      color: #fff;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .software-route-badge {
+      font-family: var(--font-mono);
+      font-size: 0.72rem;
+      background: var(--bg-card);
+      border: 1px solid var(--border-strong);
+      padding: 2px 8px;
+      border-radius: var(--radius-sm);
+      color: var(--tiger-gold);
+    }
+
+    .feature-points {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 10px;
+      margin-top: 6px;
+    }
+
+    @media (min-width: 720px) {
+      .feature-points {
+        grid-template-columns: 1fr 1fr;
+      }
+    }
+
+    .feature-point-item {
+      background: var(--bg-card);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-md);
+      padding: 10px 14px;
+      font-size: 0.86rem;
+      color: var(--text-muted);
+    }
+
+    .feature-point-item strong {
+      color: var(--text-main);
+      display: block;
+      margin-bottom: 2px;
+    }
+
+    /* ── Math & Code Boxes ─────────────────────────────────────────────── */
+    .math-box {
+      background: var(--bg-card);
+      border: 1px solid var(--border-strong);
+      border-radius: var(--radius-md);
+      padding: 12px 16px;
+      margin: 12px 0;
+      font-family: var(--font-mono);
+      font-size: 0.82rem;
+      color: #e5e7eb;
+      overflow-x: auto;
+      line-height: 1.55;
+    }
+
+    .math-title {
+      font-size: 0.72rem;
+      text-transform: uppercase;
+      letter-spacing: 0.8px;
+      color: var(--forest-emerald);
+      font-weight: 700;
+      margin-bottom: 6px;
+      font-family: var(--font-sans);
+    }
+
+    /* ── Pipeline Steps ────────────────────────────────────────────────── */
+    .pipeline-container {
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+      margin: 16px 0;
+    }
+
+    .pipeline-step {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      background: var(--bg-surface);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-lg);
+      padding: 18px;
+      transition: border-color 0.2s ease;
+    }
+
+    @media (min-width: 640px) {
+      .pipeline-step {
+        flex-direction: row;
+        align-items: flex-start;
+        gap: 18px;
+        padding: 22px;
+      }
+    }
+
+    .pipeline-step:hover {
+      border-color: var(--tiger-amber);
+    }
+
+    .step-num-badge {
+      width: 52px;
+      height: 52px;
+      border-radius: var(--radius-md);
+      background: linear-gradient(135deg, var(--bg-elevated), var(--bg-card));
+      border: 1px solid var(--border-strong);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      font-weight: 800;
+      font-size: 1.25rem;
+      color: var(--tiger-gold);
+      flex-shrink: 0;
+    }
+
+    .step-num-badge span {
+      font-size: 0.58rem;
+      text-transform: uppercase;
+      color: var(--text-dim);
+      font-weight: 700;
+      letter-spacing: 0.5px;
+    }
+
+    .step-body {
+      flex: 1;
+    }
+
+    .step-body h3 {
+      margin: 0 0 4px 0;
+      font-size: 1.1rem;
+      color: #fff;
+    }
+
+    .step-specs {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-top: 8px;
+    }
+
+    .spec-item {
+      background: var(--bg-elevated);
+      border: 1px solid var(--border-subtle);
+      padding: 2px 7px;
+      border-radius: var(--radius-sm);
+      font-size: 0.75rem;
+      font-family: var(--font-mono);
+      color: var(--text-muted);
+    }
+
+    .spec-item strong {
+      color: var(--text-main);
+    }
+
+    /* ── Speech Box & Pitch Script ─────────────────────────────────────── */
+    .pitch-slide {
+      background: var(--bg-surface);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-lg);
+      padding: clamp(16px, 3.5vw, 24px);
+      margin-bottom: 16px;
+      box-shadow: var(--shadow-md);
+    }
+
+    .slide-header {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      border-bottom: 1px solid var(--border-subtle);
+      padding-bottom: 10px;
+      margin-bottom: 12px;
+    }
+
+    .slide-time-tag {
+      background: rgba(245, 158, 11, 0.15);
+      border: 1px solid rgba(245, 158, 11, 0.3);
+      color: var(--tiger-gold);
+      padding: 2px 8px;
+      border-radius: 999px;
+      font-size: 0.75rem;
+      font-weight: 700;
+      font-family: var(--font-mono);
+    }
+
+    .speech-box {
+      background: var(--bg-card);
+      border-left: 4px solid var(--tiger-amber);
+      padding: 14px 18px;
+      border-radius: 0 var(--radius-md) var(--radius-md) 0;
+      font-family: var(--font-serif);
+      font-size: clamp(0.98rem, 1.8vw, 1.1rem);
+      line-height: 1.65;
+      color: #e5e7eb;
+      margin: 12px 0;
+    }
+
+    .speech-box mark {
+      background: rgba(234, 88, 12, 0.3);
+      color: #fff;
+      padding: 0 4px;
+      border-radius: 2px;
+    }
+
+    /* ── Slide Carousel ────────────────────────────────────────────────── */
+    .carousel-nav {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      margin-bottom: 16px;
+      background: var(--bg-surface);
+      padding: 10px 16px;
+      border-radius: var(--radius-md);
+      border: 1px solid var(--border-subtle);
+    }
+
+    .slide-viewer {
+      background: var(--bg-card);
+      border: 2px solid var(--border-strong);
+      border-radius: var(--radius-lg);
+      padding: clamp(18px, 4vw, 32px);
+      min-height: 360px;
+      box-shadow: var(--shadow-lg);
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+    }
+
+    /* ── Jury QA Accordion ─────────────────────────────────────────────── */
+    .qa-search-bar {
+      margin-bottom: 16px;
+    }
+
+    .qa-input {
+      width: 100%;
+      background: var(--bg-surface);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-md);
+      padding: 10px 14px;
+      color: #fff;
+      font-family: var(--font-sans);
+      font-size: 0.88rem;
+      outline: none;
+      transition: border-color 0.2s;
+    }
+
+    .qa-input:focus {
+      border-color: var(--tiger-amber);
+    }
+
+    .qa-card {
+      background: var(--bg-surface);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-md);
+      margin-bottom: 8px;
+      overflow: hidden;
+      transition: all 0.2s ease;
+    }
+
+    .qa-card:hover {
+      border-color: var(--border-strong);
+    }
+
+    .qa-q {
+      padding: 12px 16px;
+      font-weight: 700;
+      font-size: 0.92rem;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      color: #fff;
+      user-select: none;
+    }
+
+    .qa-q:hover {
+      color: var(--tiger-gold);
+    }
+
+    .qa-a {
+      padding: 0 16px 14px;
+      color: var(--text-muted);
+      font-size: 0.88rem;
+      line-height: 1.6;
+      border-top: 1px solid var(--border-subtle);
+      display: none;
+      background: var(--bg-card);
+    }
+
+    .qa-card.open .qa-a {
+      display: block;
+      padding-top: 12px;
+    }
+
+    .qa-badge {
+      font-size: 0.65rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      padding: 2px 6px;
+      border-radius: var(--radius-sm);
+      background: var(--bg-elevated);
+      color: var(--accent-cyan);
+      flex-shrink: 0;
+    }
+
+    /* ── Offline Architecture Flow Diagram ─────────────────────────────── */
+    .sync-diagram-box {
+      background: var(--bg-card);
+      border: 1px solid var(--border-strong);
+      border-radius: var(--radius-lg);
+      padding: 20px;
+      margin: 16px 0;
+    }
+
+    .sync-nodes-grid {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 16px;
+      margin-top: 14px;
+    }
+
+    @media (min-width: 720px) {
+      .sync-nodes-grid {
+        grid-template-columns: 1fr 60px 1fr;
+        align-items: center;
+      }
+    }
+
+    .sync-node-card {
+      background: var(--bg-surface);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-md);
+      padding: 16px;
+      text-align: center;
+    }
+
+    .sync-arrow {
+      text-align: center;
+      font-size: 1.5rem;
+      color: var(--tiger-gold);
+    }
+
+    /* Footer */
+    .footer {
+      border-top: 1px solid var(--border-subtle);
+      padding: 24px 16px;
+      text-align: center;
+      color: var(--text-dim);
+      font-size: 0.78rem;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Top Sticky Navigation Bar -->
+  <nav class="top-nav">
+    <div class="nav-brand-row">
+      <div class="brand">
+        <span>🐅 PUGMARK</span>
+        <span class="brand-badge">v0.2.0 Edge AI</span>
+      </div>
+      <div class="hackathon-meta">
+        <span>Event: <strong>Viksit Nagpur Hackathon 2026</strong></span>
+        <span>Theme: <strong>Forest & Wildlife</strong></span>
+      </div>
+    </div>
+    <div class="nav-tabs-wrapper">
+      <div class="nav-tabs">
+        <button class="tab-btn active" onclick="switchTab('tour')">🖥 Software Tour & Tabs</button>
+        <button class="tab-btn" onclick="switchTab('offline')">💾 Offline Engine & Sync</button>
+        <button class="tab-btn" onclick="switchTab('pipeline')">⚡ 5-Stage Root Pipeline</button>
+        <button class="tab-btn" onclick="switchTab('models')">🧠 3 AI Models & Math</button>
+        <button class="tab-btn" onclick="switchTab('pitch')">⏱ 3-Min Pitch Script</button>
+        <button class="tab-btn" onclick="switchTab('slides')">📊 Slide Deck</button>
+        <button class="tab-btn" onclick="switchTab('qa')">🎯 Jury Q&A Defense</button>
+      </div>
+    </div>
+  </nav>
+
+  <!-- Hero Header with Working Pitch Timer -->
+  <header class="hero">
+    <div class="hero-pre">🏆 Complete Software Architecture & Hackathon Master Guide</div>
+    <h1>PUGMARK: Offline Edge AI Wildlife Intelligence</h1>
+    <p>
+      An offline-first, zero-cloud edge workstation for tiger reserves. Automates the full lifecycle: SD card ingest, blank triage, biometric stripe re-identification, territory mapping, and conflict early warnings.
+    </p>
+
+    <!-- Pitch Countdown Timer -->
+    <div class="pitch-timer-card">
+      <div class="timer-info-block">
+        <div class="timer-val" id="timerCount">03:00</div>
+        <div class="timer-details">
+          <div class="timer-stage" id="timerStage">Ready for Pitch</div>
+          <div class="timer-sub">Strict 3-Minute Hackathon Presentation Countdown</div>
+          <div class="timer-progress-track">
+            <div class="timer-progress-bar" id="timerBar"></div>
+          </div>
+        </div>
+      </div>
+      <div class="timer-controls">
+        <button class="btn-timer primary" id="timerStartBtn" onclick="toggleTimer()">▶ Start Pitch</button>
+        <button class="btn-timer" onclick="resetTimer()">⟲ Reset</button>
+      </div>
+    </div>
+  </header>
+
+  <!-- Main Content Container -->
+  <main class="container">
+
+    <!-- ══════════════════ TAB 1: SOFTWARE TOUR & TABS EXPLAINED ══════════════════ -->
+    <section id="tab-tour" class="tab-content active">
+      <div class="card" style="margin-bottom:16px;">
+        <span class="tag-pill green">Application Walkthrough</span>
+        <h2>How the PUGMARK Software Works: Every Tab Explained in Simple Language</h2>
+        <p>
+          PUGMARK is structured into 4 functional groups matching how field rangers and wildlife biologists work during a tiger survey:
+        </p>
+      </div>
+
+      <!-- Group 1: Cycle Management -->
+      <h3 style="color:var(--forest-emerald); font-size:1.15rem; margin:16px 0 10px;">📁 GROUP 1: CYCLE MANAGEMENT (IMPORT & TRIAGE)</h3>
+      
+      <div class="software-tab-card">
+        <div class="software-tab-header">
+          <div class="software-tab-title">📥 1. Import Photos (Monitoring Cycle)</div>
+          <span class="software-route-badge">View: #run</span>
+        </div>
+        <p>
+          <strong>What it does in simple terms:</strong> This is where the ranger starts. You insert an SD card from a camera trap or select a folder of photos. The software scans all images, checks for corrupt files, and organizes rapid bursts of photos (taken within 30 seconds of each other) into a single "wildlife encounter".
+        </p>
+        <div class="feature-points">
+          <div class="feature-point-item">
+            <strong>Clock Drift Correction:</strong> Camera trap clocks drift by minutes or months. The software extracts true capture dates from EXIF metadata headers without breaking.
+          </div>
+          <div class="feature-point-item">
+            <strong>SHA-256 Deduplication:</strong> Prevents copying the same photo twice if an SD card is accidentally scanned multiple times.
+          </div>
+          <div class="feature-point-item">
+            <strong>Camtrap DP Export:</strong> Generates standardized, internationally accepted Wildlife Data Packages with 1-click for government archives.
+          </div>
+          <div class="feature-point-item">
+            <strong>Burst Grouping:</strong> 10 photos of a passing tiger are grouped into 1 event, preventing duplicate count inflation.
+          </div>
+        </div>
+      </div>
+
+      <div class="software-tab-card">
+        <div class="software-tab-header">
+          <div class="software-tab-title">🍃 2. Blank Frames (Automated Triage)</div>
+          <span class="software-route-badge">View: #triage</span>
+        </div>
+        <p>
+          <strong>What it does in simple terms:</strong> Over 80% of camera trap photos are just moving grass, leaves, or cattle. This tab shows all frames filtered out by AI. Crucially, <strong>nothing is permanently deleted</strong>—blank photos are moved to a safety quarantine where rangers can inspect or restore them if an animal was missed.
+        </p>
+        <div class="feature-points">
+          <div class="feature-point-item">
+            <strong>Two-Tier Filter:</strong> Fast background median subtraction (Stage A) followed by MegaDetector V6 (Stage B).
+          </div>
+          <div class="feature-point-item">
+            <strong>1-Click Restore:</strong> If a hidden tiger in bushes is flagged as blank, clicking "Restore" instantly brings it back into the identification pipeline.
+          </div>
+        </div>
+      </div>
+
+      <!-- Group 2: Tiger Intelligence & Biometrics -->
+      <h3 style="color:var(--tiger-amber); font-size:1.15rem; margin:24px 0 10px;">🐅 GROUP 2: TIGERS & BIOMETRIC STRIPE ID</h3>
+
+      <div class="software-tab-card amber">
+        <div class="software-tab-header">
+          <div class="software-tab-title">📚 3. Tigers (Demographic Catalogue)</div>
+          <span class="software-route-badge">View: #tigers</span>
+        </div>
+        <p>
+          <strong>What it does in simple terms:</strong> The official digital census registry for the reserve. Every tiger (e.g., <code>PENCH-035</code>, <code>T-107</code>) has its own dedicated profile card showing its photo gallery, left/right flank stripe pelts, historical timeline, camera stations visited, and calculated territory size.
+        </p>
+        <div class="feature-points">
+          <div class="feature-point-item">
+            <strong>Flank Separation:</strong> Displays Left Flank and Right Flank photo galleries separately because tiger stripes are completely asymmetric.
+          </div>
+          <div class="feature-point-item">
+            <strong>Merge Tool:</strong> Allows senior biologists to combine two provisional IDs (e.g. <code>PROV-01</code> into <code>PENCH-035</code>) with automatic audit recording.
+          </div>
+        </div>
+      </div>
+
+      <div class="software-tab-card amber">
+        <div class="software-tab-header">
+          <div class="software-tab-title">🔍 4. Identify a Photo (Single-Shot Sandbox)</div>
+          <span class="software-route-badge">View: #identify</span>
+        </div>
+        <p>
+          <strong>What it does in simple terms:</strong> A test lab for forest officers. Drop any single tiger photo into this box. The AI immediately draws the bounding box, detects the shoulder/hip axis, normalizes the flank, and compares its 2048-D stripe embedding against all tigers in the database, ranking the closest matches with visual confidence scores.
+        </p>
+      </div>
+
+      <div class="software-tab-card amber">
+        <div class="software-tab-header">
+          <div class="software-tab-title">⚖ 5. Needs Review (Human-in-the-Loop Queue)</div>
+          <span class="software-route-badge">View: #review</span>
+        </div>
+        <p>
+          <strong>What it does in simple terms:</strong> Safe AI means never guessing wildly. If the AI is between 65% and 85% confident (e.g. night-time motion blur, mud on flank), the photo is placed in this review queue. The officer is shown a side-by-side comparison with the candidate tiger and can confirm or reject the match with one click.
+        </p>
+      </div>
+
+      <!-- Group 3: Intelligence & Early Warning -->
+      <h3 style="color:var(--accent-cyan); font-size:1.15rem; margin:24px 0 10px;">🗺 GROUP 3: MAPS, CAMERAS & CONFLICT ALERTS</h3>
+
+      <div class="software-tab-card cyan">
+        <div class="software-tab-header">
+          <div class="software-tab-title">🌐 6. Territories (Interactive GIS Reserve Map)</div>
+          <span class="software-route-badge">View: #map</span>
+        </div>
+        <p>
+          <strong>What it does in simple terms:</strong> A full-screen, offline GIS map of the tiger reserve. Shows all 81 camera stations (active, offline, new), territory home range polygons for all 150 tigers, legal sanctuary perimeter boundaries, Core/Buffer zones, and an interactive <strong>Chronological Movement Scrubber</strong> that replays tiger sightings day-by-day with animated radar pings.
+        </p>
+      </div>
+
+      <div class="software-tab-card cyan">
+        <div class="software-tab-header">
+          <div class="software-tab-title">📷 7. Camera Stations (Hardware & Field Assets)</div>
+          <span class="software-route-badge">View: #stations</span>
+        </div>
+        <p>
+          <strong>What it does in simple terms:</strong> Manages field camera assets. Tracks camera make, model, serial numbers (Reconyx, Cuddeback, Bushnell), GPS coordinates, village distance, and calculates "camera-days" (the number of days a camera was operational) to ensure missing tiger sightings aren't just caused by a dead battery.
+        </p>
+      </div>
+
+      <div class="software-tab-card cyan">
+        <div class="software-tab-header">
+          <div class="software-tab-title">🚨 8. Alerts (Human-Wildlife Conflict & Risk Feed)</div>
+          <span class="software-route-badge">View: #alerts</span>
+        </div>
+        <p>
+          <strong>What it does in simple terms:</strong> The automated early-warning system. Evaluates 10 biological and spatial rules across cycles. If a tiger's trajectory veers within 2.5 km of a village, or if an interior tiger enters human buffer zones, or if a tiger travels at an impossible speed (&gt;12 km/h), an instant tactical alert is raised for ranger response.
+        </p>
+      </div>
+
+      <!-- Group 4: Record, Ops & Sync -->
+      <h3 style="color:#a78bfa; font-size:1.15rem; margin:24px 0 10px;">💾 GROUP 4: AUDIT, SYSTEM OPS & OFFLINE SHARING</h3>
+
+      <div class="software-tab-card" style="border-left-color:#a78bfa;">
+        <div class="software-tab-header">
+          <div class="software-tab-title">📜 9. History / Audit Log & 10. System Health</div>
+          <span class="software-route-badge">Views: #audit & #ops</span>
+        </div>
+        <p>
+          <strong>What it does in simple terms:</strong> <br>
+          • <strong>History (#audit):</strong> An unchangeable, cryptographically hashed ledger of every action (who imported photos, who approved a tiger match, who acknowledged an alert).<br>
+          • <strong>System Health (#ops):</strong> Shows CPU/GPU acceleration, disk space, AI model status, and includes a 1-click Demo Data Loader (150 Tigers bulk demo) for demonstrations.
+        </p>
+      </div>
+
+      <div class="software-tab-card" style="border-left-color:#a78bfa;">
+        <div class="software-tab-header">
+          <div class="software-tab-title">🔄 11. Share Data (Multi-Device Offline Sync)</div>
+          <span class="software-route-badge">View: #sync</span>
+        </div>
+        <p>
+          <strong>What it does in simple terms:</strong> Solves the jungle collaboration problem. When two rangers work on different laptops in separate forest ranges with zero internet, this tab exports a compact encrypted "Sync Bundle" to a USB flash drive. When plugged into the headquarters laptop, changes merge automatically without conflicts!
+        </p>
+      </div>
+    </section>
+
+    <!-- ══════════════════ TAB 2: OFFLINE ARCHITECTURE & SYNC ══════════════════ -->
+    <section id="tab-offline" class="tab-content">
+      <div class="card" style="margin-bottom:16px;">
+        <span class="tag-pill cyan">Under The Hood</span>
+        <h2>How PUGMARK Works 100% Offline & Shares Between Laptops</h2>
+        <p>
+          In core tiger reserves (like Pench or Tadoba), cellular towers do not exist. PUGMARK is engineered from the ground up to never require internet connectivity.
+        </p>
+      </div>
+
+      <div class="grid-2">
+        <div class="card">
+          <h3>💾 1. Zero-Cloud Local Stack</h3>
+          <ul style="color:var(--text-muted); font-size:0.9rem; margin-left:18px; line-height:1.7;">
+            <li><strong>Embedded SQLite with WAL Mode:</strong> The entire database lives in a local <code>.db</code> file. Write-Ahead Logging (WAL) allows concurrent reads and writes without database lockups.</li>
+            <li><strong>Local PyTorch & ONNX Weights:</strong> All 3 neural networks (MegaDetector, YOLO11-Pose, ResNet-50) run directly on the laptop's CPU or local GPU.</li>
+            <li><strong>Standalone SVG Map Engine:</strong> The reserve map uses pure mathematical equirectangular/UTM coordinate projections directly in SVG—zero Google Maps or Mapbox API tokens needed.</li>
+          </ul>
+        </div>
+
+        <div class="card">
+          <h3>🔄 2. Multi-Device USB Synchronization</h3>
+          <p>
+            How do rangers combine data when Range A and Range B operate on separate laptops without internet?
+          </p>
+          <ul style="color:var(--text-muted); font-size:0.9rem; margin-left:18px; line-height:1.7;">
+            <li><strong>Lamport Logical Timestamps:</strong> Every database row carries a monotonically increasing version counter (Lamport clock).</li>
+            <li><strong>Delta Sync Bundles:</strong> Clicking "Export Sync Bundle" packages only newly added photos, tiger IDs, and alerts into a compact file.</li>
+            <li><strong>Conflict-Free Merge:</strong> When imported on another laptop, the system compares Lamport clocks: newer human edits take precedence over older automated predictions automatically.</li>
+          </ul>
+        </div>
+      </div>
+
+      <!-- Sync Diagram Box -->
+      <div class="sync-diagram-box">
+        <div class="math-title">Offline Multi-Device Data Flow Architecture</div>
+        <div class="sync-nodes-grid">
+          <div class="sync-node-card">
+            <strong style="color:var(--forest-emerald)">💻 Ranger Laptop 1 (Range East)</strong><br>
+            <span style="font-size:0.8rem; color:var(--text-muted)">• Scans SD cards from Cam 1–40<br>• Identifies 45 tigers offline<br>• Exports `sync_bundle_east.pgm`</span>
+          </div>
+          <div class="sync-arrow">⇄ 💾 ⇄</div>
+          <div class="sync-node-card">
+            <strong style="color:var(--tiger-amber)">💻 HQ Central Laptop (Field Office)</strong><br>
+            <span style="font-size:0.8rem; color:var(--text-muted)">• Inserts USB flash drive<br>• Lamport clock resolves deltas<br>• Merges into unified reserve map</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ══════════════════ TAB 3: 5-STAGE PIPELINE ══════════════════ -->
+    <section id="tab-pipeline" class="tab-content">
+      <div class="card" style="margin-bottom:16px;">
+        <span class="tag-pill">End-to-End Execution</span>
+        <h2>The 5-Stage Root Processing Pipeline</h2>
+        <p>From the raw SD card memory to predictive conflict alerts, here is the exact step-by-step lifecycle of a photo:</p>
+      </div>
+
+      <div class="pipeline-container">
+        <!-- Stage 1 -->
+        <div class="pipeline-step">
+          <div class="step-num-badge">S1<span>Ingest</span></div>
+          <div class="step-body">
+            <h3>Stage 1: Ingest, EXIF Drift & Burst Encounter Grouping</h3>
+            <p>
+              Scans memory cards, reads EXIF timestamps, resolves camera clock drift, and groups burst photos taken within 30 seconds into singular wildlife encounters. Generates SHA-256 hashes for deduplication.
+            </p>
+            <div class="step-specs">
+              <div class="spec-item">Deduplication: <strong>SHA-256 Content Hash</strong></div>
+              <div class="spec-item">Burst Window: <strong>&Delta;t &le; 30 seconds</strong></div>
+              <div class="spec-item">Format: <strong>Camtrap DP Standard</strong></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Stage 2 -->
+        <div class="pipeline-step">
+          <div class="step-num-badge">S2<span>Triage</span></div>
+          <div class="step-body">
+            <h3>Stage 2: Two-Stage Blank Triage & Privacy Redaction</h3>
+            <p>
+              <strong>Stage A (Median Subtraction):</strong> Compares frames against a per-station running median background to instantly discard blank vegetation frames.<br>
+              <strong>Stage B (MegaDetector V6):</strong> Classifies remaining frames into Animal, Person, Vehicle. Humans are automatically blurred for anti-poaching and staff privacy compliance.
+            </p>
+            <div class="step-specs">
+              <div class="spec-item">Stage A Blank FN: <strong>0.74%</strong></div>
+              <div class="spec-item">Detector: <strong>MDV6 YOLOv9 MIT Compact</strong></div>
+              <div class="spec-item">Privacy: <strong>Automatic Gaussian Face/Body Blur</strong></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Stage 3 -->
+        <div class="pipeline-step">
+          <div class="step-num-badge">S3<span>Re-ID</span></div>
+          <div class="step-body">
+            <h3>Stage 3: Pose Rectification & Stripe Biometric Re-ID</h3>
+            <p>
+              Extracts tiger flank patches using keypoint pose estimation, rectifies body rotation, and generates 2048-D feature embeddings. Strictly partitions comparisons by <strong>Left Flank (L)</strong> and <strong>Right Flank (R)</strong> to prevent asymmetric pattern mismatching.
+            </p>
+            <div class="step-specs">
+              <div class="spec-item">Embedding: <strong>ResNet-50 TriHard Loss (2048-D)</strong></div>
+              <div class="spec-item">Flank Gate: <strong>Strict (ind_id, side) separation</strong></div>
+              <div class="spec-item">Top-1 Accuracy: <strong>93.3%</strong></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Stage 4 -->
+        <div class="pipeline-step">
+          <div class="step-num-badge">S4<span>Spatial</span></div>
+          <div class="step-body">
+            <h3>Stage 4: Spatial Ecology & Home Range Polygons</h3>
+            <p>
+              Projects geographic encounters across camera stations into local UTM coordinates. Computes individual home ranges using Minimum Convex Polygons (MCP) and &alpha;-hulls, calculating territory area in km&sup2; and activity centroids.
+            </p>
+            <div class="step-specs">
+              <div class="spec-item">Projection: <strong>Equirectangular + UTM EPSG:32644</strong></div>
+              <div class="spec-item">Territory Math: <strong>Convex Hull & Alpha-Shape Buffers</strong></div>
+              <div class="spec-item">Effort Tracking: <strong>Camera-Days Normalization</strong></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Stage 5 -->
+        <div class="pipeline-step">
+          <div class="step-num-badge">S5<span>Alerts</span></div>
+          <div class="step-body">
+            <h3>Stage 5: Real-Time Predictive Conflict & Health Alert Engine</h3>
+            <p>
+              Evaluates 10 biological and spatial rules across cycles to alert rangers to emergent ecological risks:
+            </p>
+            <div class="math-box">
+              <div class="math-title">The 10 Operational Alert Rules</div>
+              1. <strong>Centroid Shift:</strong> Territory center shifted &gt; 3.0 km (core) or &gt; 5.0 km (buffer).<br>
+              2. <strong>New Station Utilization:</strong> Tiger recorded at a camera station never visited before.<br>
+              3. <strong>Buffer Ward Transit:</strong> Interior core tiger first observed at a peripheral buffer station.<br>
+              4. <strong>Effort-Accounted Absence:</strong> Tiger absent for 2 cycles despite active camera coverage.<br>
+              5. <strong>Multi-Cycle Directional Migration:</strong> Linear migration trajectory across 3+ consecutive cycles.<br>
+              6. <strong>Decreasing Village Distance:</strong> Tiger closest approach to human settlement dropped below critical 2.5 km buffer.<br>
+              7. <strong>Activity Collapse:</strong> Sudden &ge; 65% drop in photographic frequency.<br>
+              8. <strong>Corridor Utilization:</strong> First observed movement through designated wildlife transit corridor.<br>
+              9. <strong>Travel Speed Anomaly:</strong> Implied transit speed &gt; 12 km/h (biological impossibility = misidentification).<br>
+              10. <strong>Confidence Collapse:</strong> Match similarity dropped by &ge; 0.20 (indicates heavy injury or scar tissue).
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ══════════════════ TAB 4: 3 MODELS & MATH ══════════════════ -->
+    <section id="tab-models" class="tab-content">
+      <div class="card" style="margin-bottom:16px;">
+        <span class="tag-pill cyan">Model Engineering</span>
+        <h2>The 3 Machine Learning Models & Stripe Biometric Mathematics</h2>
+        <p>Technical breakdown of the neural architectures, loss functions, and normalization math:</p>
+      </div>
+
+      <!-- Model 1 -->
+      <div class="pipeline-step">
+        <div class="step-num-badge">M1<span>Triage</span></div>
+        <div class="step-body">
+          <span class="tag-pill green">Species Classifier</span>
+          <h3>MegaDetector V6 (MDV6-mit-yolov9-c)</h3>
+          <p>
+            9.7M parameter compact YOLOv9 architecture detecting Animal, Person, Vehicle. 100% MIT-licensed with zero AGPL dependency.
+          </p>
+          <div class="step-specs">
+            <div class="spec-item">Architecture: <strong>YOLOv9 Compact</strong></div>
+            <div class="spec-item">CPU Throughput: <strong>3.02 frames/sec (Core i5)</strong></div>
+            <div class="spec-item">False Negative Rate: <strong>0.74% on held-out stations</strong></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Model 2 -->
+      <div class="pipeline-step">
+        <div class="step-num-badge">M2<span>Pose</span></div>
+        <div class="step-body">
+          <span class="tag-pill">Keypoint Regressor</span>
+          <h3>YOLO11-Pose (Shoulder-Hip Axis Regressor)</h3>
+          <p>
+            Predicts the near-side <strong>Shoulder</strong> and <strong>Hip</strong> keypoints (&sigma;&sup2; = 4.1 &times; 10&minus;&sup4;, lowest anatomical variance) to compute body tilt angle &theta; and perform an affine warp to a canonical 256 &times; 128 px pelt.
+          </p>
+          <div class="step-specs">
+            <div class="spec-item">Accuracy: <strong>mAP50 = 0.995</strong></div>
+            <div class="spec-item">Output Dimension: <strong>256 &times; 128 px horizontal pelt</strong></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Model 3 -->
+      <div class="pipeline-step">
+        <div class="step-num-badge">M3<span>Biometrics</span></div>
+        <div class="step-body">
+          <span class="tag-pill cyan">Metric Re-ID</span>
+          <h3>ResNet-50 with Batch-Hard Triplet Loss (TriHard)</h3>
+          <p>
+            Extracts a 2048-dimensional normalized stripe fingerprint vector.
+          </p>
+          <div class="math-box">
+            <div class="math-title">TriHard Loss Formulation (&alpha; = 0.30)</div>
+            L_TriHard = &sum; [ max D(f(x_a), f(x_p)) - min D(f(x_a), f(x_n)) + &alpha; ]+<br>
+            Cosine Similarity: Sim(u, v) = (u &middot; v) / (||u|| &times; ||v||)
+          </div>
+          <div class="step-specs">
+            <div class="spec-item">Held-Out Identity Top-1: <strong>93.27% (Right Flank) / 100.0% (Left Flank)</strong></div>
+            <div class="spec-item">mAP: <strong>0.8202 (Right) / 0.8477 (Left)</strong></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ══════════════════ TAB 5: 3-MINUTE PITCH SCRIPT ══════════════════ -->
+    <section id="tab-pitch" class="tab-content">
+      <div class="card" style="margin-bottom:16px;">
+        <span class="tag-pill">Pacing & Timing</span>
+        <h2>Official 3-Minute Hackathon Winning Pitch Script</h2>
+        <p>Timed specifically for the strict 3-minute jury countdown at Viksit Nagpur Hackathon 2026:</p>
+      </div>
+
+      <!-- Minute 1 -->
+      <div class="pitch-slide">
+        <div class="slide-header">
+          <h3>Part 1: The Problem & Vidarbha Field Reality</h3>
+          <span class="slide-time-tag">⏱ 0:00 — 1:00 (60s)</span>
+        </div>
+        <div class="speech-box">
+          "Respected judges, Nagpur is proud to be the <strong>Tiger Capital of India</strong>, surrounded by iconic reserves like Pench, Tadoba, and Nagzira. But behind our conservation success lies an operational crisis."
+          <br><br>
+          "In every survey cycle, forest rangers deploy hundreds of camera traps, generating over <mark>100,000 photos</mark>. Right now, forest guards must <strong>manually inspect every single photo by eye</strong>, comparing stripe patterns across paper binders. It takes <strong>over a month</strong> to identify tigers, and by the time reports are filed, tigers dispersing towards human villages have already triggered human-wildlife conflict."
+          <br><br>
+          "Cloud AI tools completely fail here because <strong>there is zero internet connectivity deep inside the core jungle</strong>. Forest departments need an AI that works directly on their rugged field laptops. That is why we built <strong>PUGMARK</strong>."
+        </div>
+      </div>
+
+      <!-- Minute 2 -->
+      <div class="pitch-slide">
+        <div class="slide-header">
+          <h3>Part 2: The Core AI & Stripe Biometrics</h3>
+          <span class="slide-time-tag">⏱ 1:00 — 2:00 (60s)</span>
+        </div>
+        <div class="speech-box">
+          "PUGMARK is a <strong>100% offline, edge-native intelligence workstation</strong> powered by 3 custom-engineered AI models."
+          <br><br>
+          "First, our lightweight <strong>MegaDetector V6</strong> strips out blank vegetation and blurs human faces for privacy. Second, our custom <strong>2-Keypoint YOLO11-Pose regressor</strong> detects the tiger's shoulder and hip axis, performing an affine warp to normalize the pelt against posture skew."
+          <br><br>
+          "Third, our <strong>Deep Metric Re-ID network</strong>, trained with TriHard Triplet Loss, extracts a 2048-dimensional stripe fingerprint. It achieves <mark>93.3% Top-1 accuracy</mark> on held-out tiger identities. Crucially, our system enforces a <strong>strict Left/Right Flank Gate</strong>, eliminating the fatal flaw of comparing mismatched sides."
+        </div>
+      </div>
+
+      <!-- Minute 3 -->
+      <div class="pitch-slide">
+        <div class="slide-header">
+          <h3>Part 3: Live Impact, Spatial Intelligence & Closer</h3>
+          <span class="slide-time-tag">⏱ 2:00 — 3:00 (60s)</span>
+        </div>
+        <div class="speech-box">
+          "Beyond identification, PUGMARK transforms camera traps into an <strong>Automated Early Warning System</strong>."
+          <br><br>
+          "Our offline GIS engine computes Minimum Convex Polygon home ranges for all 150+ tigers. Our <strong>Predictive Conflict Engine</strong> evaluates 10 biological rules. The moment a tiger's trajectory veers within <mark>2.5 km of a village</mark>, or implied speed exceeds biological limits, PUGMARK raises an instant, explainable tactical alert for rapid ranger deployment."
+          <br><br>
+          "PUGMARK requires <strong>zero cloud subscriptions, zero external GPS tokens, and runs on a standard Core i5 laptop</strong> in 110 minutes. It turns weeks of manual labor into instant intelligence—protecting both our forest staff and our national animal. Thank you!"
+        </div>
+      </div>
+    </section>
+
+    <!-- ══════════════════ TAB 6: SLIDE DECK ══════════════════ -->
+    <section id="tab-slides" class="tab-content">
+      <div class="card" style="margin-bottom:16px;">
+        <span class="tag-pill">Presentation Viewer</span>
+        <h2>7-Slide Pitch Deck Carousel</h2>
+        <p>Navigate with buttons or keyboard arrow keys (← / →):</p>
+      </div>
+
+      <div class="carousel-nav">
+        <button class="btn-timer" onclick="prevSlide()">◀ Previous Slide</button>
+        <span id="slideIndicator" style="font-weight:700; color:var(--tiger-gold); font-family:var(--font-mono)">Slide 1 of 7</span>
+        <button class="btn-timer primary" onclick="nextSlide()">Next Slide ▶</button>
+      </div>
+
+      <div class="slide-viewer" id="slideViewer"></div>
+    </section>
+
+    <!-- ══════════════════ TAB 7: JURY QA DEFENSE ══════════════════ -->
+    <section id="tab-qa" class="tab-content">
+      <div class="card" style="margin-bottom:16px;">
+        <span class="tag-pill">Jury Defense Masterclass</span>
+        <h2>Top 10 Technical & Domain Hackathon Jury Questions & Answers</h2>
+        <p>Anticipate hard questions with these mathematically sound responses:</p>
+        
+        <div class="qa-search-bar" style="margin-top:12px;">
+          <input type="text" class="qa-input" placeholder="🔍 Type to filter questions (e.g. 'accuracy', 'offline', 'left flank', 'hardware', 'speed')..." oninput="filterQA(this.value)">
+        </div>
+      </div>
+
+      <div id="qaList">
+        <!-- Q1 -->
+        <div class="qa-card" data-q="how do you differentiate tigers stripes pattern individual re-id">
+          <div class="qa-q" onclick="toggleQA(this)">
+            <span><span class="qa-badge">AI / Biometrics</span> 1. How does the AI differentiate one tiger from another? Why doesn't standard object detection work?</span>
+            <span>▼</span>
+          </div>
+          <div class="qa-a">
+            <strong>Winning Answer:</strong> Standard object detection (like YOLO) only predicts the bounding box for "tiger" as a generic class. PUGMARK solves <em>individual re-identification</em>. Every tiger possesses a mathematically unique stripe pattern, identical to a human fingerprint. Our ResNet-50 network, trained with Batch-Hard Triplet Loss, maps the stripe morphology into a 2048-dimensional embedding space. The Euclidean distance between embeddings of the <em>same tiger</em> is minimized while the distance to <em>different tigers</em> is maximized past an angular margin (&alpha;=0.30). When a new crop arrives, we compute its cosine similarity against the reserve catalogue.
+          </div>
+        </div>
+
+        <!-- Q2 -->
+        <div class="qa-card" data-q="left right flank problem asymmetry stripe side">
+          <div class="qa-q" onclick="toggleQA(this)">
+            <span><span class="qa-badge">Biology / Core Blocker</span> 2. Tiger stripe patterns are completely asymmetrical on the left and right sides. How do you prevent mismatching?</span>
+            <span>▼</span>
+          </div>
+          <div class="qa-a">
+            <strong>Winning Answer:</strong> This is the famous <em>cross-flank trap</em> in wildlife biology. A tiger's left flank has zero stripe correlation with its right flank. In PUGMARK, our database keys on <strong>entities defined by (ind_id, side)</strong>. When a camera photo is processed, our side classifier determines if the capture shows the Left (L) or Right (R) flank. A left flank query is strictly compared <strong>only against the left-flank gallery</strong>. In our counterfactual evaluation on 170 held-out images, pooling sides caused a 0% cross-match rate, proving that strict flank gating is mathematically essential for zero-error census.
+          </div>
+        </div>
+
+        <!-- Q3 -->
+        <div class="qa-card" data-q="offline no internet field laptop edge deployment">
+          <div class="qa-q" onclick="toggleQA(this)">
+            <span><span class="qa-badge">Architecture</span> 3. How does this system function in remote core jungle areas with zero internet?</span>
+            <span>▼</span>
+          </div>
+          <div class="qa-a">
+            <strong>Winning Answer:</strong> PUGMARK is built strictly as an <strong>offline edge appliance</strong>. We have zero external CDN dependencies, zero cloud API calls (no OpenAI, no AWS Rekognition), and zero Mapbox/Google Maps API tokens. The database runs on embedded SQLite with Write-Ahead Logging (WAL). The map is rendered using a standalone SVG coordinate projection engine. When rangers return to headquarters, multi-laptop sync is performed using Lamport logical timestamps and conflict-free delta bundles via USB or local Wi-Fi.
+          </div>
+        </div>
+
+        <!-- Q4 -->
+        <div class="qa-card" data-q="throughput processing speed hardware cpu gpu runtime">
+          <div class="qa-q" onclick="toggleQA(this)">
+            <span><span class="qa-badge">Performance</span> 4. What is the processing throughput on low-cost forest department laptops without GPUs?</span>
+            <span>▼</span>
+          </div>
+          <div class="qa-a">
+            <strong>Winning Answer:</strong> We benchmarked our pipeline on a standard Intel Core i5 laptop (8-core CPU, zero GPU). Our compact 9.7M-parameter MegaDetector V6 achieves <strong>3.02 images per second (331 ms/image)</strong>. Stage A median subtraction filters out obvious blanks in under 8 ms per frame. For a full 20,000-frame survey cycle, end-to-end processing completes in approximately <strong>110 minutes</strong>. If an entry-level laptop GPU (like an RTX 2050) is present, PyTorch acceleration increases throughput to over <strong>18 frames/sec</strong> (~18 minutes for 20k frames).
+          </div>
+        </div>
+
+        <!-- Q5 -->
+        <div class="qa-card" data-q="conflict early warning village distance alert rules">
+          <div class="qa-q" onclick="toggleQA(this)">
+            <span><span class="qa-badge">Impact</span> 5. How does PUGMARK predict and prevent human-wildlife conflict?</span>
+            <span>▼</span>
+          </div>
+          <div class="qa-a">
+            <strong>Winning Answer:</strong> PUGMARK features an automated Stage 5 Alert Engine evaluating 10 biological rules across survey cycles. For example, <strong>Rule 6 (Decreasing Village Distance)</strong> tracks a tiger's closest camera encounter relative to surrounding human settlements. If an individual's minimum distance drops below the critical 2.5 km threshold, or if <strong>Rule 3 (Buffer Ward)</strong> detects a core tiger entering human-dominated buffer zones, an urgent tactical alert is triggered with exact GPS vectors, allowing rangers to deploy rapid response teams before conflict occurs.
+          </div>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- Footer -->
+  <footer class="footer">
+    <p>PUGMARK v0.2.0 · Designed & Engineered for <strong>Viksit Nagpur Hackathon 2026 (VNIT Nagpur)</strong></p>
+    <p style="margin-top:2px;">Theme 1: Forest & Wildlife · 100% Offline Edge Intelligence</p>
+  </footer>
+
+  <!-- JavaScript Logic -->
+  <script>
+    // Tab Navigation
+    function switchTab(tabId) {
+      document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
+      document.querySelectorAll('.tab-btn').forEach(el => el.classList.remove('active'));
+      
+      const target = document.getElementById('tab-' + tabId);
+      if (target) target.classList.add('active');
+      
+      const btn = Array.from(document.querySelectorAll('.tab-btn')).find(b => b.getAttribute('onclick')?.includes(tabId));
+      if (btn) btn.classList.add('active');
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+
+    // ── 3-Minute Pitch Timer Logic (100% Offline Audio Synthesis) ───────
+    let timerSeconds = 180;
+    let timerInterval = null;
+    let isRunning = false;
+
+    function playBeep(freq = 600, duration = 0.15) {
+      try {
+        const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        const osc = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+        osc.type = 'sine';
+        osc.frequency.value = freq;
+        gain.gain.setValueAtTime(0.1, audioCtx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.0001, audioCtx.currentTime + duration);
+        osc.connect(gain);
+        gain.connect(audioCtx.destination);
+        osc.start();
+        osc.stop(audioCtx.currentTime + duration);
+      } catch (e) {}
+    }
+
+    function updateTimerDisplay() {
+      const mins = Math.floor(timerSeconds / 60);
+      const secs = timerSeconds % 60;
+      const el = document.getElementById('timerCount');
+      const stageEl = document.getElementById('timerStage');
+      const barEl = document.getElementById('timerBar');
+      
+      if (el) el.textContent = `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+      
+      const pct = (timerSeconds / 180) * 100;
+      if (barEl) barEl.style.width = pct + '%';
+
+      if (stageEl && el) {
+        if (timerSeconds > 120) {
+          stageEl.textContent = 'Part 1: The Problem & Field Reality (0:00 - 1:00)';
+          stageEl.style.color = 'var(--forest-emerald)';
+          el.style.color = 'var(--forest-emerald)';
+        } else if (timerSeconds > 60) {
+          stageEl.textContent = 'Part 2: The Core AI & Stripe Biometrics (1:00 - 2:00)';
+          stageEl.style.color = 'var(--tiger-gold)';
+          el.style.color = 'var(--tiger-gold)';
+        } else if (timerSeconds > 0) {
+          stageEl.textContent = 'Part 3: Spatial Intelligence, Impact & Closer (2:00 - 3:00)';
+          stageEl.style.color = 'var(--tiger-orange)';
+          el.style.color = 'var(--tiger-orange)';
+        } else {
+          stageEl.textContent = '🚨 TIME IS UP! (3-Minute Buzzer)';
+          stageEl.style.color = 'var(--alert-red)';
+          el.style.color = 'var(--alert-red)';
+        }
+      }
+    }
+
+    function toggleTimer() {
+      const btn = document.getElementById('timerStartBtn');
+      if (isRunning) {
+        clearInterval(timerInterval);
+        timerInterval = null;
+        isRunning = false;
+        if (btn) {
+          btn.textContent = '▶ Resume';
+          btn.classList.add('primary');
+        }
+      } else {
+        isRunning = true;
+        if (btn) {
+          btn.textContent = '⏸ Pause';
+          btn.classList.remove('primary');
+        }
+        playBeep(880, 0.1);
+        timerInterval = setInterval(() => {
+          if (timerSeconds > 0) {
+            timerSeconds--;
+            if (timerSeconds === 120 || timerSeconds === 60) playBeep(750, 0.2);
+            if (timerSeconds === 0) playBeep(440, 0.5);
+            updateTimerDisplay();
+          } else {
+            clearInterval(timerInterval);
+            timerInterval = null;
+            isRunning = false;
+            if (btn) {
+              btn.textContent = '▶ Start Pitch';
+              btn.classList.add('primary');
+            }
+          }
+        }, 1000);
+      }
+    }
+
+    function resetTimer() {
+      if (timerInterval) clearInterval(timerInterval);
+      timerInterval = null;
+      isRunning = false;
+      timerSeconds = 180;
+      const btn = document.getElementById('timerStartBtn');
+      if (btn) {
+        btn.textContent = '▶ Start Pitch';
+        btn.classList.add('primary');
+      }
+      updateTimerDisplay();
+    }
+
+    // ── Slide Deck Carousel Data & Logic ────────────────────────────────
+    const SLIDES_DATA = [
+      {
+        num: 1,
+        title: "PUGMARK: Offline Edge AI for Camera-Trap Stripe Biometrics",
+        tag: "Problem & Context",
+        body: `
+          <h2 style="font-size:1.4rem; color:#fff; margin-bottom:10px">The Problem in Vidarbha & Central India</h2>
+          <p style="color:var(--text-muted); font-size:0.95rem; line-height:1.6">
+            Nagpur is the Tiger Capital of India (Pench, Tadoba, Nagzira). Every survey cycle generates <strong>100,000+ camera-trap photos</strong>.
+          </p>
+          <div style="background:var(--bg-surface); padding:14px; border-radius:8px; margin-top:12px; border-left:4px solid var(--alert-red); font-size:0.9rem">
+            <strong style="color:#fff">The 3 Bottlenecks:</strong><br>
+            1. <strong>Manual Eye Comparison:</strong> Inspecting stripes across photo binders takes 4–6 weeks per census.<br>
+            2. <strong>Zero Cloud Connectivity:</strong> 0G internet deep in core jungle makes AWS/OpenAI APIs unusable.<br>
+            3. <strong>Fatal Conflict Lag:</strong> Dispersing tigers near villages are detected weeks too late.
+          </div>
+        `
+      },
+      {
+        num: 2,
+        title: "The Architecture: 100% Offline Edge Intelligence Appliance",
+        tag: "System Design",
+        body: `
+          <h2 style="font-size:1.4rem; color:#fff; margin-bottom:10px">Built for Rugged Field Laptops</h2>
+          <p style="color:var(--text-muted); font-size:0.95rem; line-height:1.6">
+            PUGMARK eliminates all external cloud dependencies, running locally on forest department laptops.
+          </p>
+          <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(180px, 1fr)); gap:10px; margin-top:12px">
+            <div style="background:var(--bg-surface); padding:12px; border-radius:8px; border:1px solid var(--border-subtle)">
+              <strong style="color:var(--forest-emerald)">💾 Embedded SQLite WAL</strong><br>
+              <span style="font-size:0.8rem; color:var(--text-muted)">High-concurrency offline ACID database</span>
+            </div>
+            <div style="background:var(--bg-surface); padding:12px; border-radius:8px; border:1px solid var(--border-subtle)">
+              <strong style="color:var(--tiger-amber)">🗺 Pure SVG GIS Canvas</strong><br>
+              <span style="font-size:0.8rem; color:var(--text-muted)">Zero Google/Mapbox API tokens required</span>
+            </div>
+            <div style="background:var(--bg-surface); padding:12px; border-radius:8px; border:1px solid var(--border-subtle)">
+              <strong style="color:var(--accent-cyan)">⚡ Lamport Logical Sync</strong><br>
+              <span style="font-size:0.8rem; color:var(--text-muted)">Conflict-free USB delta bundle exchange</span>
+            </div>
+          </div>
+        `
+      },
+      {
+        num: 3,
+        title: "AI Models 1 & 2: Species Triage & Keypoint Pose Warp",
+        tag: "Vision Pipeline",
+        body: `
+          <h2 style="font-size:1.4rem; color:#fff; margin-bottom:10px">Eliminating Noise & Posture Skew</h2>
+          <div style="display:grid; grid-template-columns:1fr; gap:12px; margin-top:12px">
+            <div style="background:var(--bg-surface); padding:12px; border-radius:8px; border-left:4px solid var(--forest-emerald)">
+              <strong style="color:#fff">Model 1: MegaDetector V6 (MDV6-mit-yolov9-c)</strong><br>
+              <span style="font-size:0.82rem; color:var(--text-muted)">9.7M params · MIT-licensed · 0.74% False Negative rate on held-out stations. Blurs human faces for staff privacy.</span>
+            </div>
+            <div style="background:var(--bg-surface); padding:12px; border-radius:8px; border-left:4px solid var(--tiger-amber)">
+              <strong style="color:#fff">Model 2: YOLO11-Pose (2-Keypoint Regressor)</strong><br>
+              <span style="font-size:0.82rem; color:var(--text-muted)">Shoulder & Hip axis regressor (mAP50 = 0.995). Affine warps skewed tiger pelt into canonical 256&times;128 px rectangle.</span>
+            </div>
+          </div>
+        `
+      },
+      {
+        num: 4,
+        title: "AI Model 3: Stripe Biometrics with TriHard Loss",
+        tag: "Biometric Matching",
+        body: `
+          <h2 style="font-size:1.4rem; color:#fff; margin-bottom:10px">Deep Metric Learning on Stripe Fingerprints</h2>
+          <p style="color:var(--text-muted); font-size:0.95rem; line-height:1.6">
+            ResNet-50 backbone mapping stripe geometry to 2048-D unit hypersphere embeddings.
+          </p>
+          <div style="background:var(--bg-surface); padding:14px; border-radius:8px; margin-top:12px">
+            <div style="display:flex; justify-content:space-around; text-align:center">
+              <div><span style="font-size:1.6rem; font-weight:800; color:var(--forest-emerald)">93.27%</span><br><span style="font-size:0.75rem; color:var(--text-muted)">Top-1 Accuracy</span></div>
+              <div><span style="font-size:1.6rem; font-weight:800; color:var(--tiger-gold)">0.8202</span><br><span style="font-size:0.75rem; color:var(--text-muted)">mAP</span></div>
+              <div><span style="font-size:1.6rem; font-weight:800; color:var(--accent-cyan)">(ind_id, side)</span><br><span style="font-size:0.75rem; color:var(--text-muted)">Flank Gate</span></div>
+            </div>
+          </div>
+        `
+      },
+      {
+        num: 5,
+        title: "Spatial Ecology & 10 Biological Alert Rules",
+        tag: "Early Warning",
+        body: `
+          <h2 style="font-size:1.4rem; color:#fff; margin-bottom:10px">Automating Wildlife Protection & Conflict Prevention</h2>
+          <p style="color:var(--text-muted); font-size:0.95rem; line-height:1.6">
+            Computes Minimum Convex Polygon home ranges across camera stations and evaluates 10 biological rules:
+          </p>
+          <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:10px; font-size:0.82rem; color:var(--text-muted)">
+            <div>• 🚨 <strong>Decreasing Village Distance:</strong> Approach &lt; 2.5 km</div>
+            <div>• 🧭 <strong>Directional Migration:</strong> 3-cycle linear path</div>
+            <div>• 📍 <strong>Centroid Shift:</strong> Range moved &gt; 3 km</div>
+            <div>• ⚡ <strong>Speed Anomaly:</strong> Implied speed &gt; 12 km/h</div>
+          </div>
+        `
+      },
+      {
+        num: 6,
+        title: "Live Walkthrough: Interactive GIS Reserve Map",
+        tag: "Demonstration",
+        body: `
+          <h2 style="font-size:1.4rem; color:#fff; margin-bottom:10px">Proven at Scale: 150 Tigers & 81 Camera Stations</h2>
+          <div style="background:var(--bg-surface); padding:14px; border-radius:8px; margin-top:10px; border:1px solid var(--border-strong)">
+            <ul style="color:var(--text-muted); line-height:1.7; margin-left:16px; font-size:0.88rem">
+              <li><strong>Interactive GIS Canvas:</strong> Pan, zoom, territory aura buffers, and sector demarcation.</li>
+              <li><strong>Chronological Scrubber:</strong> Steps through survey dates with animated radar pings.</li>
+              <li><strong>Tactical Alerts:</strong> High-contrast warning vectors for village-heading predators.</li>
+            </ul>
+          </div>
+        `
+      },
+      {
+        num: 7,
+        title: "Impact, Cost & Deployment Roadmap",
+        tag: "Scalability",
+        body: `
+          <h2 style="font-size:1.4rem; color:#fff; margin-bottom:10px">Viksit Nagpur: Scaling Across Maharashtra</h2>
+          <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-top:12px">
+            <div style="background:var(--bg-surface); padding:12px; border-radius:8px; border-top:3px solid var(--forest-emerald)">
+              <strong style="color:var(--forest-emerald); font-size:0.98rem">₹0 Cloud Cost</strong><br>
+              <p style="font-size:0.82rem; color:var(--text-muted); margin-top:4px">Runs on existing forest department laptops. Zero monthly API bills.</p>
+            </div>
+            <div style="background:var(--bg-surface); padding:12px; border-radius:8px; border-top:3px solid var(--tiger-amber)">
+              <strong style="color:var(--tiger-amber); font-size:0.98rem">110 Mins vs 6 Weeks</strong><br>
+              <p style="font-size:0.82rem; color:var(--text-muted); margin-top:4px">Turns months of manual tiger matching into instant tactical intelligence.</p>
+            </div>
+          </div>
+        `
+      }
+    ];
+
+    let currentSlide = 0;
+
+    function renderSlide() {
+      const slide = SLIDES_DATA[currentSlide];
+      const viewer = document.getElementById('slideViewer');
+      const ind = document.getElementById('slideIndicator');
+      if (!viewer || !slide) return;
+
+      if (ind) ind.textContent = `Slide ${currentSlide + 1} of ${SLIDES_DATA.length}`;
+      viewer.innerHTML = `
+        <div>
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px">
+            <span class="tag-pill cyan">${slide.tag}</span>
+            <span style="font-family:var(--font-mono); font-size:0.75rem; color:var(--text-dim)">#0${slide.num}</span>
+          </div>
+          <h1 style="font-size:1.35rem; color:var(--tiger-gold); margin-bottom:12px">${slide.title}</h1>
+          ${slide.body}
+        </div>
+        <div style="font-size:0.72rem; color:var(--text-dim); border-top:1px solid var(--border-subtle); padding-top:10px; margin-top:16px; display:flex; justify-content:space-between">
+          <span>PUGMARK v0.2.0 · Viksit Nagpur Hackathon 2026</span>
+          <span>Theme: Forest & Wildlife</span>
+        </div>
+      `;
+    }
+
+    function nextSlide() {
+      if (currentSlide < SLIDES_DATA.length - 1) {
+        currentSlide++;
+        renderSlide();
+      }
+    }
+
+    function prevSlide() {
+      if (currentSlide > 0) {
+        currentSlide--;
+        renderSlide();
+      }
+    }
+
+    // Keyboard Arrow Keys for Slides
+    window.addEventListener('keydown', (e) => {
+      if (document.getElementById('tab-slides')?.classList.contains('active')) {
+        if (e.key === 'ArrowRight') nextSlide();
+        if (e.key === 'ArrowLeft') prevSlide();
+      }
+    });
+
+    // ── QA Accordion & Search Filter ────────────────────────────────────
+    function toggleQA(headerEl) {
+      const card = headerEl.closest('.qa-card');
+      card.classList.toggle('open');
+      const arrow = headerEl.querySelector('span:last-child');
+      if (arrow) arrow.textContent = card.classList.contains('open') ? '▲' : '▼';
+    }
+
+    function filterQA(query) {
+      const q = query.toLowerCase().trim();
+      document.querySelectorAll('.qa-card').forEach(card => {
+        const text = (card.dataset.q || '') + ' ' + card.innerText.toLowerCase();
+        card.style.display = text.includes(q) ? 'block' : 'none';
+      });
+    }
+
+    // Initial Setup
+    window.addEventListener('DOMContentLoaded', () => {
+      updateTimerDisplay();
+      renderSlide();
+    });
+  </script>
+</body>
+</html>

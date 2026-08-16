@@ -161,7 +161,7 @@ def insert(table: str, values: dict, conn: sqlite3.Connection | None = None) -> 
     conn = conn or connect()
     cols = ", ".join(values)
     marks = ", ".join("?" for _ in values)
-    conn.execute(f"INSERT INTO {table} ({cols}) VALUES ({marks})", tuple(values.values()))
+    conn.execute(f"INSERT OR REPLACE INTO {table} ({cols}) VALUES ({marks})", tuple(values.values()))
     conn.commit()
 
 
@@ -379,6 +379,76 @@ def stations(reserve_id: str) -> list[dict]:
         " FROM stations s WHERE s.reserve_id=? ORDER BY s.station_id", (reserve_id,)))
 
 
+
+def query(sql: str, params: tuple | list | dict = ()) -> list[dict]:
+    """Execute arbitrary parameterised query and return list of dictionaries."""
+    return _rows(connect().execute(sql, params))
+
+
+# ── Convenience wrappers used by tests and seed scripts ─────────────────────
+
+def create_reserve(fields: dict) -> str:
+    """Create a reserve row and return its generated reserve_id."""
+    import uuid
+    row = {
+        "reserve_id": fields.get("reserve_id") or f"RES-{uuid.uuid4().hex[:8].upper()}",
+        "name": fields["name"],
+        "state": fields.get("state"),
+        "utm_epsg": fields["utm_epsg"],
+        "boundary_geojson": fields.get("boundary_geojson"),
+        "created_at": now(),
+    }
+    insert("reserves", row)
+    return row["reserve_id"]
+
+
+
+
+
+def create_individual(reserve_id: str, ind_id: str, actor: str = "system") -> str:
+    """Create an individual row and return its ind_id."""
+    insert("individuals", {
+        "ind_id": ind_id,
+        "reserve_id": reserve_id,
+        "label": ind_id,
+        "provisional": 1,
+        "sex": None,
+        "age_class": None,
+        "first_seen": None,
+        "last_seen": None,
+        "national_id": None,
+        "notes": None,
+    })
+    return ind_id
+
+
+
+
+
+def images_for_run(run_id: str) -> list[dict]:
+    """Return all image rows for a given run_id."""
+    return _rows(connect().execute("SELECT * FROM images WHERE run_id=? ORDER BY captured_at", (run_id,)))
+
+
+
+
+
+
+def individual_events(run_id: str, ind_id: str) -> list[dict]:
+    """Return chronologically ordered events for an individual within a run."""
+    return _rows(connect().execute(
+        "SELECT e.started_at, e.ended_at, e.station_id "
+        "FROM events e "
+        "JOIN image_event ie ON e.event_id = ie.event_id "
+        "JOIN detections d ON ie.image_id = d.image_id "
+        "JOIN flank_crops c ON d.det_id = c.det_id "
+        "JOIN assignments a ON c.crop_id = a.crop_id "
+        "JOIN images i ON ie.image_id = i.image_id "
+        "WHERE i.run_id=? AND a.ind_id=? "
+        "GROUP BY e.event_id ORDER BY e.started_at",
+        (run_id, ind_id)))
+
+
 def station_effort_days(station_id: str, start: str, end: str) -> float:
     """Camera-days a station was active inside a window. This number is what
     makes the difference between 'the tiger is gone' and 'we weren't looking'."""
@@ -452,7 +522,6 @@ def run_counts(run_id: str) -> dict:
     row = _one(connect().execute(
         "SELECT COUNT(*) total,"
         " SUM(status='blank')       blank,"
-        " SUM(status='subject')     subject,"
         " SUM(status='person')      person,"
         " SUM(status='vehicle')     vehicle,"
         " SUM(status='corrupt')     corrupt,"
@@ -460,6 +529,17 @@ def run_counts(run_id: str) -> dict:
         " SUM(triage_stage='A')     stage_a,"
         " SUM(triage_stage='B')     stage_b"
         " FROM images WHERE run_id=?", (run_id,))) or {}
+    # 'subject' is Stage B's transient output status. Stage 3 always moves an
+    # animal image on to a terminal status (SIDE_UNKNOWN, IDENTIFIED, ...),
+    # so counting status='subject' alone reads back as zero the moment the
+    # pipeline finishes, even on a run where Stage B genuinely found an
+    # animal in every one of them. Count distinct images with a real animal
+    # detection instead -- correct whether Stage 3 has run yet or not.
+    subj = _one(connect().execute(
+        "SELECT COUNT(DISTINCT d.image_id) c FROM detections d"
+        " JOIN images im ON im.image_id = d.image_id"
+        " WHERE im.run_id=? AND d.label='animal'", (run_id,)))
+    row["subject"] = (subj or {}).get("c") or 0
     return {k: (v or 0) for k, v in row.items()}
 
 
@@ -769,18 +849,20 @@ def individual_captures(ind_id: str) -> list[dict]:
 
 
 def latest_crop_path(ind_id: str) -> str | None:
-    """The most recent real, rectified flank image on disk for this
-    individual, if any -- edge/ui/app.js's stripe rail shows this in
-    place of the procedurally generated pattern when it exists. No
-    station join (unlike individual_captures()): an ad-hoc
-    /api/identify/upload crop may have no station_id at all, and a
-    thumbnail lookup does not need one."""
     row = _one(connect().execute(
-        "SELECT c.path FROM assignments a"
+        "SELECT c.path, im.orig_path FROM assignments a"
         " JOIN flank_crops c ON c.crop_id=a.crop_id"
-        " WHERE a.ind_id=? AND a.superseded_by IS NULL AND c.path IS NOT NULL"
+        " LEFT JOIN detections d ON d.det_id=c.det_id"
+        " LEFT JOIN images im ON im.image_id=d.image_id"
+        " WHERE a.ind_id=? AND a.superseded_by IS NULL"
         " ORDER BY a.decided_at DESC LIMIT 1", (ind_id,)))
-    return row["path"] if row else None
+    if row:
+        if row.get("path") and Path(row["path"]).exists():
+            return str(Path(row["path"]))
+        if row.get("orig_path") and Path(row["orig_path"]).exists():
+            return str(Path(row["orig_path"]))
+    return None
+
 
 
 def promote_individual(ind_id: str, actor: str) -> bool:
@@ -926,7 +1008,7 @@ def persons_restricted_for_image(image_id: str) -> list[dict]:
 
 def review_open(limit: int = 50) -> list[dict]:
     rows = _rows(connect().execute(
-        "SELECT q.*, c.side, c.quality, c.path crop_path, im.station_id,"
+        "SELECT q.*, c.side, c.quality, c.path crop_path, c.rect_ok, im.station_id,"
         " im.captured_at, im.is_night"
         " FROM review_queue q"
         " JOIN flank_crops c ON c.crop_id=q.crop_id"
@@ -943,8 +1025,17 @@ def review_open(limit: int = 50) -> list[dict]:
 
 def crop_path(crop_id: str) -> str | None:
     row = _one(connect().execute(
-        "SELECT path FROM flank_crops WHERE crop_id=?", (crop_id,)))
-    return row["path"] if row else None
+        "SELECT c.path, im.orig_path FROM flank_crops c"
+        " LEFT JOIN detections d ON d.det_id = c.det_id"
+        " LEFT JOIN images im ON im.image_id = d.image_id"
+        " WHERE c.crop_id=?", (crop_id,)))
+    if row:
+        if row.get("path") and Path(row["path"]).exists():
+            return str(Path(row["path"]))
+        if row.get("orig_path") and Path(row["orig_path"]).exists():
+            return str(Path(row["orig_path"]))
+    return None
+
 
 
 def review_count() -> int:
@@ -955,11 +1046,25 @@ def review_count() -> int:
 def review_decide(queue_id: str, ind_id: str, actor: str,
                   new_individual: bool = False) -> dict:
     """A human decision. Supersedes rather than overwrites, so the record of
-    who thought what, when, and on what evidence is never destroyed."""
+    who thought what, when, and on what evidence is never destroyed.
+
+    Refuses rather than guesses when the crop has no embedding -- species or
+    physical side was never confirmed for it, so it was never matched
+    against any catalogue and there is no candidate list or "new tiger"
+    question to answer here (rule 8). Without this check, a reviewer could
+    click "New Tiger" on a crop that was never even confirmed to be a
+    tiger, silently enrolling a catalogue entry with no real stripe pattern
+    behind it. Use review_dismiss() for these instead."""
     conn = connect()
     q = _one(conn.execute("SELECT * FROM review_queue WHERE queue_id=?", (queue_id,)))
     if not q:
         raise KeyError(queue_id)
+    crop = _one(conn.execute("SELECT rect_ok FROM flank_crops WHERE crop_id=?", (q["crop_id"],)))
+    if not (crop and crop["rect_ok"]):
+        raise ValueError(
+            "this crop has no biometric embedding -- species or physical side was never "
+            "confirmed, so it was never matched against the catalogue. It cannot be "
+            "confirmed as a match or enrolled as a new individual; dismiss it instead.")
     prior = _one(conn.execute(
         "SELECT * FROM assignments WHERE crop_id=? AND superseded_by IS NULL",
         (q["crop_id"],)))
@@ -978,6 +1083,23 @@ def review_decide(queue_id: str, ind_id: str, actor: str,
           before={"ind_id": prior["ind_id"]} if prior else None,
           after={"ind_id": ind_id, "new_individual": new_individual})
     return {"assign_id": assign_id, "remaining": review_count()}
+
+
+def review_dismiss(queue_id: str, actor: str) -> dict:
+    """Close a review item that has no biometric decision to make -- the
+    crop never had an embedding (species or side could not be confirmed),
+    so there is nothing to confirm as a match or enrol as a new individual.
+    The underlying image already carries its own terminal status
+    (UNKNOWN_SPECIES, SIDE_UNKNOWN, LOW_QUALITY, ...); this only closes the
+    human reviewer's queue item, and creates no assignment."""
+    conn = connect()
+    q = _one(conn.execute("SELECT * FROM review_queue WHERE queue_id=?", (queue_id,)))
+    if not q:
+        raise KeyError(queue_id)
+    conn.execute("UPDATE review_queue SET state='done' WHERE queue_id=?", (queue_id,))
+    conn.commit()
+    audit("review.dismiss", actor=actor, entity_type="crop", entity_id=q["crop_id"])
+    return {"remaining": review_count()}
 
 
 # ── occupancy ───────────────────────────────────────────────────────────
@@ -1324,4 +1446,3 @@ def revoke_all_sessions_for_user(username: str, actor: str) -> int:
 # ── scale/hardening extension (v0.2.0) ─────────────────────────────────
 # Rule 1 still holds: one import path (`repo.`), one place to look.
 # See edge/db/repo_ext.py for why the additions live in their own file.
-from edge.db.repo_ext import *  # noqa: E402,F401,F403

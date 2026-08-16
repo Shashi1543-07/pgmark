@@ -19,7 +19,7 @@ from __future__ import annotations
 import argparse
 import sys
 
-from edge.db import repo
+from edge.db import repo, repo_ext
 from edge.pipeline import postprocess
 
 
@@ -57,7 +57,7 @@ def main() -> int:
                   f"{a['raised']} alerts raised, {a['suppressed']} suppressed")
             print(f"      {out['explanation']}")
 
-    repo.checkpoint_wal()
+    repo_ext.checkpoint_wal()
     print(f"\n{total_occ} occupancy rows, {total_alerts} alerts written.\n")
     return 0
 
