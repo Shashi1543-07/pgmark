@@ -1627,6 +1627,22 @@ def _run(c: TestClient) -> int:
           "openTigerProfile" in js and "}, 200);" not in js.split("openTigerProfile")[0][-400:],
           "the old path waited 200ms and hoped the DOM existed")
 
+    # Re-asking for the tiger you are ALREADY focused on has to move the
+    # camera. The fly-to only fired on focus !== lastFocus, so after panning
+    # away, pressing "Inspect on Map" again for the same animal did nothing --
+    # precisely the case where you most want it. It looked like it "only
+    # worked for slight deviations" because a small pan left the animal on
+    # screen anyway.
+    check("an explicit locate re-centres even when the tiger is already "
+          "focused",
+          "data?.recenter" in mapjs and "S.mapRecenter = true" in js,
+          "focus !== lastFocus alone ignores a repeat request")
+    # ...but it must be one-shot, or an ordinary data refresh would drag the
+    # view back and undo the user's own panning.
+    check("the recentre request is consumed, so a routine refresh leaves the "
+          "view alone", "S.mapRecenter = false" in js,
+          "otherwise every poll yanks the map back to the focused tiger")
+
     check("focusing an individual is drawn outside the toggleable layers",
           "pug-focus" in mapjs and "focus-halo" in mapjs,
           "a focused tiger must not depend on Home Ranges being switched on")

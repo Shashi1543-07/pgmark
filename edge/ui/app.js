@@ -368,6 +368,9 @@ window.openTigerProfile = async function openTigerProfile(indId) {
    Anything that focuses an individual has to go through here. */
 window.locateOnMap = function locateOnMap(indId) {
   S.mapFocus = indId;
+  // Pressing "locate" is always a request to be taken there, even if this
+  // tiger is already the focused one -- see the recenter branch in map.js.
+  S.mapRecenter = true;
   if (location.hash === '#map') {
     RENDER.map?.().catch((e) => console.error('map', e));
     scrollViewToTop('smooth');
@@ -2876,6 +2879,7 @@ RENDER.map = async () => {
     window.PugMap.render($('#mapSvg'), {
       ...d,
       focus: S.mapFocus || null,
+      recenter: !!S.mapRecenter,
     }, (ind) => {
       S.mapFocus = ind;
       RENDER.map();
@@ -2883,6 +2887,8 @@ RENDER.map = async () => {
   } catch (err) {
     console.error('PugMap render error:', err);
   }
+  // one-shot: the next ordinary refresh must not yank the view back
+  S.mapRecenter = false;
 
   // Update Sidebar Counts
   const tigerCountEl = document.getElementById('sidebarTigerCount');
@@ -3034,7 +3040,10 @@ function renderMapSidebarList(data, alertData) {
     listEl.querySelectorAll('.map-roster-item').forEach(item => {
       item.onclick = () => {
         const ind = item.dataset.ind;
+        // clicking the focused row clears the focus; clicking any row while
+        // focused on it elsewhere re-centres on it
         S.mapFocus = S.mapFocus === ind ? null : ind;
+        S.mapRecenter = !!S.mapFocus;
         RENDER.map();
       };
     });

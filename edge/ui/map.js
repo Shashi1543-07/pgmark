@@ -935,9 +935,22 @@ window.PugMap = (() => {
       homeBounds = L.latLngBounds(usable.map(s => [num(s.lat), num(s.lon)]));
       map.fitBounds(homeBounds, { padding: [40, 40] });
     }
-    // A focus change is a deliberate "show me this one", so it -- and only
-    // it -- is allowed to move the camera.
-    if (focus && focus !== lastFocus) {
+    /* Two different things can ask the camera to move, and only one of them
+       is a CHANGE of focus:
+
+         * focus !== lastFocus -- the selection changed, so follow it.
+         * data.recenter -- someone pressed "Inspect on Map" / "Locate on
+           Map" / a roster row for the tiger that is ALREADY focused.
+
+       Only the first was handled, so re-asking for the tiger you were
+       already looking at did nothing at all. That is exactly the case where
+       you most want it: you have panned away to look at something else, and
+       pressing the button again is how you get back. It looked like it
+       "only worked for slight deviations" because a small pan often left the
+       animal still on screen, and a large one did not.
+
+       An ordinary data refresh sets neither, so the view still stays put. */
+    if (focus && (focus !== lastFocus || data?.recenter)) {
       const target = occupancy.find(o => o.ind_id === focus);
       const pts = target && parseHull(target.hull_wkt);
       if (pts && pts.length >= 3) {
