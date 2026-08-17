@@ -1184,16 +1184,36 @@ def map_events(run_id: str) -> list[dict]:
     to present it; the repository does not get to silently drop one.
     """
     return _rows(connect().execute(
-        "SELECT e.event_id, e.station_id, e.started_at, a.ind_id"
-        "  FROM events e"
-        "  JOIN image_event ie ON ie.event_id = e.event_id"
-        "  JOIN images      im ON im.image_id = ie.image_id"
-        "  JOIN detections   d ON d.image_id  = im.image_id"
-        "  JOIN flank_crops  c ON c.det_id    = d.det_id"
-        "  JOIN assignments  a ON a.crop_id   = c.crop_id"
+        # An ungrouped frame counts as one sighting, exactly as
+        # repo_ext.occupancy_inputs() already does -- its docstring is
+        # explicit that frames which never got grouped into an event "fall
+        # back to counting as one visit each rather than being dropped".
+        #
+        # Requiring the events join here broke that agreement: an import
+        # whose photos were never burst-grouped (no usable timestamps, or
+        # grouping not run) produced occupancy saying "3 visits" and a
+        # movement player saying "No sightings this cycle" for the same
+        # tiger in the same cycle. The two halves of the map have to read
+        # one cycle the same way.
+        "SELECT COALESCE(ie.event_id, im.image_id) AS event_id,"
+        "       im.station_id,"
+        "       COALESCE(e.started_at, im.captured_at) AS started_at,"
+        "       a.ind_id"
+        "  FROM images     im"
+        "  JOIN detections  d ON d.image_id  = im.image_id"
+        "  JOIN flank_crops c ON c.det_id    = d.det_id"
+        "  JOIN assignments a ON a.crop_id   = c.crop_id"
+        "  LEFT JOIN image_event ie ON ie.image_id = im.image_id"
+        "  LEFT JOIN events       e ON e.event_id  = ie.event_id"
         " WHERE im.run_id = ? AND a.superseded_by IS NULL"
-        " GROUP BY e.event_id, a.ind_id"
-        " ORDER BY e.started_at, a.ind_id", (run_id,)))
+        "   AND im.station_id IS NOT NULL"
+        # Undated sightings are RETURNED, with a null started_at. They cannot
+        # be placed on a time axis, but the caller has to be able to tell
+        # "this cycle recorded nothing" from "this cycle recorded 24 tigers
+        # whose photos carry no timestamp" -- those need different words on
+        # screen, and filtering them away here made both look identical.
+        " GROUP BY COALESCE(ie.event_id, im.image_id), a.ind_id"
+        " ORDER BY started_at IS NULL, started_at, a.ind_id", (run_id,)))
 
 
 def occupancy_history(reserve_id: str) -> dict[str, dict[str, dict]]:

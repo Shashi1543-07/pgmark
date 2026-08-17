@@ -1083,6 +1083,38 @@ def _run(c: TestClient) -> int:
         if r["station_id"] not in occ_stations.get(r["ind_id"], set())})
     check("the movement player and the home ranges agree on where each "
           "tiger was", not disagree, str(disagree[:4]))
+
+    # Occupancy counts an ungrouped frame as one visit (repo_ext
+    # .occupancy_inputs' docstring is explicit about it). map_events used to
+    # require the events join, so an import whose photos were never
+    # burst-grouped -- no usable timestamps, which is every photo without
+    # EXIF -- gave occupancy "3 visits" and the movement player "No sightings
+    # this cycle" for the same tiger in the same cycle.
+    # Compared against occupancy_inputs(), not the stored occupancy table.
+    # Both are derived live from assignments, so they must agree exactly. The
+    # stored table is a snapshot taken when occupancy was last computed, and
+    # this suite inserts its own synthetic sighting afterwards -- comparing
+    # against it made the check fail on the fixture rather than on the code.
+    occ_counts = {ind: sum(r["event_count"] for r in rows)
+                  for ind, rows in repo_ext.occupancy_inputs(run_id).items()}
+    seen_counts: dict[str, int] = {}
+    for r in sightings:
+        seen_counts[r["ind_id"]] = seen_counts.get(r["ind_id"], 0) + 1
+    off = [(i, seen_counts.get(i, 0), n) for i, n in occ_counts.items()
+           if seen_counts.get(i, 0) != n]
+    check("the sighting feed counts the same visits occupancy does",
+          not off, f"{len(off)} tiger(s) disagree, e.g. {off[:3]}")
+
+    # Undated sightings must be RETURNED, not filtered away: "nothing
+    # happened" and "sightings whose photos carry no timestamp" are
+    # different facts and the UI has to be able to say which.
+    check("sightings with no timestamp are still reported, so the player can "
+          "say why it has no timeline",
+          all("started_at" in r for r in sightings),
+          "started_at may be null, but the row must exist")
+
+    check("the movement player and the home ranges agree on where each "
+          "tiger was", not disagree, str(disagree[:4]))
     check("insufficient captures reported, not faked",
           any(o["insufficient_reason"] for o in occ),
           "a hull needs 3 stations; fewer must say so")
@@ -1554,6 +1586,22 @@ def _run(c: TestClient) -> int:
               raw.status_code in (307, 308)
               and "/api/images/" in raw.headers.get("location", ""),
               f"{raw.status_code} -> {raw.headers.get('location')}")
+
+    # "Locate on Map" has three ways to silently do nothing, all of them hit
+    # in use: the focus marker lived in a layer that defaults off; setting
+    # location.hash to the hash already in the bar fires no hashchange, so
+    # nothing re-renders; and `main` is the scrolling element, so resetting
+    # window.scrollY leaves the map scrolled out of view.
+    check("focusing an individual is drawn outside the toggleable layers",
+          "pug-focus" in mapjs and "focus-halo" in mapjs,
+          "a focused tiger must not depend on Home Ranges being switched on")
+    check("locating an individual goes through one helper, not a raw hash "
+          "assignment", "window.locateOnMap" in js
+          and "location.hash='#map';\"" not in js,
+          "assigning the current hash fires no hashchange and re-renders nothing")
+    check("view changes reset the scroller that actually scrolls",
+          "scrollViewToTop" in js and "querySelector('main')" in js,
+          "main carries overflow-y:auto; window.scrollTo is a no-op here")
 
     check("any photo can be opened full size",
           "photo-viewer" in js and ".photo-viewer" in css,

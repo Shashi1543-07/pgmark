@@ -6382,3 +6382,54 @@ body.viewer-open { overflow: hidden; }
   border-color: var(--pelage);
   color: var(--pelage);
 }
+
+/* ═══════════════════════════════════════════════════════════════════════
+   MAP FOCUS · "locate on map" has to actually locate something
+   ───────────────────────────────────────────────────────────────────────
+   A focused individual used to be drawn only as its hull or centroid, both
+   of which live in the Home Ranges layer -- off by default. And a tiger seen
+   at one station has no hull at all: a polygon needs three. So "Locate on
+   Map" flew to the right coordinates and displayed nothing, which is
+   indistinguishable from the feature being broken.
+
+   The focus marker is its own always-on pane, above everything except the
+   map's furniture, and it pulses so the eye lands on it after the fly-to.
+   ═══════════════════════════════════════════════════════════════════════ */
+
+.pugmap .focus-halo {
+  animation: focus-pulse 1.9s ease-out infinite;
+  transform-origin: center;
+}
+@keyframes focus-pulse {
+  0%   { stroke-opacity: .95; stroke-width: 2;  }
+  70%  { stroke-opacity: .12; stroke-width: 10; }
+  100% { stroke-opacity: 0;   stroke-width: 12; }
+}
+.focus-label {
+  display: grid; place-items: center;
+  pointer-events: none;
+}
+.focus-label span {
+  font-family: var(--f-data);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: .04em;
+  color: var(--c, var(--pelage));
+  background: rgba(4, 12, 8, .78);
+  border: 1px solid color-mix(in srgb, var(--c, var(--pelage)) 55%, transparent);
+  border-radius: 999px;
+  padding: 3px 10px;
+  white-space: nowrap;
+  text-shadow: 0 0 4px rgba(2, 8, 5, .9);
+}
+
+/* the roster row for the focused tiger, so the list and the map agree */
+.map-roster-item.active {
+  border-color: var(--pelage);
+  background: color-mix(in srgb, var(--pelage) 14%, transparent);
+  box-shadow: inset 3px 0 0 var(--pelage);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pugmap .focus-halo { animation: none; stroke-opacity: .9; }
+}

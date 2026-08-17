@@ -315,7 +315,49 @@ function route() {
   });
   RENDER[name]?.().catch((e) => console.error(name, e));
   guideOnView(name);
+
+  // Every view starts at its own top. Without this the document keeps the
+  // scroll offset of whatever was open before, so arriving at the map from
+  // "Locate on Map" landed on the Territories table at the bottom of the
+  // page -- the map was rendered correctly, just scrolled past. It only
+  // looked intermittent because the first visit had nothing to inherit.
+  if (S._lastRoutedView !== name) {
+    S._lastRoutedView = name;
+    scrollViewToTop('auto');
+  }
 }
+
+/* `main` is the scrolling element, not the window -- it carries
+   `overflow-y: auto` (app.css), so the document itself never scrolls and
+   window.scrollTo() is a no-op here. Measured: window.scrollY stayed 0 while
+   main.scrollTop was 694 and the map sat entirely above the viewport. */
+function scrollViewToTop(behavior = 'smooth') {
+  const main = document.querySelector('main');
+  if (main && main.scrollTop) {
+    try { main.scrollTo({ top: 0, behavior }); }
+    catch (e) { main.scrollTop = 0; }
+  }
+  if (window.scrollY) window.scrollTo({ top: 0, behavior });
+}
+
+/* Jump to the map with one individual focused.
+   A plain `location.hash = '#map'` is not enough on its own: if the hash is
+   ALREADY '#map' the browser fires no hashchange, so route() never runs, the
+   map never re-renders, and the focus that was just set is silently dropped.
+   Anything that focuses an individual has to go through here. */
+window.locateOnMap = function locateOnMap(indId) {
+  S.mapFocus = indId;
+  if (location.hash === '#map') {
+    RENDER.map?.().catch((e) => console.error('map', e));
+    scrollViewToTop('smooth');
+  } else {
+    location.hash = '#map';
+    // route() only resets the scroll when the view actually CHANGES, and the
+    // map may already have been visited and scrolled; make sure the map is
+    // what you see after asking to locate something on it.
+    setTimeout(() => scrollViewToTop('smooth'), 60);
+  }
+};
 
 /* ── guided walkthrough ───────────────────────────────────────────────────
    A floating, step-by-step coach for someone who did not build this and
@@ -1682,7 +1724,7 @@ async function showTigerDetail(indId) {
           </div>
         </div>
         <div class="toolbar" style="margin:0">
-          <button type="button" class="btn" onclick="S.mapFocus='${esc(t.ind_id)}';location.hash='#map';">Locate on Map</button>
+          <button type="button" class="btn" onclick="locateOnMap('${esc(t.ind_id)}')">Locate on Map</button>
           ${t.provisional ? `<button type="button" class="primary" id="promoteTigerBtn">Promote to Confirmed</button>` : ''}
         </div>
       </div>
@@ -1834,7 +1876,7 @@ function drawIdResult(r) {
       ` : ''}
 
       <div class="toolbar" style="margin-top:var(--s4)">
-        ${r.ind_id ? `<button type="button" class="primary" onclick="S.mapFocus='${esc(r.ind_id)}';location.hash='#map';">View on Reserve Map</button>` : ''}
+        ${r.ind_id ? `<button type="button" class="primary" onclick="locateOnMap('${esc(r.ind_id)}')">View on Reserve Map</button>` : ''}
         ${r.queue_id ? `<a class="btn primary" href="#review">Open in Review Queue</a>` : ''}
       </div>
     </div>`;
@@ -2927,6 +2969,25 @@ function renderMapSidebarList(data, alertData) {
           </div>
         </div>`;
     }).join('');
+
+    // Bring the focused row into view. Arriving from "Locate on Map" with 24
+    // tigers in the list, the highlighted one is usually below the fold --
+    // the map moved, the roster did not, and the two disagreed about what
+    // was being looked at.
+    const activeRow = listEl.querySelector('.map-roster-item.active');
+    if (activeRow) {
+      // Scroll the LIST, not the page. scrollIntoView walks every scrollable
+      // ancestor, so arriving from "Locate on Map" it scrolled the document
+      // too and pushed the map itself out of view -- the one thing the user
+      // had just asked to look at.
+      const rowTop = activeRow.offsetTop;
+      const rowBottom = rowTop + activeRow.offsetHeight;
+      if (rowTop < listEl.scrollTop) {
+        listEl.scrollTop = rowTop - 8;
+      } else if (rowBottom > listEl.scrollTop + listEl.clientHeight) {
+        listEl.scrollTop = rowBottom - listEl.clientHeight + 8;
+      }
+    }
 
     listEl.querySelectorAll('.map-roster-item').forEach(item => {
       item.onclick = () => {

@@ -393,7 +393,8 @@ window.PugMap = (() => {
     // 'world' is deliberately below Leaflet's own tilePane (z-index 200):
     // the vector planet is the floor, satellite imagery paints on top of it
     // wherever imagery exists, and everything else stacks above both.
-    const PANES = { world: 150, ground: 410, ranges: 420, movement: 430, stations: 440, playback: 450 };
+    const PANES = { world: 150, ground: 410, ranges: 420, movement: 430,
+                    stations: 440, playback: 450, focus: 460 };
     Object.entries(PANES).forEach(([name, z]) => {
       map.createPane('pug-' + name);
       map.getPane('pug-' + name).style.zIndex = String(z);
@@ -407,10 +408,15 @@ window.PugMap = (() => {
       movement: L.layerGroup(),
       stations: L.layerGroup(),
       playback: L.layerGroup(),
+      focus: L.layerGroup(),
     };
     if (viewState.layers.basemap) tiles.addTo(map);
     Object.entries(groups).forEach(([name, g]) => {
-      if (name === 'playback' || name === 'world' || viewState.layers[name] !== false) g.addTo(map);
+      // playback, world and focus are not user layers: focus in particular
+      // must never depend on a toggle, because it exists to answer "show me
+      // THIS tiger" -- see the focus section in render()
+      if (name === 'playback' || name === 'world' || name === 'focus'
+          || viewState.layers[name] !== false) g.addTo(map);
     });
 
     L.control.scale({ position: 'bottomleft', metric: true, imperial: false }).addTo(map);
@@ -879,6 +885,51 @@ window.PugMap = (() => {
       marker.addTo(groups.stations);
     });
 
+    /* ── 5b. the focused tiger, drawn unconditionally ────────────────────
+       "Locate on map" from the catalogue sets a focus and jumps here. Until
+       now the only thing that drew for a focused individual was its hull or
+       centroid, and both live in the Home Ranges layer -- which is OFF by
+       default. So the map flew to the right place and showed nothing, and
+       for a tiger seen at a single station there is no hull to draw at all
+       (three stations are needed for a polygon), which is every individual
+       in a first import.
+
+       Focus is an explicit request for one animal, not a layer preference,
+       so it is drawn in its own always-on pane. */
+    if (focus) {
+      const target = occupancy.find(o => o.ind_id === focus);
+      const at = target && latlng(target.centroid_lat, target.centroid_lon);
+      const colour = getTigerColor(focus);
+      if (at) {
+        L.circleMarker(at, {
+          pane: 'pug-focus', className: 'focus-halo', interactive: false,
+          radius: 22, color: colour.stroke, weight: 2, opacity: 0.9,
+          fillColor: colour.fill, fillOpacity: 0.12,
+        }).addTo(groups.focus);
+        L.circleMarker(at, {
+          pane: 'pug-focus', className: 'focus-pin', interactive: false,
+          radius: 7, color: '#ffffff', weight: 2,
+          fillColor: colour.stroke, fillOpacity: 1,
+        }).addTo(groups.focus);
+        L.marker(at, {
+          pane: 'pug-focus', interactive: false,
+          icon: L.divIcon({
+            className: 'focus-label',
+            html: '<span style="--c:' + colour.stroke + '">' + esc(focus) + '</span>',
+            iconSize: [160, 18], iconAnchor: [80, 34],
+          }),
+        }).addTo(groups.focus);
+      } else if (target) {
+        // No centroid: the cycle produced no locatable capture for this
+        // animal. Say so rather than flying to nowhere (rule 8).
+        const note = document.getElementById('mapImageryNote');
+        if (note) {
+          note.textContent = focus + ' has no mapped position this cycle';
+          note.classList.add('show');
+        }
+      }
+    }
+
     /* ── 6. view: fit once, then leave the user's view alone ─────────── */
     if (!homeBounds) {
       homeBounds = L.latLngBounds(usable.map(s => [num(s.lat), num(s.lon)]));
@@ -893,8 +944,11 @@ window.PugMap = (() => {
         map.flyToBounds(L.latLngBounds(pts.map(p => [p.lat, p.lon])),
                         { padding: [60, 60], duration: 0.6, maxZoom: 14 });
       } else if (target && latlng(target.centroid_lat, target.centroid_lon)) {
+        // A tiger at one station has no hull. Zoom to 14 rather than
+        // "whatever we were on", or locating it from the catalogue leaves
+        // the reserve at country scale with a dot somewhere in it.
         map.flyTo(latlng(target.centroid_lat, target.centroid_lon),
-                  Math.max(map.getZoom(), 12), { duration: 0.6 });
+                  Math.max(map.getZoom(), 14), { duration: 0.6 });
       }
     }
     lastFocus = focus;
@@ -1021,12 +1075,17 @@ window.PugMap = (() => {
     });
 
     // A focused tiger plays alone: that is the point of focusing one.
-    const all = events
-      .filter(ev => ev && ev.station_id && stnById[ev.station_id] && ev.started_at)
-      .filter(ev => !focus || ev.ind_id === focus)
+    const mine = events
+      .filter(ev => ev && ev.station_id && stnById[ev.station_id])
+      .filter(ev => !focus || ev.ind_id === focus);
+    const all = mine
       .map(ev => ({ ind_id: ev.ind_id, station_id: ev.station_id, t: Date.parse(ev.started_at) }))
       .filter(ev => Number.isFinite(ev.t))
       .sort((a, b) => a.t - b.t);
+    // Sightings that exist but carry no usable capture time. They cannot go
+    // on a time axis -- but "nothing happened" and "24 tigers with no
+    // timestamps" are different facts and must not read the same.
+    const undated = mine.length - all.length;
 
     const t0 = all.length ? all[0].t : 0;
     const t1 = all.length ? all[all.length - 1].t : 0;
@@ -1044,8 +1103,18 @@ window.PugMap = (() => {
       groups.playback.clearLayers();
       if (!map.hasLayer(groups.playback)) groups.playback.addTo(map);
       if (!all.length) {
-        if (dateEl) dateEl.textContent = 'No sightings this cycle';
-        if (whoEl) whoEl.innerHTML = '';
+        if (dateEl) {
+          dateEl.textContent = undated
+            ? 'No dated sightings'
+            : 'No sightings this cycle';
+        }
+        if (whoEl) {
+          whoEl.innerHTML = undated
+            ? '<span class="tl-where">' + undated + ' sighting' + (undated === 1 ? '' : 's')
+              + ' recorded, but the photos carry no date or time — nothing to play along a timeline.'
+              + '</span>'
+            : '';
+        }
         return;
       }
 
@@ -1134,7 +1203,9 @@ window.PugMap = (() => {
       playBtn.title = all.length
         ? (focus ? 'Play ' + focus + ' through the cycle'
                  : 'Play every tiger through the cycle')
-        : 'No sightings in this cycle to play';
+        : (undated
+            ? undated + ' sighting(s) have no timestamp, so there is no timeline to play'
+            : 'No sightings in this cycle to play');
       playBtn.onclick = () => {
         if (viewState.playbackTimer) { stop(); return; }
         if (!all.length) return;
