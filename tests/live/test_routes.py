@@ -46,17 +46,54 @@ from tests.fixtures.triage_corpus import build as build_triage_corpus   # noqa: 
 
 PASS, FAIL = [], []
 
+# The admin credential as it existed BEFORE this suite hijacked it, so the
+# operator is not locked out of their own node by running the very command
+# CLAUDE.md tells them to run. Populated in _run(), consumed by
+# _restore_admin_password() in main()'s finally-block.
+_ORIGINAL_ADMIN: dict = {}
+
 
 def check(name: str, cond: bool, detail: str = "") -> None:
     (PASS if cond else FAIL).append(f"{name}{' — ' + detail if detail else ''}")
+
+
+def _restore_admin_password() -> None:
+    """Put the operator's own admin password back after the run.
+
+    Best-effort by design: a failure here must never turn a passing suite
+    into a non-zero exit, but it must also never fail silently -- being
+    quietly locked out is the exact failure this exists to prevent, so it
+    says so on stdout and names the fallback password.
+    """
+    if not _ORIGINAL_ADMIN.get("pwd_hash"):
+        return
+    try:
+        conn = repo.connect()
+        conn.execute(
+            "UPDATE users SET pwd_hash=?, must_change_password=?,"
+            " failed_login_attempts=0, locked_until=NULL WHERE username='admin'",
+            (_ORIGINAL_ADMIN["pwd_hash"],
+             _ORIGINAL_ADMIN.get("must_change_password", 0)))
+        conn.commit()
+        print("  note  admin password restored to what it was before this run")
+    except Exception as exc:                                  # noqa: BLE001
+        print(f"  WARN  could not restore the original admin password ({exc}).\n"
+              f"        The admin password is currently 'TestAdminPass123!' -- "
+              f"log in with that and change it.")
 
 
 def main() -> int:
     _check_fresh_import()
     from tools import seed_demo
     seed_demo.main(reset=True)
-    with TestClient(app) as c:
-        return _run(c)
+    try:
+        with TestClient(app) as c:
+            return _run(c)
+    finally:
+        # finally, not a trailing call: an assertion blowing up mid-suite is
+        # exactly when a half-finished run would otherwise leave the machine
+        # holding a test password.
+        _restore_admin_password()
 
 
 def _check_fresh_import() -> None:
@@ -88,8 +125,20 @@ def _run(c: TestClient) -> int:
     check("unauthenticated request returns 401", c.get("/api/reserves").status_code == 401)
     check("unauthenticated request returns 401 without cookie", "pugmark_session" not in c.cookies)
 
-    # Seed admin if needed and setup known test passwords
+    # Seed admin if needed and setup known test passwords.
+    #
+    # This overwrites the real admin password with a known test value so the
+    # suite can authenticate. Harmless against a throwaway database, but this
+    # suite is ALSO the documented verification gate that CLAUDE.md tells
+    # every session to run -- and when it is pointed at a live node it locks
+    # the actual operator out of their own machine with no message saying
+    # why. That happened. So: remember what was there, and hand it back in a
+    # finally-block at the end of the run (see _restore_admin_password).
     repo.ensure_admin()
+    _prior = repo._one(repo.connect().execute(
+        "SELECT pwd_hash, must_change_password FROM users WHERE username='admin'"))
+    if _prior:
+        _ORIGINAL_ADMIN.update(dict(_prior))
     admin_pw = "TestAdminPass123!"
     repo.connect().execute("UPDATE users SET pwd_hash=?, must_change_password=0 WHERE username='admin'",
                            (auth.hash_secret(admin_pw),))
@@ -141,14 +190,34 @@ def _run(c: TestClient) -> int:
     field_login = c_field.post("/api/auth/login", json={"username": "field_user", "password": new_field_pw})
     check("field user can login after recovery", field_login.status_code == 200)
 
-    # Test RBAC permissions without using the destructive seed operation:
-    # 400 proves the authenticated field user passed the role gate and the
-    # route validated its payload; 403 would mean the field role was blocked.
+    # RBAC. This block previously asserted that a field user COULD reach
+    # /api/dev/seed (expecting 400-on-bad-payload rather than 403), which
+    # encoded the bug instead of catching it: dev_seed erases every reserve,
+    # run, tiger and alert on the node, and it was reachable by the lowest
+    # -privilege account. The assertion is inverted deliberately -- the
+    # secure behaviour is that the role gate rejects it outright.
     field_seed_probe = c_field.post("/api/dev/seed", json={"which": "not-a-real-option"})
-    check("field user can access the dev-seed route", field_seed_probe.status_code == 400,
+    check("field user is BLOCKED from the destructive dev-seed route",
+          field_seed_probe.status_code == 403,
           f"{field_seed_probe.status_code} {field_seed_probe.text[:120]}")
+    check("field user cannot build a sync bundle (data leaves the machine)",
+          c_field.get("/api/sync/bundle").status_code == 403)
+    check("field user cannot back up the whole database",
+          c_field.post("/api/ops/backup").status_code == 403)
     check("field user can read audit log", c_field.get("/api/audit").status_code == 200)
     check("field user cannot manage users", c_field.get("/api/auth/users").status_code == 403)
+    # The privacy leak this audit found: a person frame is blurred, filed to
+    # persons_restricted and kept out of the tiger pipeline, but the
+    # image-file route served the untouched original to any logged-in
+    # account. Blueprint section 10 gives `field` no access to person images
+    # at all.
+    _person = repo._one(repo.connect().execute(
+        "SELECT image_id FROM images WHERE status='person' LIMIT 1"))
+    if _person:
+        person_probe = c_field.get(f"/api/images/{_person['image_id']}/file")
+        check("original person frames are never served, even to a logged-in user",
+              person_probe.status_code == 403,
+              f"{person_probe.status_code} {person_probe.text[:120]}")
 
     # Test analyst user for coordinate generalisation
     analyst_pw = "TestAnalystPass123!"

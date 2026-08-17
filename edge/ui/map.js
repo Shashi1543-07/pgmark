@@ -868,14 +868,14 @@ window.PugMap = (() => {
           ${occObj?.centroid_lat ? `<div><b>Centroid:</b> ${occObj.centroid_lat.toFixed(4)}, ${occObj.centroid_lon.toFixed(4)}</div>` : ''}
         </div>
         ${alertList.length ? `
-        <div class="meta-card" style="margin-top:10px;border-left:3px solid #ef4444">
-          <h4 style="color:#ef4444">Active Intelligence Alerts (${alertList.length})</h4>
+        <div class="meta-card" style="margin-top:10px;border-left:3px solid var(--act)">
+          <h4 style="color:var(--act)">Active Intelligence Alerts (${alertList.length})</h4>
           ${alertList.map(a => `
             <div style="margin-bottom:8px">
               <b>${a.type.toUpperCase()}:</b> ${esc(a.what_changed)}
-              <div style="font-size:11px;color:#888">Severity: <span class="badge badge-${a.severity}">${a.severity}</span></div>
+              <div style="font-size:11px;color:var(--muted)">Severity: <span class="badge badge-${a.severity}">${a.severity}</span></div>
             </div>`).join('')}
-        </div>` : '<div class="meta-card" style="margin-top:10px;color:#059669">✓ No active risk alerts for this individual</div>'}
+        </div>` : '<div class="meta-card" style="margin-top:10px;color:var(--info)">✓ No active risk alerts for this individual</div>'}
       </div>`;
     drawer.classList.add('open');
   }

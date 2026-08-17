@@ -5,37 +5,90 @@
    things somebody should act on today.
 
    Three rules this file follows:
-     1. Light, high-contrast, cool sage base. Range offices are bright and
-        the laptops are cheap. Dark themes are a developer preference.
+     1. Light, high-contrast, cool sage base BY DEFAULT. Range offices are
+        bright and the laptops are cheap (BLUEPRINT.md §14). A dark theme
+        now exists and is genuinely good, but it is OPT-IN via the topbar
+        toggle and remembered per machine -- it is not the default, and
+        the reasoning has not changed: a forest officer opening this at
+        noon in a bright room should not have to fix the screen first.
      2. Burnt orange is the TIGER and nothing else. Severity has its own
         three colours so identity and urgency never compete for the eye.
+        This survives into the dark theme: the amber brightens so it reads
+        against charcoal, but it never becomes a status colour.
      3. Type carries meaning: condensed uppercase = the system speaking,
         mono = a measurement, sans = language written for a person.
+
+   Theming contract: every colour below is a semantic token. Components
+   must reference tokens, never raw hex, or they will not survive the
+   theme switch. Both themes define the SAME token names.
    ──────────────────────────────────────────────────────────────────────── */
 
 :root {
   /* surfaces — note the card is LIGHTER than the canvas. The card catches
      the light; the desk does not. */
-  --canvas:     #e6eae2;
-  --surface:    #f8faf6;
-  --surface-2:  #f0f3ec;
-  --sunk:       #dde2d8;
+  --canvas:     #eaf2ed;
+  --surface:    #f7fbf9;
+  --surface-2:  #eef5f1;
+  --sunk:       #dfeae4;
 
-  --ink:        #11150e;
-  --ink-2:      #39412f;
-  --muted:      #6d7566;
-  --line:       #c8cfc0;
-  --line-soft:  #d9dfd2;
+  --ink:        #0d2818;
+  --ink-2:      #2c4a3a;
+  /* #6b8879 measured 3.71:1 on the card and 3.40:1 on the canvas -- under
+     WCAG AA for body text, and --muted carries real copy here (row labels,
+     helper notes), not just decoration. Darkened until it clears 4.5 on
+     BOTH grounds. */
+  --muted:      #556f60;
+  --line:       #cadbd1;
+  --line-soft:  #dcebe3;
+  /* --border was referenced 22 times across app.css/app.js and never
+     defined anywhere. An undefined var makes the whole declaration invalid
+     at computed-value time, so `1px solid var(--border)` fell back to
+     border-color's initial value, currentColor -- i.e. every one of those
+     cards was outlined in near-black body ink. That hard outline is a real
+     part of why the UI read as flat. Defined here as the soft-line alias
+     it was always meant to be. */
+  --border:     #dcebe3;
+
+  /* ── glass ──────────────────────────────────────────────────────────
+     The sign-in card set the visual contract for the whole product, so
+     these are its materials expressed as tokens. --glass is a TRANSLUCENT
+     fill, not a blur: real backdrop-filter is reserved for the handful of
+     floating surfaces below, because the deployment target is a laptop
+     with no GPU (BLUEPRINT.md R5) and promoting thirty card layers to
+     their own compositor buffers is exactly how this screen would start
+     dropping frames in a range office. Over the ambient wash on <body>
+     a translucent fill reads as glass at a fraction of the cost. */
+  --glass:      rgba(255, 255, 255, .66);
+  --glass-2:    rgba(255, 255, 255, .48);
+  --glass-line: rgba(16, 185, 129, .16);
+  --glass-glow: rgba(16, 185, 129, .30);
+  --glass-shadow: 0 8px 28px -14px rgba(13, 40, 24, .28);
+  /* two soft colour fields behind everything, so translucency has
+     something worth revealing */
+  --amb-1:      rgba(16, 185, 129, .10);
+  --amb-2:      rgba(120, 200, 160, .12);
 
   /* the tiger. identity only, never status. */
   --pelage:     #b8530a;
   --pelage-dim: #e8d3bd;
+  --pelage-glow: rgba(184, 83, 10, .16);
 
   /* severity */
-  --act:        #96181c;
-  --watch:      #7d5f06;
-  --info:       #2b5a44;
-  --sup:        #8a9182;
+  --act:        #a3211f;
+  --watch:      #8a6206;
+  --info:       #0f7a52;
+  --sup:        #7f9a8b;
+
+  /* status pills — paired fg/bg so a badge is one class, not two inline
+     hex values that silently break in the other theme (there were 99 of
+     those in app.js before this existed). */
+  --ok-fg:      #137333;  --ok-bg:      #e6f4ea;  --ok-line:   #a8d5b5;
+  --warn-fg:    #92400e;  --warn-bg:    #fef3c7;  --warn-line: #e5c07a;
+  --bad-fg:     #8a1c1c;  --bad-bg:     #fdeaea;  --bad-line:  #e9b4b4;
+
+  /* skeleton shimmer */
+  --skel-base:  #e3e8dd;
+  --skel-hi:    #eff3ea;
 
   --f-display: "Bahnschrift", "Archivo Narrow", "Roboto Condensed",
                "Segoe UI Semibold", system-ui, sans-serif;
@@ -51,12 +104,96 @@
 
   --e1: 0 1px 0 rgba(17,21,14,.06);
   --e2: 0 1px 2px rgba(17,21,14,.07), 0 4px 12px rgba(17,21,14,.05);
+  --e3: 0 10px 26px -12px rgba(17,21,14,.28);
 
   --ease: cubic-bezier(.2,.6,.3,1);
-  --d-fast: 90ms; --d-base: 160ms;
+  /* overshoot-free "settle" curve for lifts and reveals */
+  --ease-out: cubic-bezier(.16,1,.3,1);
+  --d-fast: 90ms; --d-base: 160ms; --d-slow: 260ms;
 
   --focus: 2px solid var(--pelage);
   --rail: 208px;
+}
+
+/* ── dark theme ───────────────────────────────────────────────────────────
+   Warm charcoal, not the blue-grey slate every dashboard ships. The base
+   keeps a trace of the sage/earth hue the light theme is built on so the
+   product still looks like itself with the lights off, and the pelage
+   amber is lifted to #e8863a — the burnt orange above is unreadable at
+   4.5:1 against a dark surface, and identity that fails contrast is not
+   identity.                                                              */
+[data-theme="dark"] {
+  /* Obsidian jungle -- the sign-in artwork's canopy, continued inland. */
+  /* Greenish-black, not green. Sampled from the artwork's canopy shadow --
+     the green should read as the colour of darkness here, not as paint. */
+  --canvas:     #070f0b;
+  --surface:    #0d1a13;
+  --surface-2:  #132419;
+  --sunk:       #040907;
+
+  --ink:        #f2fbf6;
+  --ink-2:      #c8e0d3;
+  --muted:      #8fae9c;
+  --line:       #1f3b2b;
+  --line-soft:  #172d20;
+  --border:     #172d20;
+
+  --glass:      rgba(14, 30, 21, .58);
+  --glass-2:    rgba(20, 40, 28, .46);
+  --glass-line: rgba(140, 220, 175, .14);
+  --glass-glow: rgba(111, 227, 160, .30);
+  --glass-shadow: 0 16px 44px -18px rgba(0, 0, 0, .75);
+  --amb-1:      rgba(16, 185, 129, .11);
+  --amb-2:      rgba(12, 96, 72, .28);
+
+  --pelage:     #f38d3f;
+  --pelage-dim: #3d2a15;
+  --pelage-glow: rgba(232, 134, 58, .20);
+
+  /* One shared HSL lightness band (60-66%) at high saturation, so no accent
+     shouts louder than its neighbours. The old set drifted across L57-77%:
+     --act sat at L77 and read as washed-out pink -- lighter than everything
+     else yet with the WORST contrast of the four (7.88 vs 11.2), which is
+     the "too light, like it is under a shade" effect. Matching perceived
+     lightness rather than contrast ratio is what makes them look like one
+     family; red simply cannot reach green's ratio without going pale. */
+  --act:        #f5615c;
+  --watch:      #f0bf4c;
+  --info:       #56dc99;
+  --sup:        #7f9a8b;
+
+  /* the pills echo the accents above, same lightness band */
+  --ok-fg:      #56dc99;  --ok-bg:      #10281c;  --ok-line:   #2b5f43;
+  --warn-fg:    #f0bf4c;  --warn-bg:    #2b2413;  --warn-line: #5e4d22;
+  --bad-fg:     #f5615c;  --bad-bg:     #2c1817;  --bad-line:  #63302e;
+
+  --skel-base:  #23282d;
+  --skel-hi:    #2e343a;
+
+  --e1: 0 1px 0 rgba(0,0,0,.30);
+  --e2: 0 1px 2px rgba(0,0,0,.40), 0 4px 12px rgba(0,0,0,.32);
+  --e3: 0 10px 26px -12px rgba(0,0,0,.65);
+}
+
+/* Theme swap must not strobe on every hover -- transition only the
+   properties that actually change theme, and only on the elements that
+   carry a surface. Blanket `* { transition: all }` would also animate the
+   card-lift transforms below into mush. */
+html, body, .topbar, .rail, .card, .banner, table, th, td, input, select,
+textarea, button, .modal-dialog, .tiger-card-rich, .cand, .stripe-thumb {
+  transition: background-color var(--d-slow) var(--ease),
+              border-color var(--d-slow) var(--ease),
+              color var(--d-slow) var(--ease);
+}
+/* Respect the OS "reduce motion" setting everywhere, including the theme
+   fade and every lift/shimmer added further down. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: .001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: .001ms !important;
+    scroll-behavior: auto !important;
+  }
 }
 
 * { box-sizing: border-box; }
@@ -551,8 +688,8 @@ button:disabled { opacity: .45; cursor: not-allowed; }
         background: var(--surface); margin-bottom: var(--s2); width: 100%;
         cursor: pointer; text-align: left; font: inherit;
         transition: border-color 0.15s, background 0.15s, transform 0.1s; }
-.cand:hover { border-color: var(--pelage); transform: translateX(2px); background: #fffaf5; }
-.cand[aria-pressed="true"] { border-color: var(--pelage); background: #fdf6f0; box-shadow: 0 0 0 2px rgba(223, 139, 61, 0.35); }
+.cand:hover { border-color: var(--pelage); transform: translateX(2px); background: color-mix(in srgb, var(--pelage) 10%, transparent); }
+.cand[aria-pressed="true"] { border-color: var(--pelage); background: color-mix(in srgb, var(--pelage) 16%, transparent); box-shadow: 0 0 0 2px var(--pelage-glow); }
 .cand .k { font-family: var(--f-data); font-weight: 700; color: var(--ink); }
 .cand .e { font-size: 12.5px; color: var(--muted); margin-top: 3px; }
 
@@ -806,7 +943,7 @@ kbd {
   flex-wrap: wrap;
   gap: 6px;
   z-index: 10;
-  background: rgba(255, 255, 255, 0.92);
+  background: var(--glass);
   backdrop-filter: blur(8px);
   padding: 6px 10px;
   border-radius: 6px;
@@ -849,7 +986,7 @@ kbd {
 .map-zoom-btn {
   width: 32px;
   height: 32px;
-  background: rgba(255, 255, 255, 0.94);
+  background: var(--glass);
   backdrop-filter: blur(8px);
   border: 1px solid var(--border);
   border-radius: 4px;
@@ -1989,7 +2126,7 @@ kbd {
 
 .review-candidate-card:hover {
   border-color: var(--pelage);
-  background: #fffaf5;
+  background: color-mix(in srgb, var(--pelage) 10%, transparent);
 }
 
 .review-candidate-card.selected {
@@ -2229,18 +2366,30 @@ kbd {
   position: relative;
 }
 
+/* Was a hardcoded `rgba(255,255,255,.96)` full-height slab pinned to the
+   right edge: a white block in dark mode, and it hid a third of the map
+   behind four lines of text. Now a floating glass card that hugs its own
+   content and is inset from the edges, so the territory it describes stays
+   visible next to it. */
 .map-side-drawer {
   position: absolute;
-  top: 0;
-  right: 0;
-  width: 320px;
-  height: 100%;
-  background: rgba(255, 255, 255, 0.96);
-  backdrop-filter: blur(8px);
-  border-left: 1px solid var(--line);
-  box-shadow: -4px 0 16px rgba(0, 0, 0, 0.08);
-  transform: translateX(100%);
-  transition: transform 0.25s var(--ease);
+  top: 12px;
+  right: 12px;
+  bottom: auto;
+  width: 300px;
+  max-height: calc(100% - 24px);
+  overflow-y: auto;
+  background: var(--glass);
+  -webkit-backdrop-filter: blur(16px) saturate(1.25);
+  backdrop-filter: blur(16px) saturate(1.25);
+  border: 1px solid var(--glass-line);
+  border-radius: 14px;
+  box-shadow: var(--glass-shadow), inset 0 1px 0 rgba(255,255,255,.07);
+  color: var(--ink);
+  transform: translateX(calc(100% + 20px));
+  opacity: 0;
+  pointer-events: none;
+  transition: transform .28s var(--ease-out), opacity .2s var(--ease);
   z-index: 20;
   display: flex;
   flex-direction: column;
@@ -2248,6 +2397,47 @@ kbd {
 
 .map-side-drawer.open {
   transform: translateX(0);
+  opacity: 1;
+  pointer-events: auto;
+}
+
+/* the panel's own furniture, in tokens rather than hardcoded light values */
+.map-side-drawer .drawer-header { border-bottom: 1px solid var(--glass-line); }
+.map-side-drawer .drawer-body { padding: 12px 14px 14px; }
+.map-side-drawer .meta-card {
+  background: var(--glass-2);
+  border: 1px solid var(--glass-line);
+  border-radius: 10px;
+  padding: 11px 12px;
+  font-size: 12.5px;
+  line-height: 1.75;
+  color: var(--ink-2);
+}
+.map-side-drawer .meta-card b { color: var(--ink); font-weight: 600; }
+.map-side-drawer .btn-ghost {
+  background: transparent !important;
+  border: 1px solid transparent !important;
+  color: var(--muted) !important;
+  border-radius: 50% !important;
+  width: 26px; height: 26px; padding: 0 !important;
+  line-height: 1;
+}
+.map-side-drawer .btn-ghost:hover {
+  background: var(--glass-2) !important;
+  border-color: var(--glass-line) !important;
+  color: var(--ink) !important;
+  transform: none !important;
+  box-shadow: none !important;
+}
+/* On a narrow window the card would eat the map entirely -- drop it to a
+   bottom sheet instead, where it covers dead space rather than territory. */
+@media (max-width: 900px) {
+  .map-side-drawer {
+    top: auto; bottom: 12px; left: 12px; right: 12px;
+    width: auto; max-height: 46%;
+    transform: translateY(calc(100% + 20px));
+  }
+  .map-side-drawer.open { transform: translateY(0); }
 }
 
 .drawer-header {
@@ -2448,7 +2638,7 @@ kbd {
   font-family: var(--f-body);
   font-size: 13.5px;
   color: var(--ink);
-  background: #ffffff;
+  background: var(--glass-2);
   border: 1px solid var(--line);
   border-radius: var(--r-ctl);
   box-sizing: border-box;
@@ -2663,7 +2853,7 @@ kbd {
   font-family: var(--f-body);
   font-size: 13.5px;
   color: var(--ink);
-  background: #ffffff;
+  background: var(--glass-2);
   border: 1px solid var(--line);
   border-radius: var(--r-ctl);
   box-sizing: border-box;
@@ -2756,3 +2946,2003 @@ kbd {
 }
 
   
+/* ═══════════════════════════════════════════════════════════════════════
+   MOTION, DEPTH AND STATE
+   ───────────────────────────────────────────────────────────────────────
+   Everything below is presentation only: no layout is moved, no component
+   is restructured, nothing here changes what a number says. It exists so
+   the instrument feels responsive to touch -- a surface that answers when
+   you point at it reads as working software; one that never moves reads
+   as a screenshot.
+
+   Budget rule for this file: the deployment target is a cheap laptop with
+   no GPU (BLUEPRINT.md R5). Every effect below is transform/opacity or a
+   background paint -- both cheap and compositor-friendly. backdrop-filter
+   (real glassmorphism) is used on exactly ONE element, the sticky bulk
+   bar, because it is the only place worth the blur cost; everywhere else
+   uses an opaque surface that looks the same and costs nothing.
+   ═══════════════════════════════════════════════════════════════════════ */
+
+/* ── buttons: press physics + clearer intent ─────────────────────────── */
+button, .btn {
+  transition: background var(--d-fast) var(--ease),
+              border-color var(--d-fast) var(--ease),
+              color var(--d-fast) var(--ease),
+              transform var(--d-fast) var(--ease),
+              box-shadow var(--d-fast) var(--ease);
+}
+button:hover:not(:disabled), .btn:hover { border-color: var(--pelage); }
+/* the press. 1px of travel is enough to feel; more looks like a toy. */
+button:active:not(:disabled), .btn:active { transform: translateY(1px) scale(.985); }
+button.primary { box-shadow: 0 1px 2px var(--pelage-glow); }
+button.primary:hover:not(:disabled) {
+  box-shadow: 0 4px 14px -4px var(--pelage-glow);
+  transform: translateY(-1px);
+}
+button.primary:active:not(:disabled) { transform: translateY(1px) scale(.985); box-shadow: none; }
+button:disabled { opacity: .45; cursor: not-allowed; transform: none !important; }
+
+/* Inline spinner for SHORT actions only (confirm, merge, promote: sub-
+   second round trips). Deliberately NOT used for ingest/triage/identify
+   runs -- BLUEPRINT.md section 14 is explicit that a long job shows stage
+   and count, never a bare spinner, because a spinner held for thirty
+   minutes reads as a hang. */
+.spinner-ring {
+  display: inline-block; width: 11px; height: 11px; vertical-align: -1px;
+  margin-right: 7px; border: 2px solid currentColor; border-right-color: transparent;
+  border-radius: 50%; animation: spinner-turn .6s linear infinite;
+}
+@keyframes spinner-turn { to { transform: rotate(360deg); } }
+
+/* ── cards: lift on approach ─────────────────────────────────────────── */
+.card { transition: border-color var(--d-base) var(--ease),
+                    box-shadow var(--d-base) var(--ease),
+                    transform var(--d-base) var(--ease-out); }
+
+.tiger-card-rich {
+  /* replaces `transition: all`, which also animated the theme swap and
+     every inherited colour into a smear on first paint */
+  transition: transform var(--d-base) var(--ease-out),
+              box-shadow var(--d-base) var(--ease),
+              border-color var(--d-base) var(--ease),
+              background-color var(--d-slow) var(--ease);
+}
+.tiger-card-rich:hover {
+  transform: translateY(-3px);
+  border-color: var(--pelage);
+  box-shadow: var(--e3), 0 0 0 1px var(--pelage-glow);
+}
+.tiger-card-rich:active { transform: translateY(-1px); }
+
+/* candidate rows in the review queue and the merge picker */
+.cand { transition: transform var(--d-fast) var(--ease-out),
+                    border-color var(--d-fast) var(--ease),
+                    background var(--d-fast) var(--ease),
+                    box-shadow var(--d-fast) var(--ease); }
+.cand:hover { box-shadow: var(--e2); }
+
+/* ── entry: content arrives, it does not just appear ─────────────────── */
+@keyframes rise-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: none; }
+}
+/* `backwards`, NOT `both`. With `both` the animation keeps applying its
+   final keyframe (transform: none) forever after it finishes -- and a
+   running/filling animation outranks normal declarations in the cascade,
+   so it silently beat every :hover { transform: ... } on these cards and
+   killed the lift entirely. `backwards` still applies the FROM state
+   before the animation starts (so nothing flashes in at full opacity),
+   then releases the property the instant it ends, handing hover back. */
+.view.on .card,
+.tiger-grid-rich .tiger-card-rich,
+.alert-card-rich { animation: rise-in var(--d-slow) var(--ease-out) backwards; }
+
+/* Stagger the first rows only. Beyond ~10 the delay would become a wait,
+   and a catalogue can hold hundreds of cards. */
+.tiger-grid-rich .tiger-card-rich:nth-child(1) { animation-delay: 0ms; }
+.tiger-grid-rich .tiger-card-rich:nth-child(2) { animation-delay: 25ms; }
+.tiger-grid-rich .tiger-card-rich:nth-child(3) { animation-delay: 50ms; }
+.tiger-grid-rich .tiger-card-rich:nth-child(4) { animation-delay: 75ms; }
+.tiger-grid-rich .tiger-card-rich:nth-child(5) { animation-delay: 100ms; }
+.tiger-grid-rich .tiger-card-rich:nth-child(6) { animation-delay: 125ms; }
+.tiger-grid-rich .tiger-card-rich:nth-child(7) { animation-delay: 150ms; }
+.tiger-grid-rich .tiger-card-rich:nth-child(8) { animation-delay: 175ms; }
+
+/* ── skeletons: for image/thumbnail loads, not for pipeline stages ───── */
+@keyframes skeleton-shimmer {
+  0%   { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+.skeleton {
+  background: linear-gradient(90deg,
+              var(--skel-base) 25%, var(--skel-hi) 37%, var(--skel-base) 63%);
+  background-size: 200% 100%;
+  animation: skeleton-shimmer 1.4s ease infinite;
+  border-radius: var(--r-ctl);
+}
+/* A flank thumbnail shimmers only until its real crop decodes. .loaded is
+   added by the img own onload handler in flankThumb()/cropThumb(). */
+.stripe-thumb:not(:has(.real-crop.loaded))::after {
+  content: ""; position: absolute; inset: 0; pointer-events: none;
+  background: linear-gradient(90deg,
+              var(--skel-base) 25%, var(--skel-hi) 37%, var(--skel-base) 63%);
+  background-size: 200% 100%;
+  animation: skeleton-shimmer 1.4s ease infinite;
+  opacity: .55;
+}
+.stripe-thumb:has(.real-crop.loaded)::after,
+.stripe-thumb:has(.no-photo:not([hidden]))::after { content: none; }
+
+/* ── tables: dense, scannable, header stays put ──────────────────────── */
+/* Header styling only -- NOT position: sticky.
+   Sticky was tried and reverted: none of these tables scroll inside their
+   own container, so `top: 0` pinned the header to the VIEWPORT and left it
+   floating over unrelated cards further down the page (the provisional
+   enrolments header landing on top of the tiger grid). Sticky headers need
+   a scrolling ancestor to stick within; without one they are just detached
+   overlays. If a table ever gets its own overflow container, re-add it
+   scoped to that container, never globally. */
+thead th {
+  background: var(--surface);
+  box-shadow: inset 0 -1px 0 var(--line);
+}
+tbody tr { transition: background var(--d-fast) var(--ease); }
+tbody tr:nth-child(even) { background: color-mix(in srgb, var(--surface-2) 55%, transparent); }
+tbody tr:hover { background: var(--surface-2); box-shadow: inset 3px 0 0 var(--pelage); }
+
+/* ── status pills: one class, theme-aware, replaces inline hex pairs ─── */
+.tag.ok   { background: var(--ok-bg);   color: var(--ok-fg);   border: 1px solid var(--ok-line); }
+.tag.warn { background: var(--warn-bg); color: var(--warn-fg); border: 1px solid var(--warn-line); }
+.tag.bad  { background: var(--bad-bg);  color: var(--bad-fg);  border: 1px solid var(--bad-line); }
+
+/* ── the floating bulk-action bar ────────────────────────────────────── */
+/* The one place backdrop-filter earns its cost: it sits over scrolling
+   table rows, so an opaque bar would look pasted on. Falls back to an
+   opaque surface where the filter is unsupported or disabled. */
+#provBulkBar {
+  position: sticky; bottom: var(--s3); z-index: 5;
+  background: var(--surface);
+  border: 1px solid var(--pelage);
+  border-radius: var(--r-panel);
+  padding: var(--s3) var(--s4);
+  box-shadow: var(--e3);
+  animation: rise-in var(--d-base) var(--ease-out) both;
+}
+@supports (backdrop-filter: blur(10px)) {
+  #provBulkBar {
+    background: color-mix(in srgb, var(--surface) 78%, transparent);
+    backdrop-filter: blur(10px);
+  }
+}
+
+/* ── pipeline stepper ────────────────────────────────────────────────── */
+.step-pill { transition: background var(--d-base) var(--ease),
+                         color var(--d-base) var(--ease),
+                         border-color var(--d-base) var(--ease); }
+.step-pill.active { box-shadow: 0 0 0 3px var(--pelage-glow); }
+
+/* ── theme toggle ────────────────────────────────────────────────────── */
+#themeToggle {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 34px; height: 30px; padding: 0; font-size: 14px; line-height: 1;
+}
+#themeToggle:hover { background: var(--surface-2); }
+
+/* ── focus: visible on both themes, never removed ────────────────────── */
+:focus-visible {
+  outline: var(--focus);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   DARK THEME · COMPONENT OVERRIDES
+   ───────────────────────────────────────────────────────────────────────
+   The token block near the top of this file re-themes everything that was
+   already written against a token. These are the leftovers: ~30 places
+   that hardcoded a light hex before the theming contract existed. Rather
+   than rewrite each call site (and risk changing the light theme that is
+   currently shipping and demo-ready), each is redirected here, by
+   selector, for dark mode only. Light rendering is untouched by design.
+
+   Deliberately NOT overridden: .stripe and .stripe-thumb keep their amber
+   pelt gradient in both themes. That gradient IS the tiger -- it is the
+   product's identity mark, not a surface, and a dark-grey tiger would be
+   a worse product in exchange for a more consistent palette.
+   ═══════════════════════════════════════════════════════════════════════ */
+
+/* ── map ─────────────────────────────────────────────────────────────── */
+/* Safe to darken: map.js draws boundaries in saturated mid-tones
+   (#059669 / #d97706 / #0891b2) over low-alpha rgba fills, all of which
+   hold contrast on charcoal. Checked before changing this. */
+[data-theme="dark"] .mapwrap { background: #12161a; }
+[data-theme="dark"] .mapwrap svg { background: #12161a; }
+[data-theme="dark"] .map-zoom-btn:hover { background: var(--surface-2); }
+[data-theme="dark"] .map-roster-item.active { background: var(--pelage-dim); }
+[data-theme="dark"] .map-roster-badge.alert { background: var(--bad-bg); color: var(--bad-fg); }
+
+/* ── banners, pills, callouts ────────────────────────────────────────── */
+[data-theme="dark"] .banner { background: var(--surface-2); }
+[data-theme="dark"] .tag.prov { background: var(--pelage-dim); color: var(--pelage); }
+
+/* ── review queue / merge candidates ─────────────────────────────────── */
+[data-theme="dark"] .cand:hover { background: var(--surface-2); }
+[data-theme="dark"] .cand[aria-pressed="true"] {
+  background: var(--pelage-dim);
+  box-shadow: 0 0 0 2px var(--pelage-glow);
+}
+[data-theme="dark"] .review-candidate-card:hover { background: var(--surface-2); }
+[data-theme="dark"] .review-candidate-card.selected { background: var(--pelage-dim); }
+
+/* ── auth / login screen ─────────────────────────────────────────────── */
+[data-theme="dark"] .auth-error,
+[data-theme="dark"] .auth-attempts.danger,
+[data-theme="dark"] .auth-lockout { background: var(--bad-bg); color: var(--bad-fg); }
+[data-theme="dark"] .auth-attempts { background: var(--warn-bg); color: var(--warn-fg); }
+[data-theme="dark"] .auth-success { background: var(--ok-bg); color: var(--ok-fg); }
+
+/* ── pipeline steppers ───────────────────────────────────────────────── */
+[data-theme="dark"] .step-pill.active { background: var(--pelage-dim); }
+[data-theme="dark"] .step-pill.done { background: var(--ok-bg); color: var(--ok-fg); }
+[data-theme="dark"] .id-step-box.complete { background: var(--ok-bg); }
+[data-theme="dark"] .id-match-meter { background: var(--warn-bg); }
+[data-theme="dark"] .id-crop-preview { background: var(--sunk); }
+
+/* ── photo containers ────────────────────────────────────────────────── */
+/* The warm cream gradient behind a flank crop exists to make a photo feel
+   mounted rather than floating. On dark it becomes a sunken well instead
+   -- same intent, inverted light. */
+[data-theme="dark"] .tiger-flank-box,
+[data-theme="dark"] .alert-flank-pelt {
+  background: linear-gradient(145deg, var(--surface-2) 0%, var(--sunk) 100%);
+}
+[data-theme="dark"] .quar-thumb { background: var(--sunk); }
+[data-theme="dark"] .stripe-thumb .no-photo { background: var(--bad-bg); }
+
+/* ── forms ───────────────────────────────────────────────────────────── */
+[data-theme="dark"] .modal-form textarea,
+[data-theme="dark"] .modal-form input,
+[data-theme="dark"] .modal-form select {
+  background: var(--surface-2);
+  color: var(--ink);
+  border-color: var(--line);
+}
+[data-theme="dark"] input, [data-theme="dark"] select, [data-theme="dark"] textarea {
+  background: var(--surface-2);
+  color: var(--ink);
+  border-color: var(--line);
+}
+[data-theme="dark"] input::placeholder, [data-theme="dark"] textarea::placeholder {
+  color: var(--muted);
+}
+/* Native controls (checkboxes, date pickers, dropdown arrows) render from
+   the UA stylesheet and stay light unless the page declares its scheme. */
+[data-theme="dark"] { color-scheme: dark; }
+
+/* ═══════════════════════════════════════════════════════════════════════
+   SIGN-IN SCREEN · POLISH
+   ───────────────────────────────────────────────────────────────────────
+   The split stays: a dark photographic hero on the left, the form on the
+   right. That is a deliberate composition and it survives here. What is
+   fixed below is the execution.
+   ═══════════════════════════════════════════════════════════════════════ */
+
+/* ── 1. the browser was repainting the inputs ────────────────────────────
+   Chrome/Edge paint a hard pale-blue (#e8f0fe) over any field they
+   autofill, and nothing in this file was overriding it -- which is why
+   the username and password boxes rendered blue against a warm palette
+   while every other control looked right. background-color cannot win
+   against the autofill pseudo-class, so the standard route is a 1000px
+   inset shadow that simply covers it, plus -webkit-text-fill-color for
+   the text itself. */
+.auth-form input:-webkit-autofill,
+.auth-form input:-webkit-autofill:hover,
+.auth-form input:-webkit-autofill:focus,
+.auth-form input:-webkit-autofill:active {
+  -webkit-box-shadow: 0 0 0 1000px var(--surface-2) inset !important;
+  box-shadow: 0 0 0 1000px var(--surface-2) inset !important;
+  -webkit-text-fill-color: var(--ink) !important;
+  caret-color: var(--ink);
+  border-color: var(--line);
+  /* the transition delay is the documented trick for stopping the yellow
+     flash on first paint; the value is deliberately absurd */
+  transition: background-color 9999s ease-in-out 0s;
+}
+.auth-form input:-webkit-autofill:focus {
+  -webkit-box-shadow: 0 0 0 1000px var(--surface) inset,
+                      0 0 0 3px var(--pelage-glow) !important;
+  box-shadow: 0 0 0 1000px var(--surface) inset,
+              0 0 0 3px var(--pelage-glow) !important;
+  border-color: var(--pelage);
+}
+
+/* ── 2. the seam between the two halves ──────────────────────────────────
+   A hard 54/46 butt-join between a near-black panel and a near-white one
+   reads as two screenshots pasted together. A warm edge on the boundary
+   and a soft falloff into the form side makes it one composition. */
+.auth-panel {
+  position: relative;
+  border-left: 1px solid var(--pelage-dim);
+}
+.auth-panel::before {
+  content: "";
+  position: absolute;
+  left: 0; top: 0; bottom: 0;
+  width: 90px;
+  pointer-events: none;
+  background: linear-gradient(to right,
+              var(--pelage-glow), transparent);
+  opacity: .5;
+}
+
+/* ── 3. form presence ────────────────────────────────────────────────── */
+.auth-form input {
+  /* inputs were the same tone as their own panel in light mode, so the
+     field boundary depended entirely on a 1.5px line */
+  box-shadow: inset 0 1px 2px rgba(17,21,14,.04);
+}
+[data-theme="dark"] .auth-form input {
+  box-shadow: inset 0 1px 2px rgba(0,0,0,.30);
+}
+.auth-form input:hover:not(:focus) { border-color: var(--pelage-dim); }
+
+.auth-submit-btn {
+  box-shadow: 0 2px 10px -2px var(--pelage-glow);
+}
+.auth-submit-btn:active { transform: translateY(1px) scale(.995); }
+.auth-submit-btn:disabled { opacity: .55; cursor: not-allowed; transform: none; }
+
+/* ── 4. the hero, in both themes ──────────────────────────────────────── */
+/* The hero gradient is hardcoded dark on purpose and stays dark in the
+   light theme too -- it is the product's cover, not a surface. In dark
+   mode it deepens slightly so it does not glow brighter than the form
+   panel sitting next to it. */
+[data-theme="dark"] .auth-hero {
+  background: linear-gradient(135deg, #0d140c 0%, #121b10 40%, #1e1408 100%);
+}
+
+/* ── 5. feature cards on the hero ─────────────────────────────────────── */
+.auth-feature, .auth-hero-feature {
+  transition: transform var(--d-base) var(--ease-out),
+              border-color var(--d-base) var(--ease),
+              background var(--d-base) var(--ease);
+}
+.auth-feature:hover, .auth-hero-feature:hover {
+  transform: translateX(3px);
+  border-color: rgba(223, 139, 61, .45);
+}
+
+/* ── 6. the error and attempts blocks ────────────────────────────────── */
+/* These appear stacked under the password field the moment a login fails,
+   which is exactly when the screen should feel calm rather than alarming:
+   keep them quiet, aligned, and clearly separate from the field itself. */
+.auth-error, .auth-attempts, .auth-lockout, .auth-success {
+  border-radius: 8px;
+  padding: 10px 13px;
+  font-size: 13px;
+  line-height: 1.45;
+  border: 1px solid transparent;
+  animation: rise-in var(--d-base) var(--ease-out) both;
+}
+.auth-error   { border-color: var(--bad-line); }
+.auth-attempts{ border-color: var(--warn-line); }
+.auth-success { border-color: var(--ok-line); }
+
+/* ── 7. narrow screens ───────────────────────────────────────────────── */
+@media (max-width: 900px) {
+  .auth-panel { border-left: 0; border-top: 1px solid var(--pelage-dim); }
+  .auth-panel::before {
+    left: 0; right: 0; top: 0; bottom: auto;
+    width: auto; height: 60px;
+    background: linear-gradient(to bottom, var(--pelage-glow), transparent);
+  }
+}
+
+/* ── password visibility toggle ───────────────────────────────────────────
+   This button is centred vertically with `transform: translateY(-50%)`,
+   which puts it on a collision course with the global press-physics rule
+   further up this file (`button:active { transform: translateY(1px)
+   scale(.985) }`). transform is a single property: the :active rule did
+   not add to the centring, it REPLACED it, so on mousedown the button
+   dropped half its own height, slid out from under the pointer, and the
+   mouseup landed on the input instead. A click event needs both halves on
+   the same element -- so the toggle silently stopped working the moment
+   the press physics were introduced.
+
+   Every state below therefore re-declares translateY(-50%) explicitly.
+   Any future transform on this element must do the same.
+   ───────────────────────────────────────────────────────────────────── */
+.pwd-toggle-btn {
+  /* the icon is swapped in JS; animate the swap rather than snapping */
+  transition: opacity var(--d-fast) var(--ease),
+              transform var(--d-fast) var(--ease-out),
+              color var(--d-fast) var(--ease);
+  border-radius: 50% !important;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.pwd-toggle-btn:hover {
+  opacity: 1;
+  color: var(--pelage);
+  /* grows very slightly, WITHOUT losing the vertical centring */
+  transform: translateY(-50%) scale(1.12);
+}
+
+.pwd-toggle-btn:active:not(:disabled) {
+  /* the press: a squeeze, not a drop. Overrides the global rule with the
+     same specificity trick it needs -- centring preserved. */
+  transform: translateY(-50%) scale(.88);
+  opacity: .85;
+}
+
+.pwd-toggle-btn:focus-visible {
+  opacity: 1;
+  outline: var(--focus);
+  outline-offset: 1px;
+  transform: translateY(-50%);
+}
+
+/* The eye/blindfold swap. JS toggles .revealed on the button, and the icon
+   does a quick flip so the change registers as a deliberate state change
+   rather than a character substitution. */
+@keyframes pw-icon-flip {
+  0%   { transform: rotateY(0deg)   scale(1); }
+  50%  { transform: rotateY(90deg)  scale(.85); }
+  100% { transform: rotateY(0deg)   scale(1); }
+}
+.pwd-toggle-btn .pw-icon {
+  display: inline-block;
+  line-height: 1;
+  animation: pw-icon-flip var(--d-base) var(--ease);
+}
+
+/* While the password is visible the control stays lit, so it is obvious at
+   a glance that the field is currently readable over someone's shoulder. */
+.pwd-toggle-btn.revealed {
+  opacity: 1;
+  color: var(--pelage);
+}
+
+/* First paint only -- see paint(revealed, animate) in app.js. */
+.pwd-toggle-btn .pw-icon.no-anim { animation: none; }
+
+/* ═══════════════════════════════════════════════════════════════════════
+   TOPBAR · ORGANISED RIGHT-HAND CONTROLS
+   ───────────────────────────────────────────────────────────────────────
+   .guide-reopen, .userpill and .logout-btn were each declared TWICE in
+   this file (around lines 322/339 and again around 738/1267/1293), which
+   is why the log-out control carried an underline nobody asked for: the
+   later block won the cascade and set text-decoration. Rather than edit
+   two competing definitions and leave the same trap for the next person,
+   the final word on all three lives here, in one place, last.
+
+   Grouping: appearance (theme) -> help (guide) -> end session (log out),
+   left to right, with log out hard against the corner. Destructive-ish
+   controls belong where nothing else can be fat-fingered into them.
+   ═══════════════════════════════════════════════════════════════════════ */
+
+.topbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* A hairline before the control cluster separates "what is happening"
+   (cycle pill, user) from "what I can do", without adding a box. */
+.topbar-actions #themeToggle {
+  margin-left: 4px;
+  position: relative;
+}
+.topbar-actions #themeToggle::before {
+  content: "";
+  position: absolute;
+  left: -8px; top: 50%;
+  transform: translateY(-50%);
+  width: 1px; height: 18px;
+  background: var(--line);
+  opacity: .7;
+}
+
+/* ── shared pill geometry so the three controls read as one set ──────── */
+#themeToggle,
+.guide-reopen,
+.logout-btn {
+  height: 30px;
+  box-sizing: border-box;
+  border-radius: 999px !important;
+  font-family: var(--f-display);
+  font-size: 11px;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  cursor: pointer;
+  text-decoration: none !important;   /* kills the inherited underline */
+  transition: background var(--d-fast) var(--ease),
+              border-color var(--d-fast) var(--ease),
+              color var(--d-fast) var(--ease),
+              box-shadow var(--d-fast) var(--ease),
+              transform var(--d-fast) var(--ease-out);
+}
+
+#themeToggle { width: 34px; padding: 0; }
+.guide-reopen { padding: 0 13px; }
+.logout-btn   { padding: 0 13px; }
+
+/* ── guide: off ──────────────────────────────────────────────────────── */
+.guide-reopen {
+  background: var(--surface) !important;
+  border: 1px solid var(--line) !important;
+  color: var(--ink-2) !important;
+}
+.guide-reopen:hover {
+  border-color: var(--pelage) !important;
+  color: var(--pelage) !important;
+  transform: translateY(-1px);
+  box-shadow: 0 3px 10px -4px var(--pelage-glow);
+}
+
+/* ── guide: ON ───────────────────────────────────────────────────────────
+   A mild green, not the alert palette: this is a persistent "you are in
+   guided mode" state, not something wrong. Pressing again turns it off. */
+.guide-reopen.is-on {
+  background: var(--ok-bg) !important;
+  border-color: var(--ok-line) !important;
+  color: var(--ok-fg) !important;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--ok-line) 28%, transparent);
+}
+.guide-reopen.is-on:hover {
+  border-color: var(--ok-fg) !important;
+  color: var(--ok-fg) !important;
+  transform: translateY(-1px);
+}
+/* one soft pulse on activation, so switching it on registers */
+@keyframes guide-on-pulse {
+  0%   { box-shadow: 0 0 0 0 color-mix(in srgb, var(--ok-line) 55%, transparent); }
+  70%  { box-shadow: 0 0 0 7px color-mix(in srgb, var(--ok-line) 0%, transparent); }
+  100% { box-shadow: 0 0 0 3px color-mix(in srgb, var(--ok-line) 28%, transparent); }
+}
+.guide-reopen.is-on { animation: guide-on-pulse var(--d-slow) var(--ease-out); }
+
+/* the little book leans in when the guide is live */
+.guide-reopen .guide-btn-icon {
+  font-size: 13px;
+  transition: transform var(--d-base) var(--ease-out);
+}
+.guide-reopen.is-on .guide-btn-icon { transform: rotate(-8deg) scale(1.1); }
+
+/* ── log out: outlined red, never filled ─────────────────────────────── */
+/* Outline + text only, as asked: a solid red block in the corner of every
+   screen reads as a permanent error state. It earns its fill on hover,
+   at the moment of intent, and not before. */
+.logout-btn {
+  background: transparent !important;
+  border: 1px solid color-mix(in srgb, var(--act) 72%, transparent) !important;
+  color: var(--act) !important;
+}
+.logout-btn:hover {
+  background: color-mix(in srgb, var(--act) 10%, transparent) !important;
+  border-color: var(--act) !important;
+  color: var(--act) !important;
+  transform: translateY(-1px);
+  box-shadow: 0 3px 10px -4px color-mix(in srgb, var(--act) 40%, transparent);
+}
+.logout-btn:active { transform: translateY(1px) scale(.985); }
+
+/* ── theme toggle ────────────────────────────────────────────────────── */
+#themeToggle {
+  background: var(--surface) !important;
+  border: 1px solid var(--line) !important;
+  font-size: 14px;
+  letter-spacing: 0;
+}
+#themeToggle:hover {
+  border-color: var(--pelage) !important;
+  transform: translateY(-1px) rotate(-12deg);
+}
+#themeToggle:active { transform: translateY(1px) scale(.94); }
+
+/* ── user pill: quieter, it is context and not a control ─────────────── */
+.userpill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 30px;
+  padding: 0 12px;
+  box-sizing: border-box;
+  background: var(--surface-2);
+  border: 1px solid var(--line-soft);
+  border-radius: 999px;
+  font-size: 12px;
+}
+.userpill .user-role {
+  background: var(--pelage-dim);
+  color: var(--pelage);
+  border: 1px solid color-mix(in srgb, var(--pelage) 30%, transparent);
+  border-radius: 4px;
+  padding: 1px 6px;
+  font-family: var(--f-display);
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+.userpill .user-name { font-weight: 600; color: var(--ink); font-size: 12.5px; }
+
+/* ── the running-cycle pill ──────────────────────────────────────────── */
+.runpill .dot { animation: runpill-breathe 2.4s var(--ease) infinite; }
+@keyframes runpill-breathe {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50%      { opacity: .55; transform: scale(.82); }
+}
+
+/* ── narrow screens: labels collapse, icons stay ─────────────────────── */
+@media (max-width: 860px) {
+  .guide-reopen { padding: 0 10px; font-size: 0; gap: 0; }
+  .guide-reopen .guide-btn-icon { font-size: 14px; }
+  .userpill .user-name { display: none; }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   SIDEBAR · COLLAPSIBLE, CATEGORISED
+   ═══════════════════════════════════════════════════════════════════════ */
+
+#body { transition: grid-template-columns var(--d-slow) var(--ease-out); }
+body.nav-collapsed #body { grid-template-columns: 60px 1fr; }
+
+.nav {
+  background: var(--surface);
+  border-right: 1px solid var(--line);
+  padding: var(--s3) 0 var(--s5);
+  overflow-x: hidden;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+/* ── the rail collapse control ───────────────────────────────────────── */
+.nav-collapse {
+  display: flex; align-items: center; gap: 8px;
+  margin: 0 var(--s3) var(--s2);
+  padding: 6px 8px !important;
+  background: transparent !important;
+  border: 1px solid transparent !important;
+  border-radius: var(--r-ctl) !important;
+  color: var(--muted) !important;
+  font-family: var(--f-display);
+  font-size: 10px; letter-spacing: .14em; text-transform: uppercase;
+  cursor: pointer;
+}
+.nav-collapse:hover {
+  background: var(--surface-2) !important;
+  border-color: var(--line) !important;
+  color: var(--ink-2) !important;
+}
+.nav-collapse svg {
+  width: 14px; height: 14px; flex: none;
+  fill: none; stroke: currentColor; stroke-width: 1.7;
+  stroke-linecap: round; stroke-linejoin: round;
+  transition: transform var(--d-base) var(--ease-out);
+}
+body.nav-collapsed .nav-collapse svg { transform: rotate(180deg); }
+body.nav-collapsed .nav-collapse { justify-content: center; margin-inline: 6px; }
+
+/* ── category header ─────────────────────────────────────────────────── */
+.nav-group {
+  width: calc(100% - var(--s3) * 2);
+  margin: 6px var(--s3) 2px;
+  display: flex; align-items: center; gap: 9px;
+  padding: 6px 8px !important;
+  background: transparent !important;
+  border: 0 !important;
+  border-radius: var(--r-ctl) !important;
+  color: var(--muted) !important;
+  font-family: var(--f-display);
+  font-size: 10px; letter-spacing: .16em; text-transform: uppercase;
+  font-weight: 600;
+  cursor: pointer;
+  text-align: left;
+}
+.nav-group:hover { background: var(--surface-2) !important; color: var(--ink-2) !important; }
+.nav-group .nav-group-label { flex: 1; }
+.nav-group .nav-chev {
+  width: 13px; height: 13px; flex: none;
+  transition: transform var(--d-base) var(--ease-out);
+}
+.nav-section.is-closed .nav-group .nav-chev { transform: rotate(-90deg); }
+
+/* ── the items themselves ────────────────────────────────────────────── */
+/* grid-template-rows 0fr -> 1fr animates a collapse without needing a
+   measured pixel height, which is what makes an accordion janky when the
+   item count differs per section. */
+.nav-items {
+  display: grid;
+  grid-template-rows: 1fr;
+  transition: grid-template-rows var(--d-base) var(--ease-out),
+              opacity var(--d-base) var(--ease);
+  opacity: 1;
+}
+.nav-items > * { min-height: 0; }
+.nav-section.is-closed .nav-items { grid-template-rows: 0fr; opacity: 0; }
+.nav-items > a { overflow: hidden; }
+
+.nav a {
+  display: flex; align-items: center; gap: 10px;
+  margin: 1px var(--s3);
+  padding: 7px 9px;
+  color: var(--ink-2);
+  text-decoration: none;
+  border-radius: var(--r-ctl);
+  border-left: 0;
+  font-family: var(--f-display);
+  font-size: 12px; letter-spacing: .07em; text-transform: uppercase;
+  position: relative;
+  transition: background var(--d-fast) var(--ease),
+              color var(--d-fast) var(--ease),
+              transform var(--d-fast) var(--ease-out);
+}
+.nav a:hover {
+  background: var(--surface-2);
+  color: var(--ink);
+  transform: translateX(2px);
+}
+.nav a[aria-current="page"] {
+  background: var(--pelage-dim);
+  color: var(--pelage);
+  font-weight: 600;
+}
+/* the active marker slides in rather than snapping */
+.nav a[aria-current="page"]::before {
+  content: "";
+  position: absolute; left: -4px; top: 50%;
+  width: 3px; height: 62%;
+  transform: translateY(-50%);
+  border-radius: 0 3px 3px 0;
+  background: var(--pelage);
+  animation: nav-mark-in var(--d-base) var(--ease-out);
+}
+@keyframes nav-mark-in {
+  from { height: 0; opacity: 0; }
+  to   { height: 62%; opacity: 1; }
+}
+
+.nav .nav-ico {
+  width: 16px; height: 16px; flex: none;
+  fill: none; stroke: currentColor; stroke-width: 1.5;
+  stroke-linecap: round; stroke-linejoin: round;
+  opacity: .85;
+  transition: transform var(--d-base) var(--ease-out), opacity var(--d-fast) var(--ease);
+}
+.nav a:hover .nav-ico { opacity: 1; transform: scale(1.1); }
+.nav a[aria-current="page"] .nav-ico { opacity: 1; }
+.nav .nav-txt { flex: 1; white-space: nowrap; }
+.nav .tally {
+  margin-left: auto; font-family: var(--f-data); font-size: 11px;
+  color: var(--muted); letter-spacing: 0;
+}
+.nav .tally.hot { color: var(--act); font-weight: 700; }
+
+/* ── collapsed rail: icons only ──────────────────────────────────────── */
+body.nav-collapsed .nav-collapse-label,
+body.nav-collapsed .nav-group-label,
+body.nav-collapsed .nav-group .nav-chev,
+body.nav-collapsed .nav .nav-txt,
+body.nav-collapsed .nav .tally { display: none; }
+
+body.nav-collapsed .nav-group {
+  justify-content: center;
+  margin-inline: 6px;
+  pointer-events: none;      /* nothing to expand when labels are hidden */
+  opacity: .5;
+}
+/* sections always render open while collapsed, so every icon stays reachable */
+body.nav-collapsed .nav-section.is-closed .nav-items {
+  grid-template-rows: 1fr;
+  opacity: 1;
+}
+body.nav-collapsed .nav a {
+  justify-content: center;
+  margin-inline: 6px;
+  padding: 9px 0;
+}
+body.nav-collapsed .nav a:hover { transform: none; }
+body.nav-collapsed .nav .nav-ico { width: 18px; height: 18px; }
+
+/* ═══════════════════════════════════════════════════════════════════════
+   THEME SWITCH · a real switch, not an emoji
+   ═══════════════════════════════════════════════════════════════════════ */
+.theme-switch {
+  position: relative;
+  width: 46px !important;
+  height: 26px !important;
+  padding: 0 !important;
+  border-radius: 999px !important;
+  border: 1px solid var(--line) !important;
+  background: var(--surface-2) !important;
+  cursor: pointer;
+  flex: none;
+  transition: background var(--d-base) var(--ease),
+              border-color var(--d-base) var(--ease);
+}
+.theme-switch:hover { border-color: var(--pelage) !important; transform: none !important; }
+.theme-switch:active { transform: none !important; }
+.theme-switch .theme-switch-knob {
+  position: absolute; top: 2px; left: 2px;
+  width: 20px; height: 20px;
+  border-radius: 50%;
+  background: var(--surface);
+  border: 1px solid var(--line-soft);
+  box-shadow: 0 1px 3px rgba(0,0,0,.18);
+  display: flex; align-items: center; justify-content: center;
+  /* the knob travel is the whole interaction -- spring it, do not linear it */
+  transition: transform var(--d-slow) cubic-bezier(.34,1.56,.64,1),
+              background var(--d-base) var(--ease);
+}
+.theme-switch.is-dark { background: var(--pelage-dim) !important; border-color: var(--pelage) !important; }
+.theme-switch.is-dark .theme-switch-knob { transform: translateX(20px); }
+
+.theme-switch svg {
+  position: absolute;
+  width: 13px; height: 13px;
+  fill: none; stroke: currentColor; stroke-width: 1.6;
+  stroke-linecap: round; stroke-linejoin: round;
+  transition: opacity var(--d-base) var(--ease),
+              transform var(--d-base) var(--ease-out);
+}
+.theme-switch .ico-sun  { color: #c98a2e; opacity: 1; transform: rotate(0) scale(1); }
+.theme-switch .ico-moon { color: var(--pelage); opacity: 0; transform: rotate(-70deg) scale(.5); }
+.theme-switch.is-dark .ico-sun  { opacity: 0; transform: rotate(70deg) scale(.5); }
+.theme-switch.is-dark .ico-moon { opacity: 1; transform: rotate(0) scale(1); }
+
+/* ═══════════════════════════════════════════════════════════════════════
+   THEME CROSSFADE
+   ───────────────────────────────────────────────────────────────────────
+   Each themed surface carries its own transition, so flipping the root
+   attribute alone repaints the topbar, rail, cards and map at visibly
+   different moments -- it reads as the page tearing rather than changing.
+   For the ~400ms of a swap, every element gets ONE identical, short
+   colour transition so the whole document turns together.
+   ═══════════════════════════════════════════════════════════════════════ */
+/* Kill every transition for the length of the swap.
+   The earlier attempt gave all elements a matching 300ms colour
+   transition, which sounds simultaneous and is not: each element
+   interpolates its OWN start colour to its own end colour, so a card
+   moving near-white -> near-black and a hairline border moving one shade
+   settle at visibly different moments, and the page appears to change in
+   waves. Zero duration means every colour resolves in a SINGLE repaint --
+   genuinely at the same instant, which is what was actually asked for.
+   The smoothness then comes from the overlay below rather than from
+   per-element easing. */
+html.theme-transitioning,
+html.theme-transitioning *,
+html.theme-transitioning *::before,
+html.theme-transitioning *::after {
+  transition-duration: 0s !important;
+  transition-delay: 0s !important;
+}
+
+/* One exception: the switch the operator is looking at when they click.
+   Its knob keeps its spring, so the control still feels mechanical while
+   everything behind it changes in one go. */
+html.theme-transitioning .theme-switch,
+html.theme-transitioning .theme-switch *,
+html.theme-transitioning .theme-switch *::before,
+html.theme-transitioning .theme-switch *::after {
+  transition-duration: var(--d-slow) !important;
+}
+
+/* The gloom. A neutral dip -- deliberately NOT var(--canvas), which is
+   itself mid-change during the swap and would shift colour underneath the
+   fade. Black works in both directions: light->dark reads as dusk falling,
+   dark->light as a blink. The instant colour snap happens at ~40%, hidden
+   under the darkest point of the dip. */
+html.theme-transitioning body::after {
+  content: "";
+  position: fixed; inset: 0; z-index: 9999;
+  pointer-events: none;
+  background: #000;
+  animation: theme-gloom 420ms var(--ease) both;
+}
+@keyframes theme-gloom {
+  0%   { opacity: 0; }
+  40%  { opacity: .40; }
+  100% { opacity: 0; }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   PASSWORD EYE · SVG, sized and centred
+   ═══════════════════════════════════════════════════════════════════════ */
+.pwd-toggle-btn .pw-icon { display: inline-flex; align-items: center; justify-content: center; }
+.pwd-toggle-btn svg {
+  width: 17px; height: 17px;
+  fill: none; stroke: currentColor; stroke-width: 1.5;
+  stroke-linecap: round; stroke-linejoin: round;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   CARD HOVER · restored
+   ───────────────────────────────────────────────────────────────────────
+   These were dead while the entry animation ran with fill-mode `both`
+   (a filling animation outranks normal declarations, so `transform: none`
+   from its last keyframe won permanently). Fixed at the animation; these
+   are the states it was suppressing.
+   ═══════════════════════════════════════════════════════════════════════ */
+.tiger-card-rich:hover,
+.alert-card-rich:hover {
+  transform: translateY(-3px);
+  border-color: var(--pelage);
+  box-shadow: var(--e3), 0 0 0 1px var(--pelage-glow);
+}
+/* `will-change: transform` was here and has been removed deliberately.
+   It permanently promotes every card to its own compositor layer, and text
+   on a promoted layer is re-rasterised off the main pixel grid -- which is
+   exactly the "slightly blurry" rendering, worst on first paint while
+   dozens of layers are created at once (the "lag when the browser opens").
+   will-change is a hint for an animation that is ABOUT to happen, not a
+   permanent decoration; the hover transform is cheap enough without it. */
+.tiger-card-rich:hover .tiger-flank-box { transform: scale(1.03); }
+.tiger-card-rich .tiger-flank-box {
+  transition: transform var(--d-base) var(--ease-out);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   SIDEBAR · VS CODE-STYLE TWISTY SECTIONS  (supersedes the block above)
+   ───────────────────────────────────────────────────────────────────────
+   Three corrections to the first pass:
+     1. the headers sat far apart with their own margins, so the rail read
+        as four detached islands instead of one stacked list;
+     2. the twisty was a thin outline chevron on the RIGHT, effectively
+        invisible against a muted header;
+     3. opening a section did not visibly push the ones below it.
+   VS Code's pattern fixes all three: twisty FIRST, flush rows, zero gap,
+   and the sections physically stack so expanding one pushes the rest down.
+   ═══════════════════════════════════════════════════════════════════════ */
+
+.nav { gap: 0; padding-top: var(--s2); }
+
+.nav-section { margin: 0; }
+/* a hairline between stacked sections, VS Code style -- not a gap */
+.nav-section + .nav-section { border-top: 1px solid var(--line-soft); }
+
+/* ── the header row ──────────────────────────────────────────────────── */
+.nav-group {
+  width: 100% !important;
+  margin: 0 !important;
+  padding: 7px 10px !important;
+  border-radius: 0 !important;
+  display: flex; align-items: center; gap: 7px;
+  font-size: 10.5px !important;
+  letter-spacing: .13em !important;
+  color: var(--muted) !important;
+  background: transparent !important;
+  transition: background var(--d-fast) var(--ease), color var(--d-fast) var(--ease);
+}
+.nav-group:hover { background: var(--surface-2) !important; color: var(--ink) !important; }
+.nav-group:active { transform: none !important; }
+
+/* ── the twisty ──────────────────────────────────────────────────────────
+   Solid, filled, and first in the row. Points down when open, right when
+   closed -- the same affordance every file tree on earth uses, so it needs
+   no explanation. */
+.nav-group .nav-chev {
+  width: 12px; height: 12px; flex: none;
+  fill: currentColor !important;
+  stroke: currentColor !important;
+  stroke-width: 1.6;
+  stroke-linecap: round; stroke-linejoin: round;
+  opacity: .9;
+  transform: rotate(90deg);          /* open: pointing down */
+  transition: transform 180ms var(--ease-out);
+}
+.nav-section.is-closed .nav-group .nav-chev { transform: rotate(0deg); }  /* closed: right */
+.nav-group:hover .nav-chev { opacity: 1; }
+
+/* the category glyph is secondary to the twisty -- quieter, and it never
+   competes with the item icons below it */
+.nav-group .nav-ico { width: 14px; height: 14px; opacity: .6; }
+.nav-group:hover .nav-ico { opacity: .9; }
+.nav-group .nav-group-label { flex: 1; text-align: left; }
+
+/* ── items: flush rows, no floating margins ──────────────────────────── */
+.nav-items { padding: 2px 0 4px; }
+.nav a {
+  margin: 0 !important;
+  padding: 6px 10px 6px 28px !important;   /* indented under the twisty */
+  border-radius: 0 !important;
+  font-size: 11.5px;
+  letter-spacing: .06em;
+}
+.nav a:hover { transform: none; background: var(--surface-2); }
+.nav a[aria-current="page"] {
+  background: var(--pelage-dim);
+  box-shadow: inset 2px 0 0 var(--pelage);
+}
+.nav a[aria-current="page"]::before { content: none; }   /* the inset bar replaces it */
+
+/* ── collapsed rail ──────────────────────────────────────────────────── */
+body.nav-collapsed .nav-section + .nav-section { border-top-color: transparent; }
+body.nav-collapsed .nav-group { padding: 4px 0 !important; }
+body.nav-collapsed .nav-group .nav-chev { display: none; }
+body.nav-collapsed .nav-group .nav-ico { opacity: .45; width: 15px; height: 15px; }
+body.nav-collapsed .nav a {
+  padding: 9px 0 !important;
+  justify-content: center;
+}
+body.nav-collapsed .nav a[aria-current="page"] { box-shadow: inset 2px 0 0 var(--pelage); }
+
+/* ═══════════════════════════════════════════════════════════════════════
+   SIDEBAR · WORKING COLLAPSE + ACTIVE-SECTION DOT  (final word)
+   ───────────────────────────────────────────────────────────────────────
+   The 0fr collapse above never actually worked. `grid-template-rows: 1fr`
+   defines ONE explicit row; a section with 3 links puts the other 2 into
+   IMPLICIT rows, which are auto-sized and ignore the 0fr entirely. So a
+   closed section collapsed its first link and kept full height for the
+   rest -- the "large gap between two tabs" when a dropdown was shut.
+   Fixed structurally: the links now sit inside a single .nav-items-inner,
+   so the grid has exactly one child and 1fr -> 0fr collapses all of it.
+   ═══════════════════════════════════════════════════════════════════════ */
+
+.nav-items {
+  display: grid;
+  grid-template-rows: 1fr;
+  padding: 0 !important;              /* padding here would survive the collapse */
+  transition: grid-template-rows 200ms var(--ease-out),
+              opacity 160ms var(--ease);
+  opacity: 1;
+}
+.nav-items-inner {
+  min-height: 0;
+  overflow: hidden;                   /* what actually clips the rows away */
+  padding: 2px 0 4px;                 /* the breathing room lives INSIDE the clip */
+}
+.nav-section.is-closed .nav-items { grid-template-rows: 0fr; opacity: 0; }
+/* a closed section is exactly its header, nothing more */
+.nav-section.is-closed .nav-items-inner { padding-top: 0; padding-bottom: 0; }
+
+/* ── the "this section holds the page you are on" dot ────────────────────
+   Only when the section is CLOSED -- open sections already show the
+   highlighted row, so a dot there would be noise. :has() lets the header
+   react to a descendant's state with no extra JS to keep in sync. */
+.nav-group { position: relative; }
+.nav-section.is-closed:has(a[aria-current="page"]) .nav-group .nav-group-label::after {
+  content: "";
+  display: inline-block;
+  width: 6px; height: 6px;
+  margin-left: 8px;
+  vertical-align: middle;
+  border-radius: 50%;
+  background: var(--pelage);
+  box-shadow: 0 0 0 3px var(--pelage-glow);
+  animation: nav-dot-in 220ms var(--ease-out) backwards;
+}
+@keyframes nav-dot-in {
+  from { transform: scale(0); opacity: 0; }
+  to   { transform: scale(1); opacity: 1; }
+}
+/* the header itself warms up a little, so the dot is not the only cue */
+.nav-section.is-closed:has(a[aria-current="page"]) .nav-group { color: var(--ink-2) !important; }
+.nav-section.is-closed:has(a[aria-current="page"]) .nav-group .nav-ico { opacity: .9; }
+
+/* collapsed rail: the dot moves onto the category glyph, since there is
+   no label to hang it off */
+body.nav-collapsed .nav-section:has(a[aria-current="page"]) .nav-group::after {
+  content: "";
+  position: absolute; top: 3px; right: 12px;
+  width: 5px; height: 5px;
+  border-radius: 50%;
+  background: var(--pelage);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   MAIN CONTENT · stays put when the rail moves
+   ───────────────────────────────────────────────────────────────────────
+   Collapsing the rail widens the content column by ~150px, and with the
+   text left-aligned against it every heading and card visibly jumped
+   sideways -- the page appeared to slide around with the slider. Capping
+   the measure and centring it means the rail can open and close without
+   the content reflowing under the reader's eyes.
+   ═══════════════════════════════════════════════════════════════════════ */
+main {
+  --measure: 1180px;
+}
+main > .view {
+  max-width: var(--measure);
+  margin-inline: auto;
+  width: 100%;
+}
+/* The map wants every pixel it can get; it is a canvas, not prose. */
+main > .view[data-view="map"] { max-width: none; }
+
+@media (max-width: 1400px) {
+  main { --measure: 100%; }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   PAGE TOOLBAR · filters above, actions below
+   ───────────────────────────────────────────────────────────────────────
+   Reusable, and written as classes rather than the inline styles these
+   controls carried before -- inline styles cannot respond to the theme,
+   which is why the filter inputs kept a hardcoded light border.
+
+   The layout separates two different jobs that were previously mixed on
+   one wrapping line: narrowing the list down (search + selects) and
+   acting on it (add / boundaries / data exchange). Splitting them also
+   fixes the orphan -- "All Statuses" wrapped onto its own row because the
+   filter group was flex:1 with a 200px min-width search fighting five
+   buttons for the same line.
+   ═══════════════════════════════════════════════════════════════════════ */
+
+.page-toolbar {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s3);
+  margin-top: var(--s4);
+  margin-bottom: var(--s3);
+}
+
+/* ── filters ─────────────────────────────────────────────────────────── */
+.filter-bar {
+  display: flex;
+  gap: var(--s2);
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.field-search {
+  position: relative;
+  display: flex;
+  align-items: center;
+  flex: 1 1 260px;
+  min-width: 220px;
+}
+.field-search svg {
+  position: absolute;
+  left: 10px;
+  width: 14px; height: 14px;
+  pointer-events: none;
+  fill: none; stroke: var(--muted); stroke-width: 1.6;
+  stroke-linecap: round; stroke-linejoin: round;
+  transition: stroke var(--d-fast) var(--ease);
+}
+.field-search input {
+  width: 100%;
+  padding: 7px 12px 7px 31px;
+  font: inherit;
+  font-size: 13px;
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r-ctl);
+  transition: border-color var(--d-fast) var(--ease),
+              box-shadow var(--d-fast) var(--ease),
+              background var(--d-fast) var(--ease);
+}
+.field-search input::placeholder { color: var(--muted); }
+.field-search input:hover { border-color: var(--pelage-dim); }
+.field-search input:focus {
+  outline: none;
+  border-color: var(--pelage);
+  box-shadow: 0 0 0 3px var(--pelage-glow);
+}
+.field-search:focus-within svg { stroke: var(--pelage); }
+
+.filter-bar select {
+  padding: 7px 10px;
+  font: inherit;
+  font-size: 13px;
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r-ctl);
+  cursor: pointer;
+  transition: border-color var(--d-fast) var(--ease),
+              box-shadow var(--d-fast) var(--ease);
+}
+.filter-bar select:hover { border-color: var(--pelage-dim); }
+.filter-bar select:focus {
+  outline: none;
+  border-color: var(--pelage);
+  box-shadow: 0 0 0 3px var(--pelage-glow);
+}
+
+/* ── actions ─────────────────────────────────────────────────────────── */
+.action-bar {
+  display: flex;
+  gap: var(--s2);
+  flex-wrap: wrap;
+  align-items: center;
+}
+/* the primary action leads; everything after it is secondary and is
+   pushed away so the two groups never blur together */
+.action-bar .primary { margin-right: var(--s2); }
+.action-bar .btn-group { margin-left: auto; }
+
+/* ── segmented group: several buttons, one job ───────────────────────── */
+.btn-group {
+  display: inline-flex;
+  align-items: center;
+  border-radius: var(--r-ctl);
+  overflow: hidden;
+  border: 1px solid var(--line);
+  background: var(--surface);
+}
+.btn-group > .btn,
+.btn-group > button,
+.btn-group > a.btn {
+  border: 0 !important;
+  border-radius: 0 !important;
+  margin: 0;
+  box-shadow: none !important;
+  background: transparent !important;
+  white-space: nowrap;
+}
+/* hairlines BETWEEN members only -- an outer border would double up */
+.btn-group > * + * { box-shadow: inset 1px 0 0 var(--line) !important; }
+.btn-group > *:hover {
+  background: var(--surface-2) !important;
+  color: var(--pelage) !important;
+  transform: none !important;          /* a segment must not pop out of its group */
+}
+.btn-group > *:active { transform: none !important; background: var(--sunk) !important; }
+
+/* ── narrow screens ──────────────────────────────────────────────────── */
+@media (max-width: 900px) {
+  .action-bar .btn-group { margin-left: 0; width: 100%; }
+  .btn-group > * { flex: 1; text-align: center; justify-content: center; }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   SECTION BADGE · counts survive a collapse
+   ───────────────────────────────────────────────────────────────────────
+   Shown only while the section is folded. Open sections already show each
+   row's own tally, so a header badge there would double-count visually.
+   ═══════════════════════════════════════════════════════════════════════ */
+.nav-group-badge {
+  display: none;
+  margin-left: auto;
+  min-width: 17px;
+  padding: 1px 5px;
+  border-radius: 999px;
+  font-family: var(--f-data);
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1.5;
+  letter-spacing: 0;
+  text-align: center;
+  color: var(--ink-2);
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+}
+.nav-section.is-closed .nav-group-badge {
+  display: inline-block;
+  animation: nav-dot-in 200ms var(--ease-out) backwards;
+}
+/* an alert count is not just a number -- it keeps its urgency when folded */
+.nav-group-badge.hot {
+  color: #fff;
+  background: var(--act);
+  border-color: var(--act);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--act) 22%, transparent);
+}
+/* the label must not fight the badge for the row */
+.nav-section.is-closed .nav-group .nav-group-label { flex: 0 1 auto; }
+/* collapsed rail has no room for a pill; the corner dot already covers it */
+body.nav-collapsed .nav-group-badge { display: none !important; }
+
+/* ═══════════════════════════════════════════════════════════════════════
+   BUTTONS · the hover was too quiet to read as interactive
+   ───────────────────────────────────────────────────────────────────────
+   Secondary buttons only changed border-colour on hover, which on a dark
+   surface is nearly invisible -- so most of the app's buttons felt dead
+   even though they were responding. They now lift and take a shadow like
+   the primary does, just at lower amplitude so the primary still leads.
+   ═══════════════════════════════════════════════════════════════════════ */
+button:hover:not(:disabled),
+.btn:hover:not(:disabled),
+a.btn:hover {
+  border-color: var(--pelage);
+  color: var(--pelage);
+  background: var(--surface-2);
+  transform: translateY(-1px);
+  box-shadow: 0 3px 10px -4px var(--pelage-glow);
+}
+button:active:not(:disabled),
+.btn:active:not(:disabled) {
+  transform: translateY(1px) scale(.985);
+  box-shadow: none;
+}
+/* .primary keeps its stronger treatment so hierarchy survives */
+button.primary:hover:not(:disabled) {
+  background: var(--pelage);
+  color: #fff;
+  box-shadow: 0 5px 16px -4px var(--pelage-glow);
+  transform: translateY(-1px);
+}
+/* .danger stays red on hover rather than inheriting the amber above */
+button.danger:hover:not(:disabled) {
+  border-color: var(--act) !important;
+  color: var(--act) !important;
+  background: color-mix(in srgb, var(--act) 10%, transparent) !important;
+  box-shadow: 0 3px 10px -4px color-mix(in srgb, var(--act) 40%, transparent);
+}
+
+/* Controls that must NOT lift: ones positioned by transform, inside a
+   segmented group, or pinned in a corner. Listed explicitly because a
+   blanket lift on every button is what broke the password eye earlier. */
+.pwd-toggle-btn:hover,
+.btn-group > *:hover,
+.nav a:hover,
+.nav-group:hover,
+.nav-collapse:hover,
+.theme-switch:hover,
+.modal-close-btn:hover,
+.map-zoom-btn:hover,
+.guide-x:hover {
+  transform: none !important;
+  box-shadow: none !important;
+}
+.pwd-toggle-btn:hover { transform: translateY(-50%) scale(1.12) !important; }
+
+/* ═══════════════════════════════════════════════════════════════════════
+   MODAL FORM FIELDS · the last hardcoded-white surfaces
+   ───────────────────────────────────────────────────────────────────────
+   The boundaries textarea rendered as a bright white block in dark mode
+   (`background: #ffffff` declared twice, further up). Any modal field
+   still doing that is corrected here.
+   ═══════════════════════════════════════════════════════════════════════ */
+.modal-form textarea,
+.modal-form input,
+.modal-form select,
+.modal-body textarea,
+.modal-body input,
+.modal-body select {
+  background: var(--surface-2) !important;
+  color: var(--ink) !important;
+  border: 1px solid var(--line) !important;
+  border-radius: var(--r-ctl);
+  transition: border-color var(--d-fast) var(--ease),
+              box-shadow var(--d-fast) var(--ease);
+}
+.modal-form textarea::placeholder,
+.modal-body textarea::placeholder { color: var(--muted); }
+.modal-form textarea:focus,
+.modal-form input:focus,
+.modal-form select:focus,
+.modal-body textarea:focus,
+.modal-body input:focus {
+  outline: none;
+  border-color: var(--pelage) !important;
+  box-shadow: 0 0 0 3px var(--pelage-glow);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   FIRST-PAINT COST
+   ───────────────────────────────────────────────────────────────────────
+   The entry animation ran on every card in the active view at once. On the
+   catalogue that is dozens of simultaneous compositor animations on load,
+   which is the stall being felt as the window opens. Cards keep their
+   stagger (they are the visual payoff); generic panels just fade, which
+   costs nothing to composite.
+   ═══════════════════════════════════════════════════════════════════════ */
+@keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
+.view.on .card { animation: fade-in 200ms var(--ease) backwards; }
+
+/* ═══════════════════════════════════════════════════════════════════════
+   SIGN-IN · THE PHOTOGRAPH IS THE SCREEN
+   ───────────────────────────────────────────────────────────────────────
+   Supersedes the split hero/panel layout above. The artwork already
+   carries the wordmark, the "national tiger conservation node" line and
+   the conservation strapline, so nothing here re-states them -- the job
+   of this stylesheet is to stay out of the picture until asked.
+
+   Palette sampled from the artwork itself rather than invented: the
+   near-black canopy green, the lit foliage green, and the amber of the
+   tiger's eyes -- which is the same burnt amber the rest of the product
+   already uses for identity, so the login screen and the application
+   agree with each other instead of being two designs.
+   ═══════════════════════════════════════════════════════════════════════ */
+
+.auth-overlay {
+  --jungle-void:   #060d09;   /* deepest canopy shadow            */
+  --jungle-deep:   #0b1a12;   /* card body                        */
+  --jungle-mid:    #123021;   /* raised surfaces inside the card  */
+  --jungle-line:   rgba(120, 214, 155, .22);
+  --jungle-lit:    #6fe3a0;   /* the lit-foliage green            */
+  --jungle-text:   #dff3e6;
+  --jungle-muted:  #8fae9c;
+  --eye-amber:     #ff9d3d;   /* the tiger's eyes                 */
+
+  position: fixed; inset: 0; z-index: 200;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--jungle-void);
+  overflow: hidden;
+}
+
+/* ── the stage ───────────────────────────────────────────────────────── */
+.auth-stage {
+  position: absolute; inset: 0;
+  cursor: pointer;
+  user-select: none;
+  -webkit-user-select: none;
+  overflow: hidden;
+}
+.auth-stage-img {
+  width: 100%; height: 100%;
+  object-fit: cover;
+  object-position: center;
+  display: block;
+  /* a slow, barely-perceptible push-in: the reserve is alive, but nothing
+     here should compete with a photograph of a tiger looking at you */
+  animation: stage-drift 38s ease-in-out infinite alternate;
+  transition: filter 600ms var(--ease), transform 600ms var(--ease);
+}
+@keyframes stage-drift {
+  from { transform: scale(1.04) translate3d(0, 0, 0); }
+  to   { transform: scale(1.10) translate3d(0, -1.2%, 0); }
+}
+
+/* Vignette: darkens the edges so the hint and, later, the card have
+   something quiet to sit on, without flattening the tiger's face. */
+.auth-stage-veil {
+  position: absolute; inset: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(115% 85% at 50% 42%,
+      transparent 0%, transparent 42%, rgba(6,13,9,.55) 78%, rgba(6,13,9,.88) 100%),
+    linear-gradient(to bottom, rgba(6,13,9,.35) 0%, transparent 22%, transparent 68%, rgba(6,13,9,.7) 100%);
+  transition: opacity 600ms var(--ease);
+}
+
+/* when the card is up, the photograph steps back */
+.auth-stage.is-open .auth-stage-img { filter: blur(4px) saturate(1.02) brightness(.86); transform: scale(1.06); }
+.auth-stage.is-open .auth-stage-veil { opacity: .55; }
+
+
+/* ── the card ────────────────────────────────────────────────────────── */
+.auth-modal {
+  position: relative; z-index: 2;
+  display: flex; align-items: center; justify-content: center;
+  width: 100%; height: 100%;
+  padding: var(--s5);
+  animation: card-veil 320ms var(--ease) both;
+}
+@keyframes card-veil { from { background: transparent; } to { background: rgba(6,13,9,.28); } }
+
+.auth-modal-card {
+  position: relative;
+  width: 100%; max-width: 430px;
+  max-height: calc(100vh - var(--s5) * 2);
+  overflow-y: auto;
+  padding: 34px 34px 30px;
+  border-radius: 16px;
+  background: linear-gradient(168deg,
+              rgba(18, 48, 33, .97) 0%,
+              rgba(11, 26, 18, .98) 55%,
+              rgba(8, 18, 13, .99) 100%);
+  border: 1px solid var(--jungle-line);
+  box-shadow:
+    0 40px 90px -30px rgba(0, 0, 0, .85),
+    0 0 0 1px rgba(255, 255, 255, .03) inset,
+    0 1px 0 rgba(255, 255, 255, .06) inset;
+  color: var(--jungle-text);
+  animation: card-in 420ms var(--ease-out) both;
+}
+@keyframes card-in {
+  from { opacity: 0; transform: translateY(18px) scale(.965); }
+  to   { opacity: 1; transform: none; }
+}
+/* a hairline of lit foliage along the top edge */
+.auth-modal-card::before {
+  content: "";
+  position: absolute; left: 22%; right: 22%; top: 0; height: 1px;
+  background: linear-gradient(to right, transparent, var(--jungle-lit), transparent);
+  opacity: .55;
+}
+
+.auth-modal-close {
+  position: absolute; top: 12px; right: 14px;
+  width: 30px; height: 30px; padding: 0 !important;
+  border-radius: 50% !important;
+  background: transparent !important;
+  border: 1px solid transparent !important;
+  color: var(--jungle-muted) !important;
+  font-size: 20px; line-height: 1;
+  cursor: pointer;
+}
+.auth-modal-close:hover {
+  background: rgba(120, 214, 155, .10) !important;
+  border-color: var(--jungle-line) !important;
+  color: var(--jungle-text) !important;
+  transform: none !important;
+  box-shadow: none !important;
+}
+
+/* ── the form, in jungle dress ───────────────────────────────────────── */
+.auth-modal .auth-panel {
+  flex: none; width: 100%; padding: 0; background: none;
+  border: 0; overflow: visible;
+}
+.auth-modal .auth-panel::before { content: none; }   /* kill the old seam glow */
+.auth-modal .auth-panel-inner { max-width: none; }
+
+.auth-modal .auth-panel-title,
+.auth-modal h2 { color: var(--jungle-text); }
+.auth-modal .auth-panel-sub,
+.auth-modal .auth-form label { color: var(--jungle-muted); }
+.auth-modal .auth-form label {
+  font-family: var(--f-display);
+  font-size: 10.5px; letter-spacing: .16em; text-transform: uppercase;
+}
+
+.auth-modal .auth-form input {
+  background: rgba(6, 14, 10, .75) !important;
+  border: 1px solid var(--jungle-line) !important;
+  color: var(--jungle-text) !important;
+  border-radius: 9px;
+  box-shadow: inset 0 1px 2px rgba(0,0,0,.45);
+}
+.auth-modal .auth-form input::placeholder { color: rgba(143, 174, 156, .55); }
+.auth-modal .auth-form input:hover { border-color: rgba(120, 214, 155, .38) !important; }
+.auth-modal .auth-form input:focus {
+  border-color: var(--jungle-lit) !important;
+  box-shadow: 0 0 0 3px rgba(111, 227, 160, .16), inset 0 1px 2px rgba(0,0,0,.45) !important;
+  background: rgba(9, 20, 14, .9) !important;
+}
+/* the autofill override again, in this palette */
+.auth-modal .auth-form input:-webkit-autofill,
+.auth-modal .auth-form input:-webkit-autofill:hover,
+.auth-modal .auth-form input:-webkit-autofill:focus {
+  -webkit-box-shadow: 0 0 0 1000px #0a1710 inset !important;
+  box-shadow: 0 0 0 1000px #0a1710 inset !important;
+  -webkit-text-fill-color: var(--jungle-text) !important;
+  caret-color: var(--jungle-text);
+}
+.auth-modal .pwd-toggle-btn { color: var(--jungle-muted) !important; }
+.auth-modal .pwd-toggle-btn:hover { color: var(--jungle-lit) !important; }
+
+/* The call to action keeps the tiger's amber -- it is the one element that
+   should read as the product's own colour rather than the jungle's. */
+.auth-modal .auth-submit-btn {
+  background: linear-gradient(180deg, #f0913a 0%, #d4741f 100%) !important;
+  border: 0 !important;
+  color: #1a0d02 !important;
+  font-weight: 800;
+  letter-spacing: .06em;
+  border-radius: 9px;
+  box-shadow: 0 6px 20px -8px rgba(255, 157, 61, .65);
+}
+.auth-modal .auth-submit-btn:hover:not(:disabled) {
+  background: linear-gradient(180deg, #ffa74e 0%, #e8842a 100%) !important;
+  box-shadow: 0 9px 26px -8px rgba(255, 157, 61, .8);
+  transform: translateY(-1px);
+}
+.auth-modal .auth-submit-btn:active:not(:disabled) { transform: translateY(1px) scale(.99); }
+
+.auth-modal .auth-link-btn,
+.auth-modal .auth-switch-btn,
+.auth-modal a { color: var(--jungle-lit) !important; }
+
+/* status blocks, in-palette */
+.auth-modal .auth-error {
+  background: rgba(80, 20, 20, .5) !important;
+  border-color: rgba(255, 120, 120, .35) !important;
+  color: #ffb4b4 !important;
+}
+.auth-modal .auth-attempts {
+  background: rgba(90, 65, 15, .45) !important;
+  border-color: rgba(240, 198, 116, .32) !important;
+  color: #f3d79a !important;
+}
+.auth-modal .auth-success {
+  background: rgba(18, 60, 38, .5) !important;
+  border-color: rgba(111, 227, 160, .35) !important;
+  color: #9df0c2 !important;
+}
+
+/* ── small screens ───────────────────────────────────────────────────── */
+@media (max-width: 560px) {
+  .auth-modal-card { padding: 26px 22px 24px; border-radius: 14px; }}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   GLASS · THE APPLICATION MATCHES ITS OWN FRONT DOOR
+   ───────────────────────────────────────────────────────────────────────
+   The sign-in card set the material language: a translucent green pane
+   floating over depth, an amber call to action, generous padding. Inside
+   the app, everything was flat opaque panels on a flat canvas, so the
+   product read as two unrelated pieces of software. This layer carries
+   the door's materials inward.
+
+   THE COST RULE, stated once and obeyed below:
+   `backdrop-filter` forces an element onto its own compositor layer and
+   makes the browser re-sample everything behind it every frame. The
+   deployment target is an ordinary range-office laptop with no GPU
+   (BLUEPRINT.md R5). Applying it to the ~30 cards on the catalogue screen
+   is precisely how this becomes the sluggish, blurry-text UI that was
+   already diagnosed and fixed once tonight (see the will-change note).
+
+   So it is split:
+     * FLOATING surfaces (topbar, rail, modals, the bulk bar) get REAL
+       backdrop blur -- there are at most four on screen, they sit over
+       moving content, and the effect is load-bearing there.
+     * CARDS get a translucent fill + hairline + shadow over the ambient
+       wash below. Over a coloured ground that reads as glass, costs a
+       normal paint, and keeps text on the pixel grid.
+   ═══════════════════════════════════════════════════════════════════════ */
+
+/* ── the ground the glass sits on ────────────────────────────────────── */
+/* ── the ground ──────────────────────────────────────────────────────────
+   The sign-in screen works because the card floats over a real, blurred
+   photograph -- depth the eye can read. A flat colour cannot do that, which
+   is why the first pass at this felt like paint rather than glass.
+
+   So the same artwork sits behind the whole application, blurred. The blur
+   is BAKED INTO THE FILE (320x180, pre-blurred, 0.9 KB) rather than applied
+   with backdrop-filter: a fixed full-viewport runtime blur is the single
+   most expensive thing this page could ask a GPU-less laptop for, and it
+   would be re-composited on every scroll. Stretched back up by the browser
+   it is indistinguishable from a live blur, and costs one small image.   */
+body {
+  background:
+    radial-gradient(1100px 620px at 12% -8%,  var(--amb-1), transparent 60%),
+    radial-gradient(900px 560px at 88% 108%, var(--amb-2), transparent 62%),
+    var(--canvas);
+  background-attachment: fixed;
+}
+
+[data-theme="dark"] body {
+  background:
+    /* a wash that keeps the photograph as shade rather than scenery */
+    linear-gradient(180deg, rgba(7,15,11,.82) 0%, rgba(7,15,11,.88) 55%, rgba(4,9,7,.93) 100%),
+    radial-gradient(1200px 700px at 12% -6%, var(--amb-1), transparent 58%),
+    url("/ui/img/backdrop-blur.jpg"),
+    var(--canvas);
+  background-size: cover, cover, cover, auto;
+  background-position: center, center, center, center;
+  background-repeat: no-repeat, no-repeat, no-repeat, repeat;
+  background-attachment: fixed, fixed, fixed, fixed;
+}
+
+/* Light mode gets the same composition at a whisper -- enough for the glass
+   to have something to reveal, not enough to fight the daylight palette. */
+body::before {
+  content: "";
+  position: fixed; inset: 0; z-index: -1;
+  pointer-events: none;
+  background: url("/ui/img/backdrop-blur.jpg") center / cover no-repeat;
+  opacity: .10;
+  filter: saturate(.7);
+}
+[data-theme="dark"] body::before { content: none; }
+
+main { background: transparent; }
+
+/* ── cards ───────────────────────────────────────────────────────────── */
+.card {
+  background: var(--glass);
+  border: 1px solid var(--glass-line);
+  border-radius: 16px;
+  box-shadow: var(--glass-shadow),
+              inset 0 1px 0 rgba(255, 255, 255, .06);
+  transition: transform var(--d-base) var(--ease-out),
+              box-shadow var(--d-base) var(--ease),
+              border-color var(--d-base) var(--ease),
+              background-color var(--d-slow) var(--ease);
+}
+/* a card that carries no interaction should not pretend to be a button,
+   so the lift is scoped to the ones that are actually clickable */
+.tiger-card-rich,
+.alert-card-rich,
+.cand,
+.quar-card {
+  background: var(--glass);
+  border: 1px solid var(--glass-line);
+  border-radius: 16px;
+  box-shadow: var(--glass-shadow), inset 0 1px 0 rgba(255,255,255,.06);
+}
+.tiger-card-rich:hover,
+.alert-card-rich:hover,
+.quar-card:hover {
+  transform: translateY(-2px);
+  border-color: var(--glass-glow);
+  box-shadow: var(--glass-shadow), 0 0 0 1px var(--glass-glow),
+              inset 0 1px 0 rgba(255,255,255,.10);
+}
+.pad { padding: 24px; }
+
+/* nested panels must not stack translucency into mud */
+.card .card { background: var(--glass-2); box-shadow: none; }
+
+/* ── floating surfaces: the four that earn a real blur ───────────────── */
+@supports (backdrop-filter: blur(12px)) or (-webkit-backdrop-filter: blur(12px)) {
+  .topbar,
+  .nav,
+  .modal-dialog,
+  .auth-modal-card,
+  #provBulkBar {
+    -webkit-backdrop-filter: blur(16px) saturate(1.25);
+    backdrop-filter: blur(16px) saturate(1.25);
+  }
+  .topbar { background: color-mix(in srgb, var(--surface) 72%, transparent); }
+  .nav    { background: color-mix(in srgb, var(--surface) 66%, transparent); }
+  .modal-dialog { background: color-mix(in srgb, var(--surface) 82%, transparent); }
+}
+.topbar {
+  border-bottom: 1px solid var(--glass-line);
+  box-shadow: 0 1px 0 rgba(255,255,255,.05), 0 6px 24px -18px rgba(0,0,0,.5);
+}
+.nav { border-right: 1px solid var(--glass-line); }
+
+/* ── stat tiles: the numbers are the product ─────────────────────────── */
+.card .num.big,
+.num.big {
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -.02em;
+}
+.card-label {
+  font-family: var(--f-display);
+  font-size: 10px;
+  letter-spacing: .14em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+/* ── tables sit ON the glass, not in a box of their own ──────────────── */
+thead th {
+  background: transparent;
+  box-shadow: inset 0 -1px 0 var(--glass-line);
+  color: var(--muted);
+}
+tbody tr:nth-child(even) { background: color-mix(in srgb, var(--surface-2) 34%, transparent); }
+tbody tr:hover { background: color-mix(in srgb, var(--glass-glow) 12%, transparent); }
+td { border-bottom: 1px solid color-mix(in srgb, var(--glass-line) 60%, transparent); }
+
+/* ── controls, in the same material ──────────────────────────────────── */
+button, .btn {
+  border-radius: 10px;
+  border: 1px solid var(--glass-line);
+  background: var(--glass-2);
+}
+button.primary {
+  background: linear-gradient(180deg, #ff9a3d 0%, #e8760f 100%);
+  border-color: transparent;
+  color: #1a0d02;
+  font-weight: 800;
+  box-shadow: 0 6px 18px -8px rgba(255, 122, 0, .55);
+}
+button.primary:hover:not(:disabled) {
+  background: linear-gradient(180deg, #ffab55 0%, #f5851c 100%);
+  box-shadow: 0 9px 24px -8px rgba(255, 122, 0, .68);
+}
+.field-search input,
+.filter-bar select,
+input[type="text"], input[type="password"], input[type="number"],
+input[type="date"], select, textarea {
+  border-radius: 10px;
+  background: var(--glass-2);
+  border: 1px solid var(--glass-line);
+  color: var(--ink);
+}
+.field-search input:focus,
+.filter-bar select:focus,
+input:focus, select:focus, textarea:focus {
+  border-color: var(--info);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--info) 20%, transparent);
+  outline: none;
+}
+
+/* the pipeline stepper, as capsules */
+.step-pill {
+  border-radius: 999px;
+  border: 1px solid var(--glass-line);
+  background: var(--glass-2);
+}
+.step-pill.active {
+  background: color-mix(in srgb, var(--pelage) 16%, transparent);
+  border-color: var(--pelage);
+  color: var(--pelage);
+  box-shadow: 0 0 0 3px var(--pelage-glow);
+}
+.step-pill.done { color: var(--info); border-color: color-mix(in srgb, var(--info) 40%, transparent); }
+
+/* ── nav, in the new material ────────────────────────────────────────── */
+.nav a { border-radius: 0; }
+.nav a[aria-current="page"] {
+  background: color-mix(in srgb, var(--pelage) 14%, transparent);
+  box-shadow: inset 2px 0 0 var(--pelage);
+  color: var(--pelage);
+}
+.nav a:hover { background: color-mix(in srgb, var(--glass-glow) 10%, transparent); }
+.userpill, .runpill {
+  background: var(--glass-2);
+  border: 1px solid var(--glass-line);
+}
+
+/* ── typography rhythm: fewer walls, more air ────────────────────────── */
+.head p, .view > p, p.note {
+  max-width: 68ch;            /* a measure, so body copy stops sprawling */
+  line-height: 1.6;
+}
+h1 { letter-spacing: -.015em; }
+h2 { color: var(--ink-2); }
+.eyebrow {
+  font-family: var(--f-display);
+  font-size: 10px; letter-spacing: .18em; text-transform: uppercase;
+  color: var(--muted);
+}
+.hr { border-color: var(--glass-line); }
+
+/* ── banners and empties ─────────────────────────────────────────────── */
+.banner {
+  border-radius: 14px;
+  border: 1px solid var(--glass-line);
+  background: var(--glass-2);
+}
+.empty {
+  border-radius: 14px;
+  border: 1px dashed var(--glass-line);
+  background: transparent;
+  color: var(--muted);
+}
+
+/* ── the one accessibility guard glass needs ─────────────────────────────
+   Some operators run Windows' "reduce transparency". Honouring it is not
+   optional: translucent panes over a busy ground are exactly what that
+   setting exists to switch off. */
+@media (prefers-reduced-transparency: reduce) {
+  .card, .tiger-card-rich, .alert-card-rich, .cand, .quar-card,
+  .topbar, .nav, .modal-dialog, .banner, button, .btn {
+    background: var(--surface) !important;
+    -webkit-backdrop-filter: none !important;
+    backdrop-filter: none !important;
+  }
+  body, [data-theme="dark"] body { background: var(--canvas) !important; }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   GLASS · SECOND PASS: PANES, NOT PAINTED PANELS
+   ───────────────────────────────────────────────────────────────────────
+   With a real blurred photograph behind the app, the cards can stop
+   pretending. What separates glass from a coloured rectangle is not the
+   fill -- it is the EDGE: a bright hairline catching light along the top,
+   a darker one beneath, and a shadow that proves the pane is lifted off
+   what it covers. That is what this adds.
+
+   Still no backdrop-filter on cards. The ground behind them is already a
+   baked blur, so there is nothing left for a runtime blur to do except
+   cost frames on a machine with no GPU to spare.
+   ═══════════════════════════════════════════════════════════════════════ */
+
+.card,
+.tiger-card-rich,
+.alert-card-rich,
+.quar-card,
+.banner {
+  background:
+    linear-gradient(160deg,
+      color-mix(in srgb, var(--glass) 100%, transparent) 0%,
+      color-mix(in srgb, var(--glass-2) 100%, transparent) 100%);
+  border: 1px solid var(--glass-line);
+  border-radius: 16px;
+  box-shadow:
+    /* the lift */
+    0 18px 44px -22px rgba(0, 0, 0, .55),
+    0 2px 10px -4px rgba(0, 0, 0, .28),
+    /* the light along the top edge -- the single detail that reads "pane" */
+    inset 0 1px 0 rgba(255, 255, 255, .10),
+    /* and the shade under the bottom edge */
+    inset 0 -1px 0 rgba(0, 0, 0, .22);
+}
+
+[data-theme="dark"] .card,
+[data-theme="dark"] .tiger-card-rich,
+[data-theme="dark"] .alert-card-rich,
+[data-theme="dark"] .quar-card,
+[data-theme="dark"] .banner {
+  box-shadow:
+    0 22px 52px -24px rgba(0, 0, 0, .85),
+    0 2px 12px -4px rgba(0, 0, 0, .5),
+    inset 0 1px 0 rgba(180, 245, 210, .10),
+    inset 0 -1px 0 rgba(0, 0, 0, .35);
+}
+
+/* A pane catches more light where it meets the pointer. */
+.tiger-card-rich:hover,
+.alert-card-rich:hover,
+.quar-card:hover {
+  transform: translateY(-3px);
+  border-color: var(--glass-glow);
+  box-shadow:
+    0 30px 60px -26px rgba(0, 0, 0, .7),
+    0 0 0 1px var(--glass-glow),
+    inset 0 1px 0 rgba(255, 255, 255, .16),
+    inset 0 -1px 0 rgba(0, 0, 0, .25);
+}
+
+/* Nested panels are a second sheet of the same glass, one step quieter --
+   never a fully opaque box, which is what made them look pasted on. */
+.card .card,
+.card .meta-card,
+.meta-card {
+  background: color-mix(in srgb, var(--glass-2) 78%, transparent);
+  border: 1px solid color-mix(in srgb, var(--glass-line) 70%, transparent);
+  border-radius: 12px;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.05);
+}
+
+/* ── the shell reads as one continuous pane of glass ─────────────────── */
+.topbar {
+  background: color-mix(in srgb, var(--surface) 62%, transparent);
+  border-bottom: 1px solid var(--glass-line);
+  box-shadow: 0 1px 0 rgba(255,255,255,.05), 0 10px 30px -22px rgba(0,0,0,.7);
+}
+.nav {
+  background: color-mix(in srgb, var(--surface) 52%, transparent);
+  border-right: 1px solid var(--glass-line);
+}
+
+/* ── stat tiles: the number should glow slightly off the glass ───────── */
+.num.big {
+  text-shadow: 0 1px 12px color-mix(in srgb, currentColor 28%, transparent);
+}
+
+/* ── inputs are recessed INTO the pane, not sitting on it ────────────── */
+.field-search input,
+.filter-bar select,
+input[type="text"], input[type="password"], input[type="number"],
+input[type="date"], select, textarea {
+  background: color-mix(in srgb, var(--sunk) 55%, transparent);
+  border: 1px solid var(--glass-line);
+  box-shadow: inset 0 1px 3px rgba(0,0,0,.28);
+}
+
+/* ── secondary buttons: glass chips ──────────────────────────────────── */
+button:not(.primary):not(.auth-submit-btn),
+.btn:not(.primary) {
+  background: color-mix(in srgb, var(--glass-2) 90%, transparent);
+  border: 1px solid var(--glass-line);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.07);
+}
+button:not(.primary):hover:not(:disabled),
+.btn:not(.primary):hover {
+  background: color-mix(in srgb, var(--glass) 100%, transparent);
+  border-color: var(--glass-glow);
+}
+
+/* ── tables: rows are ruled ON the glass, not boxed ──────────────────── */
+tbody tr:nth-child(even) { background: rgba(255,255,255,.022); }
+[data-theme="dark"] tbody tr:nth-child(even) { background: rgba(180,245,210,.028); }
+tbody tr:hover { background: color-mix(in srgb, var(--glass-glow) 10%, transparent); }
+
+/* ── the whole thing honours reduced transparency ────────────────────── */
+@media (prefers-reduced-transparency: reduce) {
+  body::before { content: none !important; }
+  [data-theme="dark"] body { background-image: none !important; }
+  .card, .tiger-card-rich, .alert-card-rich, .quar-card, .banner,
+  .topbar, .nav, .meta-card {
+    background: var(--surface) !important;
+    box-shadow: 0 1px 2px rgba(0,0,0,.2) !important;
+  }
+}
+
+/* ── explainer panels ───────────────────────────────────────────────────
+   Guidance is not a warning. The "what Provisional means" panel borrowed
+   --warn-* because amber was the nearest thing to hand, which put a yellow
+   slab in the middle of a green screen and made routine instructions look
+   like something had gone wrong. It is the same glass as everything else,
+   marked as guidance by a single emerald rule down its edge.            */
+.explainer {
+  background: color-mix(in srgb, var(--glass-2) 88%, transparent) !important;
+  border: 1px solid var(--glass-line) !important;
+  border-left: 3px solid var(--info) !important;
+  border-radius: 14px !important;
+  color: var(--ink-2);
+}
+.explainer strong, .explainer b { color: var(--ink); }
+.explainer ul { margin: 8px 0 0 20px; }
+.explainer li + li { margin-top: 6px; }

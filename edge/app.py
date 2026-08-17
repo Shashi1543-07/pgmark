@@ -222,6 +222,23 @@ def login(response: Response, username: str = Body(...), password: str = Body(..
         )
 
     repo.record_login_success(username)
+
+    # Transparent Argon2id parameter upgrade. auth.needs_rehash() existed
+    # with a docstring telling the caller to do exactly this and was never
+    # called from anywhere -- so if the hashing parameters were ever
+    # hardened (more memory or time cost), every existing account would
+    # have kept its weaker hash forever, and the upgrade would only have
+    # applied to accounts created afterwards. The password is in hand and
+    # already verified at this exact point; it is the only moment a
+    # re-hash is possible without asking the operator for anything.
+    try:
+        if auth.needs_rehash(user["pwd_hash"]):
+            repo.upgrade_password_hash(username, auth.hash_secret(password))
+    except Exception:
+        # A failed upgrade must never cost a valid user their login -- the
+        # existing hash still verified, so the session below is legitimate.
+        pass
+
     token = auth.generate_session_token()
     repo.create_session(username, user["role"], auth.hash_token(token), user_agent=None)
     response.set_cookie(
@@ -398,10 +415,20 @@ def dev_seed(payload: dict = Body(...), user: dict = Depends(require_role(*confi
     # on an actual live->seed transition, not on every seed load, or
     # loading a second seed on top of the first would overwrite the real
     # live snapshot with a snapshot of seed data instead.
+    #
+    # ...and only if there is anything there worth keeping. This second
+    # guard is not hypothetical: 'blank' deliberately takes no backup (it
+    # is the permanent option) but does set the mode back to 'live', so a
+    # blank -> demo sequence -- exactly what tests/live/test_routes.py does
+    # at the end of every run -- saw mode='live', treated the freshly
+    # emptied database as precious, and wrote it over a real snapshot,
+    # destroying a day of catalogued tigers. An empty database never
+    # outranks an existing backup.
     backed_up = False
     repo.close_all()
     try:
-        if which in ("bulk", "demo") and repo_ext.data_mode() == "live":
+        if which in ("bulk", "demo") and repo_ext.data_mode() == "live" \
+                and repo_ext.live_data_is_worth_keeping():
             repo_ext.backup(repo_ext._live_backup_path())
             backed_up = True
         result = subprocess.run(
@@ -649,9 +676,41 @@ def get_crop_image(crop_id: str, user: dict = Depends(current_user)) -> FileResp
 
 @app.get("/api/images/{image_id}/file")
 def get_image_file(image_id: str, user: dict = Depends(current_user)) -> FileResponse:
-    row = repo._one(repo.connect().execute("SELECT orig_path FROM images WHERE image_id=?", (image_id,)))
-    if not row or not row.get("orig_path") or not Path(row["orig_path"]).exists():
+    """Serve an original captured frame.
+
+    Refuses frames the triage cascade routed to persons_restricted. That
+    check is the whole reason this reads `status`: without it, a frame
+    containing a person was blurred for the UI, filed as restricted, and
+    then still handed over in full resolution to anyone with any login --
+    including the `field` and `analyst` roles that BLUEPRINT.md section 10
+    says must never see person images at all. The blurred derivative
+    exists on disk and is what any legitimate person-presence feature
+    should use; the original is not reachable through this route by
+    anybody, which is the conservative reading of the problem statement's
+    "privacy safeguards for images capturing humans".
+    """
+    row = repo_ext.image_for_serving(image_id)
+    if not row:
         raise HTTPException(404, "image file not found on disk")
+
+    if (row.get("status") or "").lower() == "person":
+        # Logged on the REFUSED path too -- an attempt to reach a restricted
+        # frame is itself the auditable event.
+        repo_ext.note_person_image_access(image_id)
+        repo.audit("person_image.access_refused", actor=user["username"],
+                   entity_type="image", entity_id=image_id,
+                   after={"role": user["role"], "reason": "restricted person frame"})
+        raise HTTPException(
+            403, "This frame was withheld because it contains a person. "
+                 "Human presence is reported as counts by station and date, "
+                 "not as browsable images.")
+
+    if not row.get("orig_path") or not Path(row["orig_path"]).exists():
+        raise HTTPException(404, "image file not found on disk")
+
+    # Blueprint section 10: audit reads, not just writes.
+    repo.audit("image.read", actor=user["username"], entity_type="image",
+               entity_id=image_id, after={"role": user["role"]})
     p = Path(row["orig_path"])
     media_type = "image/jpeg" if p.suffix.lower() in (".jpg", ".jpeg") else "image/png"
     return FileResponse(p, media_type=media_type)

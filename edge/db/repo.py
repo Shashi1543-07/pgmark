@@ -1275,6 +1275,24 @@ def set_password(username: str, pwd_hash: str, *, must_change: bool = False,
     revoke_all_sessions_for_user(username, actor=actor)
 
 
+def upgrade_password_hash(username: str, pwd_hash: str) -> None:
+    """Re-store the SAME password under stronger Argon2id parameters.
+
+    Deliberately not set_password(): that revokes every session for the
+    user and writes an `auth.password_changed` entry. Neither is right
+    here. The secret has not changed -- only the cost parameters it is
+    stored under -- so revoking sessions would log people out at random
+    after a config change, and the audit trail would claim a credential
+    change that never happened. Audited under its own action so the two
+    remain distinguishable years later.
+    """
+    conn = connect()
+    conn.execute("UPDATE users SET pwd_hash=? WHERE username=?", (pwd_hash, username))
+    conn.commit()
+    audit("auth.password_hash_upgraded", actor=username, entity_type="user",
+          entity_id=username, note="argon2id parameters hardened; secret unchanged")
+
+
 def set_recovery_code(username: str, recovery_code_hash: str, actor: str) -> None:
     conn = connect()
     conn.execute("UPDATE users SET recovery_code_hash=? WHERE username=?",

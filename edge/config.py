@@ -503,16 +503,39 @@ class Auth:
 ALL_ROLES = ("admin", "director", "biologist", "field", "analyst")
 
 PERMISSIONS = {
+    # ── restricted: irreversible, or moves data off this machine ─────────
+    # BLUEPRINT.md section 10 defines what each role may see and do. These
+    # four were ALL_ROLES, which meant the lowest-privilege account on the
+    # node could erase the reserve's entire catalogue or carry a full copy
+    # of it out on a USB stick. Server-side gating existed (CLAUDE.md rule
+    # 7) but the matrix it enforced granted almost everything to everyone,
+    # so the control was real and the policy behind it was not.
     "user_manage": ("admin",),
-    "dev_seed": ALL_ROLES,
+    # Wipes and replaces every reserve, run, tiger and alert on the node.
+    "dev_seed": ("admin",),
+    # Builds a signed bundle of the catalogue for transport off this
+    # machine. "Precise, current tiger locations are exactly what a poacher
+    # wants" (blueprint section 10) -- the export path is the exfiltration
+    # path, and it belongs with the roles accountable for the reserve.
+    "sync_manage": ("director", "admin"),
+    # Whole-database backup, integrity and checkpoint operations: a backup
+    # is a complete copy of everything the node knows.
+    "ops_manage": ("director", "admin"),
+
+    # ── operational: the day-to-day work the node exists to do ───────────
+    # Deliberately still open to every role. A field officer who cannot
+    # run triage or answer the review queue cannot do their job, and the
+    # sensitive parts of what they see (precise coordinates, person
+    # frames) are gated at the point of disclosure instead -- which is
+    # where the blueprint's role matrix actually draws its line.
     "pipeline_trigger": ALL_ROLES,
     "review_decide": ALL_ROLES,
     "individual_promote": ALL_ROLES,
     "individual_merge": ALL_ROLES,
     "alert_ack": ALL_ROLES,
+    # Read-only, and the audit trail is the accountability mechanism --
+    # everyone being able to see who did what is the point of it.
     "audit_read": ALL_ROLES,
-    "sync_manage": ALL_ROLES,
-    "ops_manage": ALL_ROLES,
     "ingest_manage": ALL_ROLES,
 }
 

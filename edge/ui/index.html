@@ -7,6 +7,22 @@
 <!-- No CDN, no webfont fetch, no tile server. Everything this page needs
      is on disk, because a range office has no internet. -->
 <link rel="stylesheet" href="/ui/app.css">
+<script>
+/* Applied before first paint, deliberately inline and before the
+   stylesheet has finished doing its work: reading this from app.js
+   instead would let the light theme paint first and then snap to dark on
+   every single page load, which looks broken. Light stays the default
+   when nothing has been chosen -- BLUEPRINT.md section 14, field offices
+   are bright. No network, no external script; the file is on disk. */
+(function () {
+  try {
+    var saved = localStorage.getItem('pugmark.theme');
+    if (saved === 'dark' || saved === 'light') {
+      document.documentElement.setAttribute('data-theme', saved);
+    }
+  } catch (e) { /* private mode / storage disabled: keep the light default */ }
+})();
+</script>
 </head>
 <body>
 <div id="shell">
@@ -30,36 +46,117 @@
       <div class="userpill" id="userPill" hidden>
         <span class="user-role" id="userRoleBadge">—</span>
         <span class="user-name" id="userNameLabel">—</span>
-        <button class="logout-btn" id="logoutBtn" title="Sign out">Log out</button>
       </div>
-      <button class="guide-reopen" id="guideReopen" title="Replay the guided walkthrough">
+      <!-- Right-hand controls, ordered by how often a hand reaches for them
+           and how much it costs to hit one by accident: appearance first,
+           help next, and the one that ends the session hard against the
+           corner where nothing else can be mis-clicked into it. -->
+      <button id="themeToggle" class="theme-switch" type="button" role="switch"
+              aria-checked="false" title="Switch between light and dark screen">
+        <span class="theme-switch-knob">
+          <svg class="ico-sun" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="3.1"/><path d="M8 1.4v1.7M8 12.9v1.7M14.6 8h-1.7M3.1 8H1.4M12.66 3.34l-1.2 1.2M4.54 11.46l-1.2 1.2M12.66 12.66l-1.2-1.2M4.54 4.54l-1.2-1.2"/></svg>
+          <svg class="ico-moon" viewBox="0 0 16 16" aria-hidden="true"><path d="M13.2 9.6A5.6 5.6 0 0 1 6.4 2.8a5.6 5.6 0 1 0 6.8 6.8z"/></svg>
+        </span>
+      </button>
+      <button class="guide-reopen" id="guideReopen" type="button" aria-pressed="false"
+              title="Show the guided walkthrough">
         <span class="guide-btn-icon">📖</span> Guide
       </button>
-      <div class="offline-badge" title="This edge node runs 100% air-gapped and offline">
-        <span class="offline-dot"></span>
-        <span>Offline</span>
-      </div>
+      <button class="logout-btn" id="logoutBtn" type="button" title="Sign out" hidden>Log out</button>
     </div>
   </header>
 
   <div id="body">
     <nav class="nav" id="nav" aria-label="Sections">
-      <div class="group">Cycle</div>
-      <a href="#run"     data-view="run">Import Photos</a>
-      <a href="#triage"  data-view="triage">Blank Frames</a>
-      <div class="group">Tigers</div>
-      <a href="#tigers"  data-view="tigers">Tigers<span class="tally" id="tallyTigers"></span></a>
-      <a href="#identify" data-view="identify">Identify a photo</a>
-      <a href="#review"  data-view="review">Needs Review<span class="tally" id="tallyReview"></span></a>
-      <div class="group">Intelligence</div>
-      <a href="#map"     data-view="map">Territories</a>
-      <a href="#stations" data-view="stations">Camera Stations<span class="tally" id="tallyStations"></span></a>
-      <a href="#alerts"  data-view="alerts">Alerts<span class="tally" id="tallyAlerts"></span></a>
-      <div class="group">Record</div>
-      <a href="#audit"   data-view="audit">History</a>
-      <a href="#ops"     data-view="ops">System Health</a>
-      <a href="#sync"    data-view="sync">Share Data</a>
-      <a href="#users"   data-view="users" id="navUsers" hidden>Users</a>
+      <button class="nav-collapse" id="navCollapse" type="button"
+              aria-expanded="true" title="Collapse the menu">
+        <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M10 3.5 5.5 8l4.5 4.5"/></svg>
+        <span class="nav-collapse-label">Collapse</span>
+      </button>
+
+      <div class="nav-section" data-section="cycle">
+        <button class="nav-group" type="button" aria-expanded="true">
+          <svg class="nav-chev" viewBox="0 0 16 16" aria-hidden="true"><path d="M6 4l4 4-4 4"/></svg>
+          <svg class="nav-ico" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2v7m0 0L5 6m3 3 3-3M3 11v2h10v-2"/></svg>
+          <span class="nav-group-label">Cycle</span>
+        </button>
+        <div class="nav-items">
+          <div class="nav-items-inner">
+          <a href="#run" data-view="run" title="Import Photos">
+            <svg class="nav-ico" viewBox="0 0 16 16" aria-hidden="true"><rect x="2" y="4" width="12" height="9" rx="1.5"/><circle cx="8" cy="8.5" r="2.5"/><path d="M6 4l1-1.5h2L10 4"/></svg>
+            <span class="nav-txt">Import Photos</span></a>
+          <a href="#triage" data-view="triage" title="Blank Frames">
+            <svg class="nav-ico" viewBox="0 0 16 16" aria-hidden="true"><rect x="2.5" y="3.5" width="11" height="9" rx="1.5"/><path d="M4.5 11 7 8l2 2 2.5-3"/></svg>
+            <span class="nav-txt">Blank Frames</span></a>
+          </div>
+        </div>
+      </div>
+
+      <div class="nav-section" data-section="tigers">
+        <button class="nav-group" type="button" aria-expanded="true">
+          <svg class="nav-chev" viewBox="0 0 16 16" aria-hidden="true"><path d="M6 4l4 4-4 4"/></svg>
+          <svg class="nav-ico" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="9.5" r="3.2"/><circle cx="4" cy="5" r="1.5"/><circle cx="12" cy="5" r="1.5"/><circle cx="6" cy="3" r="1.2"/><circle cx="10" cy="3" r="1.2"/></svg>
+          <span class="nav-group-label">Tigers</span>
+        </button>
+        <div class="nav-items">
+          <div class="nav-items-inner">
+          <a href="#tigers" data-view="tigers" title="Tigers">
+            <svg class="nav-ico" viewBox="0 0 16 16" aria-hidden="true"><path d="M3 3v10M6 3v10M9 3v10M12 3v10"/></svg>
+            <span class="nav-txt">Tigers</span><span class="tally" id="tallyTigers"></span></a>
+          <a href="#identify" data-view="identify" title="Identify a photo">
+            <svg class="nav-ico" viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="4"/><path d="M10 10l3.5 3.5"/></svg>
+            <span class="nav-txt">Identify a photo</span></a>
+          <a href="#review" data-view="review" title="Needs Review">
+            <svg class="nav-ico" viewBox="0 0 16 16" aria-hidden="true"><path d="M3 4.5h10M3 8h10M3 11.5h6"/><path d="M11.5 11 13 12.5 15 10"/></svg>
+            <span class="nav-txt">Needs Review</span><span class="tally" id="tallyReview"></span></a>
+          </div>
+        </div>
+      </div>
+
+      <div class="nav-section" data-section="intelligence">
+        <button class="nav-group" type="button" aria-expanded="true">
+          <svg class="nav-chev" viewBox="0 0 16 16" aria-hidden="true"><path d="M6 4l4 4-4 4"/></svg>
+          <svg class="nav-ico" viewBox="0 0 16 16" aria-hidden="true"><path d="M2 4.5 6 3l4 1.5L14 3v8.5L10 13l-4-1.5L2 13z"/><path d="M6 3v8.5M10 4.5V13"/></svg>
+          <span class="nav-group-label">Intelligence</span>
+        </button>
+        <div class="nav-items">
+          <div class="nav-items-inner">
+          <a href="#map" data-view="map" title="Territories">
+            <svg class="nav-ico" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 14s4.5-4 4.5-7.5a4.5 4.5 0 0 0-9 0C3.5 10 8 14 8 14z"/><circle cx="8" cy="6.5" r="1.6"/></svg>
+            <span class="nav-txt">Territories</span></a>
+          <a href="#stations" data-view="stations" title="Camera Stations">
+            <svg class="nav-ico" viewBox="0 0 16 16" aria-hidden="true"><rect x="2" y="5" width="9" height="6" rx="1"/><path d="M11 7.5l3-1.8v4.6l-3-1.8z"/></svg>
+            <span class="nav-txt">Camera Stations</span><span class="tally" id="tallyStations"></span></a>
+          <a href="#alerts" data-view="alerts" title="Alerts">
+            <svg class="nav-ico" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2.5a4 4 0 0 0-4 4c0 3-1.2 4-1.2 4h10.4S12 9.5 12 6.5a4 4 0 0 0-4-4z"/><path d="M6.8 13a1.6 1.6 0 0 0 2.4 0"/></svg>
+            <span class="nav-txt">Alerts</span><span class="tally" id="tallyAlerts"></span></a>
+          </div>
+        </div>
+      </div>
+
+      <div class="nav-section" data-section="record">
+        <button class="nav-group" type="button" aria-expanded="true">
+          <svg class="nav-chev" viewBox="0 0 16 16" aria-hidden="true"><path d="M6 4l4 4-4 4"/></svg>
+          <svg class="nav-ico" viewBox="0 0 16 16" aria-hidden="true"><path d="M3.5 2.5h7l2.5 2.5v8.5h-9.5z"/><path d="M5.5 7h5M5.5 9.5h5"/></svg>
+          <span class="nav-group-label">Record</span>
+        </button>
+        <div class="nav-items">
+          <div class="nav-items-inner">
+          <a href="#audit" data-view="audit" title="History">
+            <svg class="nav-ico" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="5.5"/><path d="M8 4.8V8l2.2 1.6"/></svg>
+            <span class="nav-txt">History</span></a>
+          <a href="#ops" data-view="ops" title="System Health">
+            <svg class="nav-ico" viewBox="0 0 16 16" aria-hidden="true"><path d="M2 8h3l1.5-3 2.5 6 1.5-3H14"/></svg>
+            <span class="nav-txt">System Health</span></a>
+          <a href="#sync" data-view="sync" title="Share Data">
+            <svg class="nav-ico" viewBox="0 0 16 16" aria-hidden="true"><circle cx="4" cy="8" r="1.8"/><circle cx="12" cy="4.5" r="1.8"/><circle cx="12" cy="11.5" r="1.8"/><path d="M5.6 7.1 10.4 5.2M5.6 8.9l4.8 1.9"/></svg>
+            <span class="nav-txt">Share Data</span></a>
+          <a href="#users" data-view="users" id="navUsers" hidden title="Users">
+            <svg class="nav-ico" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="6" r="2.5"/><path d="M3.5 13c0-2.5 2-4 4.5-4s4.5 1.5 4.5 4"/></svg>
+            <span class="nav-txt">Users</span></a>
+          </div>
+        </div>
+      </div>
     </nav>
 
     <main>
@@ -178,20 +275,27 @@
           <p>Individual tigers identified by asymmetric stripe patterns on their left and right flanks. Flanks are catalogued independently.</p>
         </div>
 
-        <!-- Filter & Search Toolbar -->
-        <div class="toolbar" style="gap:var(--s3);flex-wrap:wrap">
-          <input type="text" id="tigerSearchInput" placeholder="Search tiger by name or ID…" style="flex:1;min-width:200px;padding:6px 12px;border:1px solid var(--border);border-radius:4px;background:var(--surface)">
-          <select id="tigerFilterSex" style="padding:6px 10px;border:1px solid var(--border);border-radius:4px;background:var(--surface)">
-            <option value="">All Sexes</option>
-            <option value="M">Male (M)</option>
-            <option value="F">Female (F)</option>
-            <option value="unknown">Unknown</option>
-          </select>
-          <select id="tigerFilterStatus" style="padding:6px 10px;border:1px solid var(--border);border-radius:4px;background:var(--surface)">
-            <option value="">All Statuses</option>
-            <option value="confirmed">Confirmed</option>
-            <option value="provisional">Provisional</option>
-          </select>
+        <!-- Same filter pattern as Camera Stations, same classes: two
+             screens that do the same job should not look like two
+             different products. -->
+        <div class="page-toolbar">
+          <div class="filter-bar">
+            <span class="field-search">
+              <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="4"/><path d="M10 10l3.5 3.5"/></svg>
+              <input type="text" id="tigerSearchInput" placeholder="Search tiger by name or ID…">
+            </span>
+            <select id="tigerFilterSex" aria-label="Filter by sex">
+              <option value="">All Sexes</option>
+              <option value="M">Male (M)</option>
+              <option value="F">Female (F)</option>
+              <option value="unknown">Unknown</option>
+            </select>
+            <select id="tigerFilterStatus" aria-label="Filter by status">
+              <option value="">All Statuses</option>
+              <option value="confirmed">Confirmed</option>
+              <option value="provisional">Provisional</option>
+            </select>
+          </div>
         </div>
 
         <!-- Catalogue Health & Completeness -->
@@ -403,27 +507,51 @@
 
         <div class="grid g4" id="stationsStats"></div>
 
-        <div class="toolbar" style="gap:var(--s3);flex-wrap:wrap;justify-content:space-between;margin-top:var(--s4)">
-          <div style="display:flex;gap:var(--s3);flex-wrap:wrap;flex:1">
-            <input type="text" id="stationSearchInput" placeholder="Search by station ID, name, or hardware…" style="flex:1;min-width:200px;padding:6px 12px;border:1px solid var(--border);border-radius:4px;background:var(--surface)">
-            <select id="stationFilterZone" style="padding:6px 10px;border:1px solid var(--border);border-radius:4px;background:var(--surface)">
+        <!-- Two rows, deliberately: narrowing things down is a different
+             job from acting on them, and the five action buttons used to
+             sit at equal weight beside the filters so nothing read as the
+             main thing to do. -->
+        <div class="page-toolbar">
+          <div class="filter-bar">
+            <span class="field-search">
+              <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="4"/><path d="M10 10l3.5 3.5"/></svg>
+              <input type="text" id="stationSearchInput"
+                     placeholder="Search by station ID, name, or hardware…">
+            </span>
+            <select id="stationFilterZone" aria-label="Filter by zone">
               <option value="">All Zones</option>
               <option value="core">Core Zone</option>
               <option value="buffer">Buffer Zone</option>
               <option value="corridor">Corridor Zone</option>
             </select>
-            <select id="stationFilterStatus" style="padding:6px 10px;border:1px solid var(--border);border-radius:4px;background:var(--surface)">
+            <select id="stationFilterStatus" aria-label="Filter by status">
               <option value="">All Statuses</option>
               <option value="active">Active (Deploying)</option>
               <option value="offline">Offline / Inactive</option>
             </select>
           </div>
-          <div style="display:flex;gap:8px;align-items:center">
+          <div class="action-bar">
             <button class="primary" id="addStationBtn">+ Add Station</button>
-            <button class="btn" id="editBoundariesBtn">🗺 Boundaries</button>
-            <button class="btn" id="importStationCsvBtn">Import CSV</button>
-            <button class="btn" id="importStationGeojsonBtn">Import GeoJSON</button>
-            <a class="btn" id="exportStationsGeojson" href="/api/stations/export.geojson" download>Export GeoJSON</a>
+            <!-- "Boundaries" removed from the toolbar on purpose. It edited
+                 core_geojson / buffer_geojson / corridor_geojson, which are
+                 drawn by map.js as optional overlays and are read by NOTHING
+                 else -- the alert engine's buffer_ward rule uses each
+                 station's own `zone` column, not these polygons. All three
+                 are null on this node and the map already renders the outer
+                 boundary_geojson perimeter without them. It also required
+                 hand-writing raw GeoJSON into a textarea, which no range
+                 officer is going to do. The modal and its route still exist
+                 for a GIS-capable admin; it is simply not clutter in the
+                 daily path. -->
+            <!-- The three data-exchange controls are one job, so they read
+                 as one control rather than three peers competing with the
+                 primary action. -->
+            <span class="btn-group" role="group" aria-label="Station data exchange">
+              <button class="btn" id="importStationCsvBtn">Import CSV</button>
+              <button class="btn" id="importStationGeojsonBtn">Import GeoJSON</button>
+              <a class="btn" id="exportStationsGeojson"
+                 href="/api/stations/export.geojson" download>Export GeoJSON</a>
+            </span>
           </div>
         </div>
 
@@ -590,87 +718,24 @@
 <!-- ── AUTH LANDING PAGE ──────────────────────────────────────────────── -->
 <div id="authShell" class="auth-overlay" hidden>
 
-  <!-- Left: Atmospheric Tiger Hero Panel -->
-  <div class="auth-hero">
-    <!-- Animated Tiger Stripes Backdrop -->
-    <div class="auth-tiger-bg" aria-hidden="true">
-      <svg class="auth-tiger-svg" viewBox="0 0 800 1000" preserveAspectRatio="xMidYMid slice">
-        <defs>
-          <radialGradient id="tigerAmbient" cx="40%" cy="35%" r="65%">
-            <stop offset="0%" stop-color="#df8b3d" stop-opacity="0.32"/>
-            <stop offset="50%" stop-color="#964b00" stop-opacity="0.16"/>
-            <stop offset="100%" stop-color="#0e170d" stop-opacity="0"/>
-          </radialGradient>
-          <linearGradient id="peltGold" x1="0" y1="0" x2="1" y2="1">
-            <stop offset="0%" stop-color="#f59e0b" stop-opacity="0.25"/>
-            <stop offset="100%" stop-color="#c2410c" stop-opacity="0.10"/>
-          </linearGradient>
-        </defs>
-        <rect width="100%" height="100%" fill="url(#tigerAmbient)"/>
-        <!-- Melanin stripes layer -->
-        <g class="stripe-flow" fill="#0d140b" opacity="0.35">
-          <path d="M 520,0 C 490,120 440,240 480,380 C 490,420 530,340 540,260 C 560,140 580,40 590,0 Z"/>
-          <path d="M 680,80 C 640,190 590,290 620,410 C 630,450 670,360 690,270 C 710,180 730,120 740,80 Z"/>
-          <path d="M 410,220 C 370,350 320,490 350,620 C 360,660 400,560 420,470 C 440,380 460,290 470,220 Z"/>
-          <path d="M 580,360 C 540,510 490,660 520,800 C 530,840 580,720 600,610 C 620,500 640,410 650,360 Z"/>
-          <path d="M 320,520 C 280,680 240,810 270,960 C 280,990 320,890 340,790 C 360,690 380,590 390,520 Z"/>
-          <path d="M 480,670 C 440,810 410,930 430,1000 C 450,1000 480,910 500,810 C 520,720 530,680 540,670 Z"/>
-          <path d="M 720,490 C 680,630 640,760 670,890 C 680,920 720,830 740,740 C 760,640 770,550 780,490 Z"/>
-        </g>
-      </svg>
-    </div>
-
-    <div class="auth-hero-inner">
-      <div class="auth-hero-badge">
-        <span class="auth-badge-dot"></span>
-        <span>NATIONAL TIGER CONSERVATION NODE</span>
-      </div>
-
-      <div class="auth-logo">
-        <span class="auth-logo-pug">PUG</span><span class="auth-logo-mark">MARK</span>
-      </div>
-      <p class="auth-tagline">Autonomous Edge Intelligence for Wild Tiger Demography, Territory Dynamics & Camera Trap Grids.</p>
-
-      <div class="auth-feature-list">
-        <div class="auth-feature">
-          <div class="auth-feature-icon-box">🐅</div>
-          <div>
-            <div class="auth-feature-title">AI Flank Pattern Identification</div>
-            <div class="auth-feature-desc">Sub-pixel stripe extraction & Triplet-Loss neural embedding to re-identify individual tigers with zero manual crop alignment.</div>
-          </div>
-        </div>
-        <div class="auth-feature">
-          <div class="auth-feature-icon-box">🗺</div>
-          <div>
-            <div class="auth-feature-title">Dynamic Territory & Home Range GIS</div>
-            <div class="auth-feature-desc">Convex hull polygon projection, core/buffer boundary monitoring, and cross-cycle centroid shift intelligence.</div>
-          </div>
-        </div>
-        <div class="auth-feature">
-          <div class="auth-feature-icon-box">⚡</div>
-          <div>
-            <div class="auth-feature-title">Automated Ecological Telemetry</div>
-            <div class="auth-feature-desc">Instant warnings for village perimeter approaches, sudden tiger absence, and camera station dropouts.</div>
-          </div>
-        </div>
-        <div class="auth-feature">
-          <div class="auth-feature-icon-box">🛡</div>
-          <div>
-            <div class="auth-feature-title">100% Air-Gapped & Offline</div>
-            <div class="auth-feature-desc">All models, spatial geometry, and biometric credentials run locally with zero reliance on cloud or internet.</div>
-          </div>
-        </div>
-      </div>
-
-      <div class="auth-hero-footer">
-        <span class="auth-version-badge">v0.1.1</span>
-        <span class="auth-hero-reserve" id="authReserveName">Pench Tiger Reserve · Offline Node</span>
-      </div>
-    </div>
+  <!-- The image IS the login screen. Everything the old hero panel drew in
+       SVG (branding, the "national tiger conservation node" line, the
+       conservation strapline) is already in the artwork, so the markup that
+       duplicated it is gone rather than layered on top of it. -->
+  <div class="auth-stage" id="authStage" role="button" tabindex="0"
+       aria-label="Double-click anywhere to open the sign-in card">
+    <img class="auth-stage-img" src="/ui/img/login-tiger.jpg" alt=""
+         draggable="false" decoding="async" fetchpriority="high">
+    <div class="auth-stage-veil" aria-hidden="true"></div>
   </div>
 
-  <!-- Right: Auth Forms Panel -->
-  <div class="auth-panel">
+  <!-- The card only exists once asked for. Kept INSIDE #authShell so
+       showAuth()/hideAuth() still govern the whole screen unchanged. -->
+  <div class="auth-modal" id="authModal" hidden>
+    <div class="auth-modal-card">
+      <button type="button" class="auth-modal-close" id="authModalClose"
+              title="Back to the reserve" aria-label="Close sign-in">&times;</button>
+      <div class="auth-panel">
     <div class="auth-panel-inner">
 
       <!-- Login Mode -->
@@ -765,8 +830,10 @@
         </form>
       </div>
 
-    </div>
-  </div>
+    </div><!-- /.auth-panel-inner -->
+    </div><!-- /.auth-panel -->
+    </div><!-- /.auth-modal-card -->
+  </div><!-- /.auth-modal -->
 
 </div>
 

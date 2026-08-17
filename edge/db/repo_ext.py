@@ -849,6 +849,55 @@ def _data_mode_marker_path() -> Path:
     return _cfg.DATA_DIR / "backups" / ".data_mode"
 
 
+def image_for_serving(image_id: str) -> dict | None:
+    """The row the image-file route needs, INCLUDING status.
+
+    Status is the point. The route that serves original frames used to
+    select orig_path alone, which meant a frame the triage cascade had
+    already classified as containing a person -- blurred, routed to
+    persons_restricted, deliberately kept out of the tiger pipeline --
+    was still served in full, unblurred, to any logged-in account,
+    including the two roles BLUEPRINT.md section 10 says must never see
+    person images at all. The privacy machinery was all built; this one
+    query simply never asked.
+    """
+    return _one(connect().execute(
+        "SELECT image_id, orig_path, status, station_id FROM images WHERE image_id=?",
+        (image_id,)))
+
+
+def note_person_image_access(image_id: str) -> None:
+    """Record an attempt to reach a restricted person frame.
+
+    Blueprint section 10: 'Audit reads, not just writes ... in a poaching
+    investigation, who looked at X last month is the question that
+    matters.' A refused attempt is exactly as interesting as a granted
+    one, so this is called on the refusal path too.
+    """
+    conn = connect()
+    conn.execute(
+        "UPDATE persons_restricted SET access_count = COALESCE(access_count, 0) + 1"
+        " WHERE image_id=?", (image_id,))
+    conn.commit()
+
+
+def live_data_is_worth_keeping() -> bool:
+    """True when the live database holds anything a person would miss.
+
+    Guards the auto-backup in /api/dev/seed against its own worst case: an
+    empty database silently overwriting a good snapshot. If there are no
+    individuals and no images there is nothing to preserve, and keeping
+    whatever snapshot already exists is strictly better than replacing it
+    with a blank one -- a wrong call in this direction costs disk space, a
+    wrong call in the other direction costs a day of fieldwork.
+    """
+    conn = connect()
+    for table in ("individuals", "images"):
+        if _one(conn.execute(f"SELECT COUNT(*) c FROM {table}"))["c"]:
+            return True
+    return False
+
+
 def data_mode() -> str:
     """'live' (your own fed-in data is what's active, the default and the
     safe fallback if the marker is missing or unreadable) or 'seeded' (a

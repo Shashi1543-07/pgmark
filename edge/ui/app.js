@@ -178,7 +178,7 @@ async function readinessBanner() {
   const isBlocked = bad.length > 0;
   host.innerHTML = `
     <div class="card pad" style="border-left:5px solid ${isBlocked ? '#dc2626' : '#d97706'};
-         background:${isBlocked ? '#fef2f2' : '#fffbeb'};margin-bottom:var(--s3)">
+         background:${isBlocked ? 'var(--bad-bg)' : 'var(--warn-bg)'};margin-bottom:var(--s3)">
       <h2 style="margin:0 0 6px">${isBlocked
         ? 'This computer cannot recognise tigers yet'
         : 'Some checks are working at reduced accuracy'}</h2>
@@ -273,6 +273,17 @@ function guideRender() {
   const prevStep = GUIDE_STEPS[S.guide._lastMarked ?? -1];
   if (prevStep?.target) guideMark(document.querySelector(prevStep.target), false);
 
+  // Keep the topbar button in step with the panel. Done here rather than in
+  // the click handler because the guide also closes from its own x and from
+  // finishing the last step -- one place that knows the truth, not three.
+  const reopen = $('#guideReopen');
+  if (reopen) {
+    reopen.classList.toggle('is-on', !!S.guide.open);
+    reopen.setAttribute('aria-pressed', String(!!S.guide.open));
+    reopen.title = S.guide.open ? 'Hide the guided walkthrough'
+                                : 'Show the guided walkthrough';
+  }
+
   if (!S.guide.open) { panel.hidden = true; return; }
   const step = GUIDE_STEPS[S.guide.index];
   panel.hidden = false;
@@ -312,6 +323,178 @@ function guideOnView(viewName) {
   if (cur && cur.view === viewName && cur.advanceOnView) guideNotify(cur.id);
 }
 
+/* ── theme ─────────────────────────────────────────────────────────────
+   The initial theme is applied by an inline script in index.html's <head>
+   so the page never paints light-then-dark on load. This half only owns
+   the toggle and the label, and writes the choice back to localStorage so
+   it survives a reload -- an operator should set the screen once, not on
+   every visit. Light remains the default when nothing has been chosen. */
+function currentTheme() {
+  return document.documentElement.getAttribute('data-theme') === 'dark' ? 'dark' : 'light';
+}
+
+function applyTheme(mode, animate = true) {
+  const dark = mode === 'dark';
+  const root = document.documentElement;
+
+  const swap = () => {
+    if (dark) root.setAttribute('data-theme', 'dark');
+    else root.removeAttribute('data-theme');
+  };
+
+  // The switch itself answers immediately -- the control must never feel
+  // like it lagged the click, even though the page behind it changes a
+  // beat later.
+  const btn = $('#themeToggle');
+  if (btn) {
+    btn.classList.toggle('is-dark', dark);
+    btn.setAttribute('aria-checked', String(dark));
+    btn.title = dark ? 'Switch to the bright (daytime) screen'
+                     : 'Switch to the dark (low-light) screen';
+  }
+  try { localStorage.setItem('pugmark.theme', mode); } catch (e) { /* storage disabled */ }
+
+  if (!animate) { swap(); return; }
+
+  // Timed against the theme-gloom keyframes in app.css: the overlay is at
+  // its darkest around 40% of 420ms, so the actual colour swap is hidden
+  // under it. Flipping at t=0 (as this did before) meant the snap happened
+  // in full view and the fade merely followed it, which is why the change
+  // still looked abrupt no matter how the durations were tuned.
+  root.classList.add('theme-transitioning');
+  window.clearTimeout(applyTheme._swapT);
+  window.clearTimeout(applyTheme._endT);
+  applyTheme._swapT = window.setTimeout(swap, 165);
+  applyTheme._endT = window.setTimeout(
+    () => root.classList.remove('theme-transitioning'), 430);
+}
+
+/* ── sidebar ───────────────────────────────────────────────────────────
+   Four categories, each collapsible, plus a rail that folds down to icons
+   for anyone who wants the screen back. Both states persist: a rail that
+   springs open again on every navigation is worse than one that never
+   collapsed. Collapsing the rail does NOT collapse the sections -- their
+   open/closed state is remembered separately and restored when the rail
+   expands again, so folding the rail is never destructive to layout the
+   operator arranged. */
+function navInit() {
+  const nav = $('#nav');
+  if (!nav) return;
+
+  let collapsedSections = [];
+  try { collapsedSections = JSON.parse(localStorage.getItem('pugmark.nav.closed') || '[]'); }
+  catch (e) { collapsedSections = []; }
+
+  const saveSections = () => {
+    const closed = [...nav.querySelectorAll('.nav-section')]
+      .filter(s => s.classList.contains('is-closed'))
+      .map(s => s.dataset.section);
+    try { localStorage.setItem('pugmark.nav.closed', JSON.stringify(closed)); } catch (e) { /* */ }
+  };
+
+  nav.querySelectorAll('.nav-section').forEach((section) => {
+    const btn = section.querySelector('.nav-group');
+    const closed = collapsedSections.includes(section.dataset.section);
+    section.classList.toggle('is-closed', closed);
+    btn?.setAttribute('aria-expanded', String(!closed));
+    btn?.addEventListener('click', () => {
+      const nowClosed = !section.classList.contains('is-closed');
+      section.classList.toggle('is-closed', nowClosed);
+      btn.setAttribute('aria-expanded', String(!nowClosed));
+      saveSections();
+    });
+  });
+
+  const railBtn = $('#navCollapse');
+  const applyRail = (collapsed) => {
+    document.body.classList.toggle('nav-collapsed', collapsed);
+    railBtn?.setAttribute('aria-expanded', String(!collapsed));
+    if (railBtn) railBtn.title = collapsed ? 'Expand the menu' : 'Collapse the menu';
+    try { localStorage.setItem('pugmark.nav.collapsed', collapsed ? '1' : '0'); } catch (e) { /* */ }
+  };
+  let railCollapsed = false;
+  try { railCollapsed = localStorage.getItem('pugmark.nav.collapsed') === '1'; } catch (e) { /* */ }
+  applyRail(railCollapsed);
+  railBtn?.addEventListener('click',
+    () => applyRail(!document.body.classList.contains('nav-collapsed')));
+
+  /* Roll each section's counts up onto its header so a folded section
+     still reports what is waiting inside it. Without this, collapsing
+     Intelligence hid "Alerts 4" completely -- the one number on this screen
+     that means somebody should act today. A MutationObserver rather than a
+     call from each render path: the tallies are written by half a dozen
+     different RENDER functions, and a badge that depends on remembering to
+     refresh it is a badge that will silently go stale. */
+  const OBSERVE_OPTS = {
+    subtree: true, childList: true, characterData: true,
+    attributes: true, attributeFilter: ['class'],
+  };
+  let badgeObserver = null;
+
+  const syncBadges = () => {
+    // MUST disconnect first. This callback writes INTO the same subtree it
+    // watches (it appends a badge, sets textContent, toggles a class), so
+    // an observer left connected re-fires itself on its own output and
+    // loops forever -- which froze the main thread hard enough that the
+    // browser offered to kill the page, and left the app blank because
+    // route() never got to run. Reconnected in `finally` so an exception
+    // mid-sync cannot leave the badges permanently dead either.
+    if (badgeObserver) badgeObserver.disconnect();
+    try {
+      nav.querySelectorAll('.nav-section').forEach((section) => {
+        const header = section.querySelector('.nav-group');
+        if (!header) return;
+        let badge = header.querySelector('.nav-group-badge');
+        let total = 0;
+        let hot = false;
+        section.querySelectorAll('.tally').forEach((t) => {
+          const n = parseInt((t.textContent || '').replace(/[^0-9]/g, ''), 10);
+          if (Number.isFinite(n)) total += n;
+          if (t.classList.contains('hot')) hot = true;
+        });
+        if (!total) { badge?.remove(); return; }
+        if (!badge) {
+          badge = document.createElement('span');
+          badge.className = 'nav-group-badge';
+          header.appendChild(badge);
+        }
+        const text = total > 99 ? '99+' : String(total);
+        // Write only on an actual change: even with the disconnect above,
+        // pointless writes cost layout on every tally update.
+        if (badge.textContent !== text) badge.textContent = text;
+        badge.classList.toggle('hot', hot);
+      });
+    } finally {
+      if (badgeObserver) badgeObserver.observe(nav, OBSERVE_OPTS);
+    }
+  };
+
+  syncBadges();
+  badgeObserver = new MutationObserver(syncBadges);
+  badgeObserver.observe(nav, OBSERVE_OPTS);
+
+  // A section holding the current page must never stay folded away -- the
+  // active item would be invisible with no indication of where it went.
+  nav.addEventListener('click', (e) => {
+    const link = e.target.closest('a[data-view]');
+    if (!link) return;
+    const section = link.closest('.nav-section');
+    if (section?.classList.contains('is-closed')) {
+      section.classList.remove('is-closed');
+      section.querySelector('.nav-group')?.setAttribute('aria-expanded', 'true');
+      saveSections();
+    }
+  });
+}
+
+function themeInit() {
+  // animate=false on first paint: the theme is already correct (the inline
+  // <head> script set it), so a crossfade here would only be a flash on load.
+  applyTheme(currentTheme(), false);
+  $('#themeToggle')?.addEventListener('click',
+    () => applyTheme(currentTheme() === 'dark' ? 'light' : 'dark'));
+}
+
 function guideInit() {
   const saved = guideLoad();
   $('#guideBack').onclick = () => guideGo(S.guide.index - 1);
@@ -320,7 +503,18 @@ function guideInit() {
     guideGo(S.guide.index + 1);
   };
   $('#guideClose').onclick = () => { S.guide.open = false; guideSave(); guideRender(); };
-  $('#guideReopen').onclick = () => guideGo(saved ? S.guide.index : 0);
+  // Toggle, not just open: the button reported "replay the walkthrough" but
+  // had no way to put it away again, so a second press did nothing visible
+  // and the only exit was the small x on the panel itself.
+  $('#guideReopen').onclick = () => {
+    if (S.guide.open) {
+      S.guide.open = false;
+      guideSave();
+      guideRender();
+    } else {
+      guideGo(saved ? S.guide.index : 0);
+    }
+  };
 
   if (!saved) {
     S.guide.index = 0;
@@ -928,7 +1122,7 @@ function renderQuarGallery(sample) {
   galleryEl.querySelectorAll('.restore-single-btn').forEach(btn => {
     btn.onclick = async () => {
       btn.disabled = true;
-      btn.textContent = 'Restoring…';
+      btn.innerHTML = '<span class="spinner-ring"></span>Restoring…';
       try {
         await api(`/api/runs/${S.run.run_id}/quarantine/restore`, {
           method: 'POST',
@@ -1000,7 +1194,7 @@ RENDER.tigers = async () => {
     healthEl.innerHTML = `
       <div class="card pad">
         <div class="card-label">Dual-Flank Complete</div>
-        <div class="num big" style="color:#137333">${both}</div>
+        <div class="num big" style="color:var(--ok-fg)">${both}</div>
         <div class="note">Both L and R flanks catalogued</div>
       </div>
       <div class="card pad">
@@ -1031,7 +1225,7 @@ RENDER.tigers = async () => {
             <button type="button" class="btn small" id="rebuildEntitiesBtn">⟲ Rebuild Biometric Entities</button>
           </div>
         </div>
-        <div class="card pad" style="background:#fffaf5;border-color:#f0c987;margin-top:var(--s3)">
+        <div class="card pad explainer" style="margin-top:var(--s3)">
           <p style="margin:0;font-size:13.5px;line-height:1.55"><strong>What "Provisional" means:</strong>
             the computer found stripes it does not recognise and made a new record. For each tiger below,
             look at the photo and pick one:</p>
@@ -1065,9 +1259,16 @@ RENDER.tigers = async () => {
                 <td><strong>${esc(p.ind_id)}</strong></td>
                 <td>${esc((p.first_seen || '').slice(0, 10) || '—')}</td>
                 <td>${nf(p.crop_count || 0)}</td>
-                <td style="display:flex;gap:6px;flex-wrap:wrap">
-                  <button type="button" class="btn small primary confirmTigerBtn" data-ind="${esc(p.ind_id)}">Confirm New Tiger</button>
-                  <button type="button" class="btn small mergeTigerBtn" data-ind="${esc(p.ind_id)}">Merge Into Existing&hellip;</button>
+                <td>
+                  <!-- the flex lives on an inner div, never on the <td>:
+                       display:flex on a table cell drops it out of the table
+                       formatting context, so it stops stretching to the row
+                       height and stops aligning with the cells beside it --
+                       which is exactly why this row sat crooked. -->
+                  <div class="cell-actions">
+                    <button type="button" class="btn small primary confirmTigerBtn" data-ind="${esc(p.ind_id)}">Confirm New Tiger</button>
+                    <button type="button" class="btn small mergeTigerBtn" data-ind="${esc(p.ind_id)}">Merge Into Existing&hellip;</button>
+                  </div>
                 </td>
               </tr>`).join('')}
           </tbody>
@@ -1082,7 +1283,7 @@ RENDER.tigers = async () => {
       };
       provCard.querySelectorAll('.confirmTigerBtn').forEach(b => {
         b.onclick = async () => {
-          b.disabled = true; b.textContent = 'Confirming…';
+          b.disabled = true; b.innerHTML = '<span class="spinner-ring"></span>Confirming…';
           try {
             await promoteOne(b.dataset.ind);
             await RENDER.tigers();
@@ -1113,7 +1314,7 @@ RENDER.tigers = async () => {
         const btn = e.currentTarget;
         const ids = [...provCard.querySelectorAll('.provRowCheck:checked')].map(cb => cb.dataset.ind);
         if (!ids.length) return;
-        btn.disabled = true; btn.textContent = `Confirming ${ids.length}…`;
+        btn.disabled = true; btn.innerHTML = `<span class="spinner-ring"></span>Confirming ${ids.length}…`;
         const failed = [];
         for (const id of ids) {
           try { await promoteOne(id); } catch (e2) { failed.push(id); }
@@ -1257,7 +1458,7 @@ function filterAndRenderTigers() {
           </div>
           ${t.provisional
             ? '<span class="tag prov" style="font-size:10.5px" title="Not yet reviewed by a person. See the Provisional Enrolments list above to confirm or merge it.">Provisional</span>'
-            : '<span class="tag" style="background:#e6f4ea;color:#137333;font-size:10.5px" title="A person has confirmed this is a real, distinct tiger.">Confirmed</span>'}
+            : '<span class="tag ok" style="font-size:10.5px" title="A person has confirmed this is a real, distinct tiger.">Confirmed</span>'}
         </div>
         <div class="tiger-card-body">
           <div class="tiger-flank-box">
@@ -1388,18 +1589,21 @@ const DECISION_COPY = {
   side_unknown: ['Flank Side Not Confidently Determined', 'This is a tiger, but which flank (left or right) is showing could not be confirmed. Sent for human review rather than searching the wrong catalogue.'],
 };
 
-const DECISION_STATUS_COLOR = {
-  auto: '#137333', enroll: '#137333',
-  review: '#b06000',
-  refuse: '#8a1c1c', no_animal_detected: '#8a1c1c', unreadable: '#8a1c1c',
-  non_target_species: '#8a1c1c', unknown_species: '#b06000', side_unknown: '#b06000',
+/* Decision -> semantic pill class. Was a map of raw hex, which meant the
+   identify result badge kept its light-theme greens and reds on a dark
+   card. The tokens behind these classes are defined per theme in app.css. */
+const DECISION_TAG_CLASS = {
+  auto: 'ok', enroll: 'ok',
+  review: 'warn', unknown_species: 'warn', side_unknown: 'warn',
+  refuse: 'bad', no_animal_detected: 'bad', unreadable: 'bad',
+  non_target_species: 'bad',
 };
 
 function drawIdResult(r) {
   const [title, sub] = DECISION_COPY[r.decision] || [r.decision, ''];
   const candidates = r.candidates || [];
   const best = candidates[0];
-  const statusColor = DECISION_STATUS_COLOR[r.decision] || '#137333';
+  const statusTag = DECISION_TAG_CLASS[r.decision] || 'ok';
 
   // Animate steps
   if (r.decision !== 'no_animal_detected') $('#idStep1')?.classList.add('complete');
@@ -1430,7 +1634,7 @@ function drawIdResult(r) {
           <p class="note">${esc(sub)}</p>
         </div>
         <div>
-          <span class="badge" style="background:#e6f4ea;color:${statusColor};font-weight:600;padding:6px 12px;border-radius:4px">
+          <span class="tag ${statusTag}" style="font-weight:600;padding:6px 12px">
             Decision: ${esc(r.decision.toUpperCase())}
           </span>
         </div>
@@ -1857,7 +2061,7 @@ async function confirmReview() {
   }
   const ind = isNew ? null : it.candidates[reviewPick].ind_id;
   const btn = $('#confirmBtn');
-  if (btn) { btn.disabled = true; btn.textContent = 'Recording…'; }
+  if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spinner-ring"></span>Recording…'; }
   try {
     const r = await api(`/api/review/${it.queue_id}/decide`,
       { method: 'POST', body: { ind_id: ind, new_individual: isNew } });
@@ -1891,7 +2095,7 @@ async function dismissReview() {
   const it = reviewItems[reviewIdx];
   if (!it) return;
   const btn = $('#dismissBtn');
-  if (btn) { btn.disabled = true; btn.textContent = 'Clearing…'; }
+  if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spinner-ring"></span>Clearing…'; }
   try {
     await api(`/api/review/${it.queue_id}/dismiss`, { method: 'POST' });
     reviewItems.splice(reviewIdx, 1);
@@ -1922,7 +2126,7 @@ async function confirmSide(side) {
   if (!it) return;
   const btn = $(side === 'L' ? '#confirmLeftBtn' : '#confirmRightBtn');
   const other = $(side === 'L' ? '#confirmRightBtn' : '#confirmLeftBtn');
-  if (btn) { btn.disabled = true; btn.textContent = 'Matching…'; }
+  if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spinner-ring"></span>Matching…'; }
   if (other) other.disabled = true;
   try {
     const r = await api(`/api/review/${it.queue_id}/confirm-side`, { method: 'POST', body: { side } });
@@ -2609,10 +2813,10 @@ RENDER.ops = async () => {
       const isOk = c.ok;
       const isWarn = !isOk && !c.blocking;
       const statusBadge = isOk 
-        ? '<span class="tag" style="background:#e6f4ea;color:#137333">✓ Ready</span>'
+        ? '<span class="tag ok">✓ Ready</span>'
         : isWarn
-        ? '<span class="tag" style="background:#fef3c7;color:#92400e">⚠ Advisory</span>'
-        : '<span class="tag" style="background:#fee2e2;color:#991b1b">✕ Action Needed</span>';
+        ? '<span class="tag warn">⚠ Advisory</span>'
+        : '<span class="tag bad">✕ Action Needed</span>';
       return `
         <div class="card pad" style="border-left:3px solid ${isOk ? '#059669' : isWarn ? '#d97706' : '#dc2626'}">
           <div style="display:flex;justify-content:space-between;align-items:center">
@@ -2805,25 +3009,22 @@ async function renderSeedModeStatus() {
   if (!banner) return;
   try {
     const d = await api('/api/dev/data-mode');
-    if (d.mode === 'seeded') {
-      banner.style.background = '#fef3c7';
-      banner.style.borderColor = '#d97706';
-      label.textContent = 'Showing: Demo Data';
-      label.style.color = '#92400e';
-      note.textContent = d.live_backup_available
-        ? 'Your own data is saved and hidden right now -- click "Show my live data" to bring it back.'
-        : 'No live data has been saved yet (nothing was active before this demo was loaded).';
-      if (restoreBtn) restoreBtn.disabled = !d.live_backup_available;
-    } else {
-      banner.style.background = '#e6f4ea';
-      banner.style.borderColor = '#137333';
-      label.textContent = 'Showing: Your Live Data';
-      label.style.color = '#137333';
-      note.textContent = d.live_backup_available
-        ? 'A saved demo-time snapshot also exists if you need to restore it again.'
-        : 'This is the data you have fed in yourself.';
-      if (restoreBtn) restoreBtn.disabled = !d.live_backup_available;
-    }
+    // Tokens, not hex: this banner is the one element on screen whose whole
+    // job is telling you which dataset you are looking at mid-presentation,
+    // so it has to stay legible in both themes.
+    const seeded = d.mode === 'seeded';
+    banner.style.background = seeded ? 'var(--warn-bg)' : 'var(--ok-bg)';
+    banner.style.borderColor = seeded ? 'var(--warn-line)' : 'var(--ok-line)';
+    label.style.color = seeded ? 'var(--warn-fg)' : 'var(--ok-fg)';
+    label.textContent = seeded ? 'Showing: Demo Data' : 'Showing: Your Live Data';
+    note.textContent = seeded
+      ? (d.live_backup_available
+          ? 'Your own data is saved and hidden right now -- click "Show my live data" to bring it back.'
+          : 'No live data has been saved yet (nothing was active before this demo was loaded).')
+      : (d.live_backup_available
+          ? 'A saved demo-time snapshot also exists if you need to restore it again.'
+          : 'This is the data you have fed in yourself.');
+    if (restoreBtn) restoreBtn.disabled = !d.live_backup_available;
   } catch (e) {
     label.textContent = 'Could not check current data mode';
     note.textContent = e.detail || e.message || '';
@@ -2856,8 +3057,8 @@ RENDER.sync = async () => {
         </div>
         <div>
           ${canBundle 
-            ? '<span class="badge" style="background:#e6f4ea;color:#137333;font-weight:600;padding:4px 10px;border-radius:4px;border:1px solid #ceead6">● Bundle Sync Ready</span>'
-            : '<span class="badge" style="background:#fce8e6;color:#c5221f;font-weight:600;padding:4px 10px;border-radius:4px;border:1px solid #fad2cf">● Sync Disabled</span>'}
+            ? '<span class="tag ok" style="font-weight:600;padding:4px 10px">● Bundle Sync Ready</span>'
+            : '<span class="badge" style="background:var(--bad-bg);color:#c5221f;font-weight:600;padding:4px 10px;border-radius:4px;border:1px solid #fad2cf">● Sync Disabled</span>'}
         </div>
       </div>
 
@@ -3132,7 +3333,7 @@ RENDER.users = async function() {
               <span style="font-size:20px">🔑</span>
               <h3 style="margin:0;color:var(--pelage)">Credentials Reset: ${esc(res.username)}</h3>
             </div>
-            <p style="margin:0 0 var(--s3);padding:10px 14px;background:#fdf5eb;border:1px solid rgba(180,110,0,.25);border-radius:6px;font-size:13px;line-height:1.5;color:#7c4b00">
+            <p style="margin:0 0 var(--s3);padding:10px 14px;background:var(--warn-bg);border:1px solid var(--warn-line);border-radius:6px;font-size:13px;line-height:1.5;color:var(--warn-fg)">
               <strong>⚠ IMPORTANT:</strong> The old password and recovery code are void. Hand these new credentials to the officer. They must change their password on first login.
             </p>
             <div style="display:grid;grid-template-columns:1fr 1fr;gap:var(--s3);margin-bottom:var(--s3)">
@@ -3186,7 +3387,7 @@ RENDER.users = async function() {
           <span style="font-size:20px">✅</span>
           <h3 style="margin:0;color:var(--pelage)">Account Created: ${esc(res.username)}</h3>
         </div>
-        <p style="margin:0 0 var(--s3);padding:10px 14px;background:#fdf5eb;border:1px solid rgba(180,110,0,.25);border-radius:6px;font-size:13px;line-height:1.5;color:#7c4b00">
+        <p style="margin:0 0 var(--s3);padding:10px 14px;background:var(--warn-bg);border:1px solid var(--warn-line);border-radius:6px;font-size:13px;line-height:1.5;color:var(--warn-fg)">
           <strong>⚠ IMPORTANT:</strong> These credentials are shown <strong>exactly once</strong>. Write them down or print and hand to the officer immediately.
         </p>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:var(--s3);margin-bottom:var(--s3)">
@@ -3218,11 +3419,79 @@ RENDER.users = async function() {
 /* ── auth controller ───────────────────────────────────────────────────── */
 let lockoutTimer = null;
 
+/* ── the sign-in stage ───────────────────────────────────────────────────
+   The reserve photograph is the screen; the credentials card is summoned
+   over it with a double-click. Two rules keep that from becoming a trap:
+
+     * 'login' is the only mode that starts closed. 'change' (a forced
+       password change) and 'forgot' are states the operator did not choose
+       and cannot leave, so the card opens immediately -- making somebody
+       double-click an image to reach a mandatory step would be a puzzle,
+       not a flourish.
+     * Once open it STAYS open across re-renders. A failed login calls back
+       into this screen, and a card that closed on every wrong password
+       would hide the error explaining what went wrong.                    */
+function openAuthCard(focus = true) {
+  const modal = $('#authModal');
+  if (!modal || !modal.hidden) return;
+  modal.hidden = false;
+  $('#authStage')?.classList.add('is-open');
+  if (focus) {
+    // first empty field, so a forced password change does not land the
+    // cursor on a username the operator cannot edit anyway
+    const field = modal.querySelector(
+      'input:not([type=hidden]):not([disabled])');
+    setTimeout(() => field?.focus(), 220);
+  }
+}
+
+function closeAuthCard() {
+  const modal = $('#authModal');
+  if (!modal) return;
+  modal.hidden = true;
+  $('#authStage')?.classList.remove('is-open');
+}
+
+function authStageInit() {
+  const stage = $('#authStage');
+  if (!stage) return;
+  stage.addEventListener('dblclick', () => openAuthCard());
+  // Keyboard equivalent: a double-click is not reachable without a mouse,
+  // and this is the only door into the application.
+  stage.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openAuthCard(); }
+  });
+  // Touch has no reliable double-click -- a double-tap is a zoom gesture on
+  // most mobile browsers, so on a coarse pointer a single tap opens it.
+  if (window.matchMedia?.('(pointer: coarse)').matches) {
+    stage.addEventListener('click', () => openAuthCard());
+  }
+  $('#authModalClose')?.addEventListener('click', closeAuthCard);
+  $('#authModal')?.addEventListener('click', (e) => {
+    if (e.target === $('#authModal')) closeAuthCard();
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape') return;
+    const modal = $('#authModal');
+    if (!modal || modal.hidden) return;
+    // Escape must not strand someone on a step they are required to
+    // finish, so only the ordinary login card is dismissible -- a forced
+    // password change or a recovery flow stays put.
+    if ($('#authLoginPanel')?.hidden === false) closeAuthCard();
+  });
+}
+
 function showAuth(mode = 'login') {
   const shell = $('#authShell');
   if (!shell) return;
   shell.hidden = false;
   shell.style.display = 'flex';
+  if (mode === 'login') {
+    // leave an already-open card open (see the note above about errors)
+    if ($('#authModal')?.hidden !== false) closeAuthCard();
+  } else {
+    openAuthCard();
+  }
   $('#authLoginPanel').hidden = (mode !== 'login');
   $('#authForgotPanel').hidden = (mode !== 'forgot');
   $('#authChangePanel').hidden = (mode !== 'change');
@@ -3249,11 +3518,16 @@ function hideAuth() {
 function updateUserUI() {
   const pill = $('#userPill');
   const navUsers = $('#navUsers');
+  // Log out now sits outside the user pill (far right of the topbar), so it
+  // needs its own visibility -- it used to inherit the pill's hidden state.
+  const logout = $('#logoutBtn');
   if (!S.user) {
     if (pill) pill.hidden = true;
+    if (logout) logout.hidden = true;
     if (navUsers) navUsers.hidden = true;
     return;
   }
+  if (logout) logout.hidden = false;
   if (pill) {
     pill.hidden = false;
     $('#userRoleBadge').textContent = S.user.role;
@@ -3304,17 +3578,47 @@ function startLockoutCountdown(seconds) {
 
 function setupAuth() {
   $$('.pwd-toggle-btn').forEach((btn) => {
+    // The icon lives in its own span so the CSS flip animation has an
+    // element to run on -- re-setting textContent on the button itself
+    // would restart nothing and animate nothing.
+    // Line-art SVG rather than emoji: 👁/🙈 render as full-colour pictures
+    // that vary by platform font and sit oddly against a monochrome form.
+    // These inherit currentColor, so they theme themselves.
+    const EYE = '<svg viewBox="0 0 20 20" aria-hidden="true">'
+      + '<path d="M1.8 10S4.9 4.6 10 4.6 18.2 10 18.2 10 15.1 15.4 10 15.4 1.8 10 1.8 10z"/>'
+      + '<circle cx="10" cy="10" r="2.6"/></svg>';
+    const EYE_OFF = '<svg viewBox="0 0 20 20" aria-hidden="true">'
+      + '<path d="M8.2 5a7.6 7.6 0 0 1 1.8-.2c5.1 0 8.2 5.2 8.2 5.2a15 15 0 0 1-2.4 2.9M5.6 6.3A14.6 14.6 0 0 0 1.8 10S4.9 15.2 10 15.2a7.7 7.7 0 0 0 3-.6"/>'
+      + '<path d="M8.3 8.4a2.6 2.6 0 0 0 3.5 3.5"/><path d="M3 3l14 14"/></svg>';
+
+    const paint = (revealed, animate = true) => {
+      // animate=false on first paint: three icons flipping in unison the
+      // moment the login screen appears reads as a rendering glitch, not
+      // as feedback. The flip should only ever answer a click.
+      btn.innerHTML = `<span class="pw-icon${animate ? '' : ' no-anim'}">${revealed ? EYE_OFF : EYE}</span>`;
+      btn.classList.toggle('revealed', revealed);
+      btn.setAttribute('aria-pressed', String(revealed));
+      btn.title = revealed ? 'Hide password' : 'Show password';
+      btn.setAttribute('aria-label', btn.title);
+    };
+    paint(false, false);
+
     btn.onclick = (e) => {
       e.preventDefault();
-      const input = btn.previousElementSibling;
+      // querySelector rather than previousElementSibling: the markup now
+      // has the icon span inside the button, and a future wrapper change
+      // should not silently break this again.
+      const input = btn.parentElement?.querySelector('input');
       if (!input) return;
-      if (input.type === 'password') {
-        input.type = 'text';
-        btn.textContent = '🙈';
-      } else {
-        input.type = 'password';
-        btn.textContent = '👁';
-      }
+      const revealed = input.type === 'password';
+      input.type = revealed ? 'text' : 'password';
+      paint(revealed);
+      // Keep the caret where the operator left it -- retyping a long
+      // password because the cursor jumped to the start is exactly the
+      // friction this button exists to remove.
+      const pos = input.value.length;
+      try { input.setSelectionRange(pos, pos); } catch (err) { /* type=text only */ }
+      input.focus();
     };
   });
 
@@ -3358,7 +3662,7 @@ function setupAuth() {
         showAuth('change');
       } else {
         hideAuth();
-        await initApp();
+        await initAppSafely();
       }
     } catch (err) {
       const data = err.data || {};
@@ -3444,7 +3748,7 @@ function setupAuth() {
         updateUserUI();
         $('#changeForm').reset();
         hideAuth();
-        await initApp();
+        await initAppSafely();
       }
     } catch (err) {
       errEl.textContent = err.detail || 'Failed to change password.';
@@ -3793,7 +4097,7 @@ async function initApp() {
        to load the demonstration reserve.</div>`;
     return;
   }
-  $('#reserveName').textContent = S.reserve.name;
+  if ($('#reserveName')) $('#reserveName').textContent = S.reserve.name;
   if ($('#authReserveName')) $('#authReserveName').textContent = `${S.reserve.name} · Offline Node`;
   try { await RENDER.run?.(); } catch (e) { console.error('Error in RENDER.run:', e); }
   try { await RENDER.review?.(); } catch (e) { console.error('Error in RENDER.review:', e); }
@@ -3801,8 +4105,50 @@ async function initApp() {
   route();
 }
 
+/* Nothing above may end with an empty screen.
+   initApp() is awaited from two places (boot, and the login form's submit
+   handler). Both call hideAuth() FIRST, so if anything in initApp throws
+   -- a failed /api/reserves, a missing element, a render bug -- the auth
+   overlay is already gone, route() is never reached, no .view ever gets
+   the `on` class, and the operator is left looking at a blank panel with
+   no error and nothing to click. That is the single worst failure this UI
+   can produce, and at a demo it is indistinguishable from the app being
+   dead. This wrapper guarantees three things instead: the shell always
+   routes, the failure is always visible, and there is always a way out. */
+async function initAppSafely() {
+  try {
+    await initApp();
+  } catch (err) {
+    console.error('initApp failed:', err);
+    try { route(); } catch (e) { console.error('route() also failed:', e); }
+    const main = document.querySelector('main');
+    if (main && !document.querySelector('.view.on')) {
+      main.innerHTML = `
+        <div class="card pad" style="max-width:640px;margin:var(--s6) auto">
+          <h2 style="color:var(--act)">This screen could not finish loading</h2>
+          <p class="note" style="margin-top:var(--s2)">The node is running and your
+            sign-in worked, but one of the start-up steps failed, so the page was
+            left empty. Nothing has been lost &mdash; this is a display failure,
+            not a data failure.</p>
+          <p class="note" style="margin-top:var(--s2)"><b>Details:</b>
+            <span class="num">${esc(String(err && err.message || err))}</span></p>
+          <div class="toolbar" style="margin-top:var(--s4)">
+            <button type="button" class="primary" onclick="location.reload()">Reload the page</button>
+            <button type="button" onclick="location.hash='#run';location.reload()">Go to Import Photos</button>
+          </div>
+        </div>`;
+    }
+  }
+}
+
 /* ── boot ──────────────────────────────────────────────────────────────── */
 (async function boot() {
+  /* Before auth, deliberately: the toggle has to work on the login screen
+     too, and initApp() (where guideInit runs) is never reached until a
+     reserve has loaded. */
+  themeInit();
+  navInit();
+  authStageInit();
   setupAuth();
   window.addEventListener('hashchange', route);
   try {
@@ -3814,7 +4160,7 @@ async function initApp() {
         showAuth('change');
       } else {
         hideAuth();
-        await initApp();
+        await initAppSafely();
       }
     } else {
       showAuth('login');

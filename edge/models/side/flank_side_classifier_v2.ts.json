@@ -1,0 +1,38 @@
+{
+  "task": "side",
+  "arch": "pretrained",
+  "labels": [
+    "L",
+    "R",
+    "UNKNOWN"
+  ],
+  "manifest": "C:\\Users\\lenovo\\Downloads\\pugmark-v0.1.1\\data\\raw\\atrw_side\\manifest.jsonl",
+  "manifest_sha256": "6c805efa1614bac9dd5dcc4b46f35395f611a77dc90ca1faa657828e2ac02901",
+  "model_sha256": "be16b17bd6c34c7331fddbc356edb6c0998db1b562fd2e504f20b7966c968c58",
+  "validation_accuracy": 0.6215384615384615,
+  "confusion_matrix": [
+    [
+      37,
+      1,
+      8
+    ],
+    [
+      1,
+      61,
+      55
+    ],
+    [
+      35,
+      23,
+      104
+    ]
+  ],
+  "train_rows": 1562,
+  "val_rows": 325,
+  "optimizer": "sgd",
+  "weight_decay": 0.0005,
+  "dropout": 0.5,
+  "epochs": 40,
+  "max_minutes": 45.0,
+  "stopped_early_on_time_budget": false
+}
