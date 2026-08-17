@@ -3917,8 +3917,12 @@ html.theme-transitioning body::after {
   padding: 7px 10px !important;
   border-radius: 0 !important;
   display: flex; align-items: center; gap: 7px;
-  font-size: 10.5px !important;
-  letter-spacing: .13em !important;
+  /* Raised with the nav items below. This declaration carries !important,
+     so it is the one that actually decides the size -- setting it anywhere
+     else just adds a rule that loses. */
+  font-size: 11.5px !important;
+  letter-spacing: .12em !important;
+  font-weight: 700;
   color: var(--muted) !important;
   background: transparent !important;
   transition: background var(--d-fast) var(--ease), color var(--d-fast) var(--ease);
@@ -5668,3 +5672,158 @@ tbody tr:hover { background: color-mix(in srgb, var(--glass-glow) 10%, transpare
   text-decoration: line-through;
   text-decoration-thickness: 1px;
 }
+
+/* ═══════════════════════════════════════════════════════════════════════
+   MOVEMENT PLAYER
+   ───────────────────────────────────────────────────────────────────────
+   The bar used to be a button, a raw range input and the text "Survey:
+   100%" -- a percentage of nothing in particular. It now reads as a
+   transport control: play, a time axis, and a readout naming the tiger,
+   the station and the moment under the playhead.
+   ═══════════════════════════════════════════════════════════════════════ */
+
+.map-timeline-bar {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 10px 14px;
+  background: var(--glass);
+  border: 1px solid var(--glass-line);
+  border-radius: 12px;
+  margin-top: 10px;
+}
+
+#mapPlayMovementBtn {
+  flex: none;
+  font-size: 11px;
+  letter-spacing: .06em;
+  padding: 7px 14px;
+  min-width: 148px;
+  border-radius: 999px;
+}
+#mapPlayMovementBtn.active {
+  border-color: var(--pelage);
+  color: var(--pelage);
+  background: color-mix(in srgb, var(--pelage) 16%, transparent);
+}
+#mapPlayMovementBtn[disabled] { opacity: .45; cursor: not-allowed; }
+
+/* ── the time axis ──────────────────────────────────────────────────── */
+#mapTimelineSlider {
+  flex: 1 1 auto;
+  min-width: 120px;
+  appearance: none;
+  -webkit-appearance: none;
+  height: 4px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--glass-line) 90%, transparent);
+  outline: none;
+}
+#mapTimelineSlider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 15px; height: 15px;
+  border-radius: 50%;
+  background: var(--pelage);
+  border: 2px solid var(--surface);
+  box-shadow: 0 1px 5px rgba(0,0,0,.4);
+  cursor: grab;
+  transition: transform 120ms var(--ease);
+}
+#mapTimelineSlider::-webkit-slider-thumb:hover { transform: scale(1.18); }
+#mapTimelineSlider::-webkit-slider-thumb:active { cursor: grabbing; }
+#mapTimelineSlider::-moz-range-thumb {
+  width: 15px; height: 15px; border-radius: 50%;
+  background: var(--pelage); border: 2px solid var(--surface); cursor: grab;
+}
+#mapTimelineSlider[disabled] { opacity: .4; }
+
+/* ── who / where / when, under the playhead ─────────────────────────── */
+.tl-readout {
+  flex: none;
+  min-width: 250px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  text-align: right;
+}
+.tl-date {
+  font-family: var(--f-data);
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--ink);
+  letter-spacing: .02em;
+}
+.tl-who {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  font-size: 10.5px;
+  color: var(--muted);
+}
+.tl-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-weight: 700;
+  color: var(--ink-2);
+  font-family: var(--f-data);
+}
+/* the swatch is the same colour the tiger is drawn with on the map, so the
+   name in the readout and the dot on the map are obviously the same animal */
+.tl-chip i {
+  width: 9px; height: 9px; border-radius: 50%;
+  background: var(--c, var(--pelage));
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--c, var(--pelage)) 26%, transparent);
+}
+.tl-where { color: var(--ink-2); }
+.tl-count { color: var(--muted); opacity: .85; }
+
+/* trailing sightings behind the playhead: no pulse, only the newest pulses */
+.pugmap .radar-trail { transition: none; }
+
+@media (max-width: 1100px) {
+  .map-timeline-bar { flex-wrap: wrap; }
+  .tl-readout { min-width: 0; width: 100%; text-align: left; }
+  .tl-who { justify-content: flex-start; }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   SIDEBAR TYPE · legible at arm's length
+   ───────────────────────────────────────────────────────────────────────
+   The nav labels were 12px, uppercase, in a display face, with .07em extra
+   tracking. Each of those choices is defensible alone; together they made
+   the navigation the smallest text in the application, which is the wrong
+   place for it -- this is the control surface a ranger uses first, on a
+   laptop screen, often standing up.
+
+   Uppercase display type also reads smaller than its nominal size, because
+   there are no ascenders or descenders to give the eye a word shape. So the
+   size goes up and the tracking comes down: wide letter-spacing is what
+   makes a short label look thin and faint rather than emphatic.
+
+   The rail widens by 8px to absorb the longer labels ("IDENTIFY A PHOTO",
+   "CAMERA STATIONS") without any of them truncating.
+   ═══════════════════════════════════════════════════════════════════════ */
+
+:root { --rail: 216px; }
+
+.nav a {
+  font-size: 13.5px;
+  letter-spacing: .045em;
+  font-weight: 500;
+  padding: 8px 9px;
+}
+.nav a[aria-current="page"] { font-weight: 700; }
+
+/* Section headers are raised at their own rule above (line ~3919), which
+   carries !important; repeating the size here would only add a declaration
+   that loses the cascade. */
+
+.nav-collapse { font-size: 10.5px; letter-spacing: .12em; }
+
+/* counts sit beside the labels, so they have to scale with them */
+.nav .tally { font-size: 11.5px; font-weight: 600; }
+
+/* icons keep their proportion to the text rather than shrinking against it */
+.nav .nav-ico { width: 17px; height: 17px; }

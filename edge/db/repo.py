@@ -1121,6 +1121,51 @@ def occupancy(run_id: str) -> list[dict]:
     return rows
 
 
+def map_events(run_id: str) -> list[dict]:
+    """Every confirmed sighting in a run, in time order, for the map's
+    movement player: one row per (event, individual).
+
+    This lived as raw SQL inside edge/routes_scale.py, which broke rule 1,
+    and it was wrong in a way that rule 1 exists to prevent -- there was no
+    second place to look when the map disagreed with itself.
+
+    Two defects, both fixed here:
+
+    1. It had no `superseded_by IS NULL` guard, so a CORRECTED crop matched
+       twice: once as the reviewer's decision and once as the superseded row
+       it replaced. `GROUP BY e.event_id` then collapsed those to one row and
+       took whichever ind_id SQLite happened to hand back, which is not
+       defined to be either of them in particular. Reproduced on a copy of
+       the demo database: after correcting a crop from PENCH-001 to
+       PENCH-002, the map still drew the sighting as PENCH-001 -- the exact
+       tiger a human had just ruled it out of. Occupancy already filtered
+       correctly (repo_ext.occupancy_inputs), so hulls and the movement
+       player were reading the same cycle through different rules and could
+       contradict each other on screen.
+
+    2. It filtered `a.decision != 'rejected'`, and 'rejected' is not a legal
+       decision -- the schema's CHECK allows only auto/review/human/enrolled.
+       That clause could never exclude a row. It read like a safety check
+       while doing nothing, which is worse than no check at all.
+
+    One row per (event, individual) rather than per event, deliberately: two
+    tigers really can appear at one station in one burst, and collapsing that
+    to a single arbitrary name loses a real sighting. The caller decides how
+    to present it; the repository does not get to silently drop one.
+    """
+    return _rows(connect().execute(
+        "SELECT e.event_id, e.station_id, e.started_at, a.ind_id"
+        "  FROM events e"
+        "  JOIN image_event ie ON ie.event_id = e.event_id"
+        "  JOIN images      im ON im.image_id = ie.image_id"
+        "  JOIN detections   d ON d.image_id  = im.image_id"
+        "  JOIN flank_crops  c ON c.det_id    = d.det_id"
+        "  JOIN assignments  a ON a.crop_id   = c.crop_id"
+        " WHERE im.run_id = ? AND a.superseded_by IS NULL"
+        " GROUP BY e.event_id, a.ind_id"
+        " ORDER BY e.started_at, a.ind_id", (run_id,)))
+
+
 def occupancy_history(reserve_id: str) -> dict[str, dict[str, dict]]:
     """Every occupancy row for a reserve, keyed by individual then run_id,
     oldest run first. The alert engine's only view into occupancy -- it

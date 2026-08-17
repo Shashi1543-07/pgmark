@@ -291,20 +291,12 @@ def register(app) -> None:                                        # noqa: C901
             except (ValueError, TypeError, AttributeError, json.JSONDecodeError) as exc:
                 boundaries = {"error": f"boundary_geojson unparseable: {exc}"}
 
-        # Query chronological event sightings for movement player
-        events_sql = """
-            SELECT e.event_id, e.station_id, e.started_at, a.ind_id
-            FROM events e
-            JOIN image_event ie ON e.event_id = ie.event_id
-            JOIN detections d ON ie.image_id = d.image_id
-            JOIN flank_crops c ON d.det_id = c.det_id
-            JOIN assignments a ON c.crop_id = a.crop_id
-            JOIN images i ON ie.image_id = i.image_id
-            WHERE i.run_id=? AND a.decision != 'rejected'
-            GROUP BY e.event_id ORDER BY e.started_at
-        """
+        # One row per (event, individual), corrections respected. The SQL
+        # for this lives in repo.map_events() -- it used to be inline here,
+        # which is what rule 1 forbids and why a missing superseded_by guard
+        # went unnoticed long enough to put the wrong tiger on the map.
         try:
-            events = repo.query(events_sql, (run_id,))
+            events = repo.map_events(run_id)
         except Exception:
             events = []
 

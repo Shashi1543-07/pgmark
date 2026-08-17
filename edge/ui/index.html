@@ -444,9 +444,16 @@
 
             <!-- Timeline Scrubber & Movement Playback -->
             <div class="map-timeline-bar" id="mapTimelineBar">
-              <button type="button" class="btn" id="mapPlayMovementBtn" style="font-size:11px">▶ Play Movement</button>
-              <input type="range" id="mapTimelineSlider" min="0" max="100" value="100">
-              <span class="note" id="mapTimelineLabel" style="font-size:12px">Survey: 100%</span>
+              <button type="button" class="btn" id="mapPlayMovementBtn">▶ Play movement</button>
+              <input type="range" id="mapTimelineSlider" min="0" max="100" step="0.1" value="100"
+                     aria-label="Scrub through the survey cycle">
+              <!-- The readout answers "when, who, where" at the playhead.
+                   The old bar showed only a percentage, which told you
+                   nothing about the animal or the date you were looking at. -->
+              <div class="tl-readout">
+                <div class="tl-date" id="mapTimelineDate">—</div>
+                <div class="tl-who" id="mapTimelineWho"></div>
+              </div>
             </div>
           </div>
 

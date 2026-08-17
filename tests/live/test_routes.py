@@ -83,6 +83,13 @@ def _restore_admin_password() -> None:
               f"log in with that and change it.")
 
 
+
+def _rows_compat(cursor):
+    """sqlite3.Row -> dict, without reaching into repo's private helpers."""
+    cols = [c[0] for c in cursor.description]
+    return [dict(zip(cols, r)) for r in cursor.fetchall()]
+
+
 def main() -> int:
     _check_fresh_import()
     from tools import seed_demo
@@ -1016,6 +1023,64 @@ def _run(c: TestClient) -> int:
     # ── occupancy: a real MCP hull, projected before its area is measured ─
     occ = c.get(f"/api/runs/{run_id}/occupancy").json()
     check("occupancy computed", len(occ) > 0)
+
+    # ── the map's sightings feed: corrections must reach the map ────────
+    # This is run AFTER the review step above, which supersedes a real
+    # assignment, so there is genuinely a corrected crop in the database by
+    # the time these run.
+    # Swept across EVERY run, not just this one. The review step above
+    # corrects a crop in whichever run its queue item came from -- usually an
+    # earlier cycle -- so checking only the current run passed without a
+    # single superseded row to get wrong, i.e. it could not fail. The
+    # assertion below refuses to pass unless there is real corrected data
+    # somewhere to be got wrong.
+    conn2 = repo.connect()
+    all_runs = [r["run_id"] for r in repo.runs(run["reserve_id"], limit=50)]
+    total_superseded = 0
+    leaked_pairs = []
+    # NOT `rid`: that name already holds the RESERVE id in this function, and
+    # shadowing it here left it pointing at a run id, so a station export 200
+    # lines later asked for a reserve that does not exist and returned zero
+    # features.
+    for each_run in all_runs:
+        shown = {(r["event_id"], r["ind_id"]) for r in repo.map_events(each_run)}
+        rows = conn2.execute(
+            "SELECT e.event_id, a.ind_id FROM events e"
+            " JOIN image_event ie ON ie.event_id = e.event_id"
+            " JOIN images      im ON im.image_id = ie.image_id"
+            " JOIN detections   d ON d.image_id  = im.image_id"
+            " JOIN flank_crops  c ON c.det_id    = d.det_id"
+            " JOIN assignments  a ON a.crop_id   = c.crop_id"
+            " WHERE im.run_id = ? AND a.superseded_by IS NOT NULL", (each_run,)).fetchall()
+        superseded = {(r["event_id"], r["ind_id"]) for r in rows}
+        total_superseded += len(superseded)
+        leaked_pairs += sorted(shown & superseded)
+
+    check("the review step actually produced corrected data for this to be "
+          "tested against", total_superseded > 0,
+          f"{total_superseded} superseded sighting(s) across {len(all_runs)} runs")
+    check("a corrected identification never reaches the map under its old "
+          "name", not leaked_pairs,
+          f"{len(leaked_pairs)} superseded pair(s) still drawn, e.g. {leaked_pairs[:2]}")
+
+    sightings = repo.map_events(run_id)
+
+    # Rule 1: this query used to live inline in edge/routes_scale.py, and the
+    # missing superseded_by guard is exactly the kind of defect that hides
+    # when there is more than one place to look for a query.
+    scale_src = (Path(__file__).resolve().parents[2] / "edge/routes_scale.py").read_text(encoding="utf-8")
+    check("the map's sighting query lives in repo.py, not in the route",
+          "FROM events" not in scale_src and "repo.map_events(" in scale_src,
+          "CLAUDE.md rule 1")
+
+    # The hulls and the movement player read the same cycle; if they disagree
+    # the map contradicts itself on screen.
+    occ_stations = {o["ind_id"]: set(o.get("station_set") or []) for o in repo.occupancy(run_id)}
+    disagree = sorted({
+        r["ind_id"] for r in sightings
+        if r["station_id"] not in occ_stations.get(r["ind_id"], set())})
+    check("the movement player and the home ranges agree on where each "
+          "tiger was", not disagree, str(disagree[:4]))
     check("insufficient captures reported, not faked",
           any(o["insufficient_reason"] for o in occ),
           "a hull needs 3 stations; fewer must say so")
@@ -1090,7 +1155,10 @@ def _run(c: TestClient) -> int:
     check("station list exports as real GeoJSON points too",
           stations_gj["type"] == "FeatureCollection"
           and len(stations_gj["features"]) == 36
-          and stations_gj["features"][0]["geometry"]["type"] == "Point")
+          and stations_gj["features"][0]["geometry"]["type"] == "Point",
+          f"type={stations_gj.get('type')} "
+          f"features={len(stations_gj.get('features', []))} "
+          f"geom0={(stations_gj.get('features') or [{}])[0].get('geometry', {}).get('type')}")
 
     # ── Camtrap DP: the community exchange format, not a private schema ──
     zip_resp = c.get(f"/api/runs/{run_id}/export/camtrapdp")

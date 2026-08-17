@@ -910,7 +910,7 @@ window.PugMap = (() => {
     wireLayerButtons();
     wireZoomButtons();
     wireFullscreen();
-    wirePlayback(events, rawStations);
+    wirePlayback(events, rawStations, focus);
     wireSidebarToggle();
     syncImagery();
   }
@@ -986,10 +986,33 @@ window.PugMap = (() => {
 
   /* ── timeline scrubber and movement playback ──────────────────────── */
 
-  function wirePlayback(events, rawStations) {
+  /* ── the movement player ──────────────────────────────────────────────
+     What this is FOR: showing where a tiger went during the cycle, in the
+     order it went there. The first version could not answer that.
+
+       * It mapped the slider to an INDEX into the sighting list, so the
+         timeline was not a time axis. Halfway along meant "the median
+         sighting", which on unevenly spaced captures is nowhere near
+         halfway through the month.
+       * It drew one dot and deleted the previous one, so a path was never
+         visible -- the one thing a movement player exists to show.
+       * It stepped through every tiger's sightings interleaved, so the dot
+         teleported around the reserve changing identity, which is the
+         opposite of following an animal.
+
+     This version makes the slider real time, keeps a fading trail, joins
+     consecutive sightings of the SAME tiger so the path is the thing you
+     see, plays one tiger alone when one is focused, and names the animal,
+     the station and the timestamp under the playhead. */
+
+  const TRAIL = 14;            // sightings kept visible behind the playhead
+  const PLAY_MS = 14000;       // a full cycle takes this long to play
+
+  function wirePlayback(events, rawStations, focus) {
     const playBtn = document.getElementById('mapPlayMovementBtn');
     const slider = document.getElementById('mapTimelineSlider');
-    const label = document.getElementById('mapTimelineLabel');
+    const dateEl = document.getElementById('mapTimelineDate');
+    const whoEl = document.getElementById('mapTimelineWho');
     const L = window.L;
 
     const stnById = {};
@@ -997,73 +1020,146 @@ window.PugMap = (() => {
       if (s.station_id && num(s.lat) !== null && num(s.lon) !== null) stnById[s.station_id] = s;
     });
 
-    const sorted = [...events]
-      .filter(ev => ev && ev.station_id && stnById[ev.station_id])
-      .sort((a, b) => (a.started_at || '').localeCompare(b.started_at || ''));
+    // A focused tiger plays alone: that is the point of focusing one.
+    const all = events
+      .filter(ev => ev && ev.station_id && stnById[ev.station_id] && ev.started_at)
+      .filter(ev => !focus || ev.ind_id === focus)
+      .map(ev => ({ ind_id: ev.ind_id, station_id: ev.station_id, t: Date.parse(ev.started_at) }))
+      .filter(ev => Number.isFinite(ev.t))
+      .sort((a, b) => a.t - b.t);
 
-    const at = (pct) => sorted.length
-      ? sorted[Math.min(sorted.length - 1, Math.floor(pct / 100 * sorted.length))]
-      : null;
+    const t0 = all.length ? all[0].t : 0;
+    const t1 = all.length ? all[all.length - 1].t : 0;
+    const span = Math.max(1, t1 - t0);
 
-    function ping(ev) {
-      if (!map || !ev) return;
-      const stn = stnById[ev.station_id];
-      if (!stn) return;
+    const fmt = (ms) => {
+      const d = new Date(ms);
+      const p = (n) => String(n).padStart(2, '0');
+      return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()) +
+             '  ' + p(d.getHours()) + ':' + p(d.getMinutes());
+    };
+
+    function draw(pct) {
+      if (!map || !groups) return;
       groups.playback.clearLayers();
       if (!map.hasLayer(groups.playback)) groups.playback.addTo(map);
-      const color = getTigerColor(ev.ind_id);
-      const at_ = latlng(stn.lat, stn.lon);
-      if (!at_) return;
-      L.circleMarker(at_, {
-        pane: 'pug-playback',
-        className: 'radar-ping', radius: 6, color: color.stroke, weight: 2,
-        fillColor: color.fill, fillOpacity: 0.9, interactive: false,
-      }).addTo(groups.playback);
-      L.marker(at_, {
-        pane: 'pug-playback',
-        interactive: false,
-        icon: L.divIcon({
-          className: 'radar-ping-label',
-          html: `<span style="color:${color.stroke}">${esc(ev.ind_id || '')}</span>`,
-          iconSize: [90, 16], iconAnchor: [-8, 18],
-        }),
-      }).addTo(groups.playback);
-    }
+      if (!all.length) {
+        if (dateEl) dateEl.textContent = 'No sightings this cycle';
+        if (whoEl) whoEl.innerHTML = '';
+        return;
+      }
 
-    function show(pct) {
-      const ev = at(pct);
-      if (!ev) return;
-      ping(ev);
-      if (label) {
-        const when = ev.started_at ? ev.started_at.slice(0, 16).replace('T', ' ') : `${pct}%`;
-        label.textContent = `${ev.ind_id || ''}  ·  ${when}`;
+      const now = t0 + span * (pct / 100);
+      const seen = all.filter(e => e.t <= now);
+      const trail = seen.slice(-TRAIL);
+
+      // consecutive sightings of one tiger, joined: this is the movement
+      const byInd = {};
+      trail.forEach(e => { (byInd[e.ind_id] = byInd[e.ind_id] || []).push(e); });
+      Object.keys(byInd).forEach(ind => {
+        const list = byInd[ind];
+        if (list.length < 2) return;
+        L.polyline(list.map(e => [num(stnById[e.station_id].lat), num(stnById[e.station_id].lon)]), {
+          pane: 'pug-playback', interactive: false,
+          color: getTigerColor(ind).stroke, weight: 2, opacity: 0.55, dashArray: '4 4',
+        }).addTo(groups.playback);
+      });
+
+      trail.forEach((e, i) => {
+        const stn = stnById[e.station_id];
+        const at_ = latlng(stn.lat, stn.lon);
+        if (!at_) return;
+        const age = (trail.length - 1 - i) / Math.max(1, TRAIL - 1);   // 0 = newest
+        const colour = getTigerColor(e.ind_id);
+        const newest = i === trail.length - 1;
+        L.circleMarker(at_, {
+          pane: 'pug-playback', interactive: false,
+          className: newest ? 'radar-ping' : 'radar-trail',
+          radius: newest ? 7 : 4.5,
+          color: colour.stroke, weight: newest ? 2.5 : 1.2,
+          fillColor: colour.fill,
+          fillOpacity: newest ? 0.95 : Math.max(0.12, 0.6 * (1 - age)),
+          opacity: newest ? 1 : Math.max(0.15, 0.8 * (1 - age)),
+        }).addTo(groups.playback);
+
+        if (newest) {
+          L.marker(at_, {
+            pane: 'pug-playback', interactive: false,
+            icon: L.divIcon({
+              className: 'radar-ping-label',
+              html: '<span style="color:' + colour.stroke + '">' + esc(e.ind_id) + '</span>',
+              iconSize: [110, 16], iconAnchor: [-10, 20],
+            }),
+          }).addTo(groups.playback);
+        }
+      });
+
+      const last = seen[seen.length - 1];
+      if (dateEl) dateEl.textContent = fmt(now);
+      if (whoEl) {
+        if (last) {
+          const stn = stnById[last.station_id];
+          whoEl.innerHTML =
+            '<span class="tl-chip" style="--c:' + getTigerColor(last.ind_id).fill + '">' +
+              '<i></i>' + esc(last.ind_id) + '</span>' +
+            '<span class="tl-where">' + esc((stn && stn.name) || last.station_id) + '</span>' +
+            '<span class="tl-count">' + seen.length + ' of ' + all.length + ' sightings</span>';
+        } else {
+          whoEl.innerHTML = '<span class="tl-where">cycle begins — no sightings yet</span>';
+        }
       }
     }
 
-    if (slider) slider.oninput = () => show(parseInt(slider.value, 10));
-
-    if (playBtn) {
-      const stop = () => {
+    function stop() {
+      if (viewState.playbackTimer) {
         clearInterval(viewState.playbackTimer);
         viewState.playbackTimer = null;
-        playBtn.innerHTML = '▶ Play Movement';
+      }
+      if (playBtn) {
+        playBtn.innerHTML = '▶ Play movement';
         playBtn.classList.remove('active');
-        groups?.playback.clearLayers();
-      };
+      }
+    }
+    // A re-render (new data, new focus) must not leave an old interval
+    // running against a layer group that has since been cleared.
+    stop();
+
+    if (slider) {
+      slider.disabled = !all.length;
+      slider.oninput = () => { stop(); draw(parseFloat(slider.value)); };
+    }
+
+    if (playBtn) {
+      playBtn.disabled = !all.length;
+      playBtn.title = all.length
+        ? (focus ? 'Play ' + focus + ' through the cycle'
+                 : 'Play every tiger through the cycle')
+        : 'No sightings in this cycle to play';
       playBtn.onclick = () => {
         if (viewState.playbackTimer) { stop(); return; }
-        if (!sorted.length) { playBtn.title = 'No movement events in this cycle'; return; }
+        if (!all.length) return;
         playBtn.innerHTML = '⏸ Pause';
         playBtn.classList.add('active');
-        viewState.playbackIndex = 0;
+        // start over if the playhead is already parked at the end
+        let pct = (slider && parseFloat(slider.value) < 99.5) ? parseFloat(slider.value) : 0;
+        const stepMs = 40;
+        const per = 100 / (PLAY_MS / stepMs);
         viewState.playbackTimer = setInterval(() => {
-          viewState.playbackIndex++;
-          if (viewState.playbackIndex > 100) { stop(); return; }
-          if (slider) slider.value = viewState.playbackIndex;
-          show(viewState.playbackIndex);
-        }, 90);
+          pct += per;
+          if (pct >= 100) {
+            pct = 100;
+            if (slider) slider.value = pct;
+            draw(pct);
+            stop();
+            return;
+          }
+          if (slider) slider.value = pct;
+          draw(pct);
+        }, stepMs);
       };
     }
+
+    draw(slider ? parseFloat(slider.value) : 100);
   }
 
   /* ── drawers ──────────────────────────────────────────────────────── */
