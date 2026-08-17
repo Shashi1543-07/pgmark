@@ -162,9 +162,19 @@ def run_stage3(run_id: str, job_id: str | None = None, actor: str = "system") ->
                     counts[outcome] = counts.get(outcome, 0) + 1
                     done += 1
                 except Exception as exc:                           # noqa: BLE001
+                    # NOT "unreadable". This catches every failure in
+                    # identification, and calling them unreadable frames sent
+                    # an operator looking at their SD card for corrupt files
+                    # while the real cause was an AttributeError in the
+                    # pipeline -- 29 detections crashed identically and the
+                    # run reported "29 frames could not be read", which is
+                    # both wrong and unactionable. The error text is already
+                    # recorded per item by fail_item(); the count now says
+                    # what it is so the note can point at it.
                     jobs.fail_item(job_id or "adhoc", det["det_id"],
                                    f"{type(exc).__name__}: {exc}", conn)
-                    counts["unreadable"] += 1
+                    counts["errored"] = counts.get("errored", 0) + 1
+                    counts.setdefault("first_error", f"{type(exc).__name__}: {exc}")
             if job_id:
                 jobs.checkpoint(job_id, done=done, cursor=cursor,
                                 detail=counts, conn=conn)
@@ -334,7 +344,7 @@ def _process_detection_checked(det, run, embedder, catalogues, cfg, target, acto
     t0 = time.time()
     if embedder is None:
         embedder = identify.load_embedder(identify.WEIGHTS_PATH)
-    result = identify.identify_crop(image, physical_keypoints, [], embedder, cfg)
+    result = identify.identify_crop(image, physical_keypoints, [], embedder, cfg, _box(det))
     if timings:
         timings["timing_identify_s"] += (time.time() - t0)
 
@@ -456,6 +466,15 @@ def _outcome_note(counts: dict) -> str:
         parts.append(f"{counts['refuse']} crops failed the quality gate.")
     if counts.get("unreadable"):
         parts.append(f"{counts['unreadable']} frames could not be read.")
+    if counts.get("errored"):
+        # Surface the actual exception. A count on its own tells an operator
+        # something went wrong and nothing about what, and this path had been
+        # silently reporting a code defect as a data problem.
+        detail = counts.get("first_error") or "see the run's failed items"
+        parts.append(
+            f"{counts['errored']} detections failed during identification "
+            f"({detail}). These are processing errors, not damaged photos "
+            "— the frames themselves are intact.")
     if not parts:
         parts.append(f"{counts.get('auto', 0)} matched automatically, {counts.get('review', 0)} sent for "
                      f"review, {counts.get('enroll', 0)} enrolled as new individuals.")

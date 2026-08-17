@@ -5968,3 +5968,417 @@ tbody tr:hover { background: color-mix(in srgb, var(--glass-glow) 10%, transpare
    control stays under the pointer through a toggle. */
 body.nav-collapsed .nav-rail-top { justify-content: flex-start; padding: 0 10px 8px; }
 body.nav-collapsed .nav-collapse { justify-content: center; margin: 0 !important; }
+
+/* ═══════════════════════════════════════════════════════════════════════
+   TRIAGE BREAKDOWN · a total and its parts, not five equal peers
+   ───────────────────────────────────────────────────────────────────────
+   "Frames read" is the total; animal / empty / people / vehicles / damaged
+   are what it is made of. The old layout put all of them in one four-column
+   grid of identical cards, which said they were peers and stranded whichever
+   one came fifth alone on a second row. The number of parts is not fixed
+   either -- vehicles, damaged and still-sorting appear only when non-zero --
+   so no fixed column count can stay symmetric.
+
+   Every colour here is a theme token. The strip removed alongside this
+   change hardcoded #161e1b and #064e3b and turned into a dark slab the
+   moment anyone used the light theme.
+   ═══════════════════════════════════════════════════════════════════════ */
+
+.triage-breakdown {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: minmax(180px, 220px) 1fr;
+  gap: var(--s5);
+  align-items: center;
+  padding: var(--s4) var(--s5);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r-panel);
+}
+
+/* the total, given the weight a total deserves */
+.tb-total { border-right: 1px solid var(--line-soft); padding-right: var(--s5); }
+.tb-total .k {
+  font-family: var(--f-display); font-size: 10.5px; letter-spacing: .14em;
+  text-transform: uppercase; color: var(--muted);
+}
+.tb-total .v {
+  font-family: var(--f-data); font-size: 40px; line-height: 1.05;
+  font-weight: 700; color: var(--ink); margin: 4px 0 2px;
+}
+.tb-total .sub { font-size: 11.5px; color: var(--muted); }
+
+.tb-body { min-width: 0; }
+
+/* ── the proportional bar ────────────────────────────────────────────── */
+.tb-bar {
+  display: flex;
+  height: 12px;
+  width: 100%;
+  border-radius: 999px;
+  overflow: hidden;
+  background: var(--sunk);
+  border: 1px solid var(--line-soft);
+}
+.tb-seg { height: 100%; transition: width var(--d-slow) var(--ease-out); }
+/* a segment never collapses to invisible: one person in a thousand frames
+   still has to be findable on the bar */
+.tb-seg { min-width: 3px; }
+
+.tb-subject { background: var(--info); }
+.tb-empty   { background: color-mix(in srgb, var(--muted) 55%, transparent); }
+.tb-person  { background: var(--pelage); }
+.tb-vehicle { background: var(--watch); }
+.tb-corrupt { background: var(--act); }
+.tb-other   { background: color-mix(in srgb, var(--ink-2) 40%, transparent); }
+
+/* ── the parts, symmetric at any count ───────────────────────────────── */
+.tb-parts {
+  margin-top: var(--s3);
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(196px, 1fr));
+  gap: var(--s2) var(--s4);
+}
+.tb-part {
+  display: grid;
+  grid-template-columns: auto auto auto;
+  grid-template-areas: "dot n pct" "dot label label" "dot note note";
+  column-gap: 8px;
+  align-items: baseline;
+  justify-content: start;
+}
+.tb-dot {
+  grid-area: dot;
+  width: 9px; height: 9px; border-radius: 50%;
+  align-self: center;
+  margin-right: 2px;
+}
+.tb-n {
+  grid-area: n;
+  font-family: var(--f-data); font-size: 19px; font-weight: 700; color: var(--ink);
+}
+.tb-pct { grid-area: pct; font-family: var(--f-data); font-size: 11px; color: var(--muted); }
+.tb-label { grid-area: label; font-size: 12.5px; color: var(--ink-2); }
+.tb-note { grid-area: note; font-size: 11px; color: var(--muted); }
+
+/* a zero is information -- "no empty frames" is a result, not an absence --
+   so it stays on screen, just without competing for attention */
+.tb-part.is-zero .tb-n,
+.tb-part.is-zero .tb-label { color: var(--muted); }
+.tb-part.is-zero .tb-dot { opacity: .35; }
+
+/* ── the reconciliation line ─────────────────────────────────────────── */
+.tb-reconcile {
+  grid-column: 1 / -1;
+  margin-top: var(--s3);
+  padding: 10px var(--s4);
+  background: var(--surface-2);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--r-card);
+  font-size: 11.5px;
+  color: var(--muted);
+  line-height: 1.55;
+}
+
+@media (max-width: 900px) {
+  .triage-breakdown { grid-template-columns: 1fr; gap: var(--s3); }
+  .tb-total { border-right: 0; border-bottom: 1px solid var(--line-soft);
+              padding-right: 0; padding-bottom: var(--s3); }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   REVIEW · the context a decision needs
+   ───────────────────────────────────────────────────────────────────────
+   The queue asked "which tiger is this?" and offered a list of
+   percentages. Everything that actually governs the answer was missing:
+   which catalogue was searched, how decisive the leader is, whether the
+   photo can be judged at all. These notes carry that, and they are styled
+   by severity so a warning is not mistaken for a reassurance.
+   ═══════════════════════════════════════════════════════════════════════ */
+
+.review-guidance {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: var(--s3);
+}
+.rg-note {
+  padding: 9px 12px;
+  border-radius: var(--r-card);
+  border: 1px solid var(--line-soft);
+  border-left-width: 3px;
+  background: var(--surface-2);
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--ink-2);
+}
+.rg-note b { color: var(--ink); }
+.rg-side { border-left-color: var(--info); }
+.rg-ok   { border-left-color: var(--info); }
+/* a warning has to look unlike the reassurance directly above it, or the
+   two read as one undifferentiated block of advice and neither is heeded */
+.rg-warn {
+  border-left-color: var(--watch);
+  background: color-mix(in srgb, var(--watch) 10%, var(--surface-2));
+}
+
+/* ── candidate rows ──────────────────────────────────────────────────── */
+.cand .e { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.cand-verdict {
+  font-family: var(--f-display);
+  font-size: 10px; letter-spacing: .1em; text-transform: uppercase;
+  color: var(--muted);
+}
+/* Which flank the comparison was made on. Rule 6 -- the unit of matching is
+   one side of one tiger -- is invisible in a bare percentage, and a reviewer
+   who does not know that cannot tell a missing tiger from a missing flank. */
+.cand-side {
+  font-family: var(--f-data); font-size: 10px;
+  padding: 1px 7px; border-radius: 999px;
+  background: color-mix(in srgb, var(--info) 16%, transparent);
+  color: var(--info);
+  border: 1px solid color-mix(in srgb, var(--info) 30%, transparent);
+}
+.cand-ev { font-size: 11px; color: var(--muted); }
+
+/* "No photo on file" must be unmistakable: it is the difference between
+   comparing stripes and guessing */
+.cand .no-photo {
+  font-size: 10px;
+  color: var(--watch);
+  border: 1px dashed color-mix(in srgb, var(--watch) 45%, transparent);
+  border-radius: var(--r-ctl);
+  padding: 6px 8px;
+  text-align: center;
+}
+
+/* The review header's detail list sits beside the crop, so its value column
+   is narrow. "Why you are being asked" became a full sentence when it stopped
+   printing threshold notation, and a sentence in a ~110px column reads as a
+   vertical ribbon of two-word lines. It gets the full width of the card. */
+.review .kv { grid-template-columns: 150px 1fr; row-gap: 6px; }
+.review .kv dt { align-self: start; }
+.review .kv dd:last-of-type,
+.review .kv dt:last-of-type { grid-column: 1 / -1; }
+.review .kv dt:last-of-type { margin-top: 6px; }
+.review .kv dd:last-of-type {
+  color: var(--pelage);
+  line-height: 1.55;
+  max-width: 62ch;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   REVIEW · sized for the job it is actually doing
+   ───────────────────────────────────────────────────────────────────────
+   `.stripe-thumb` is 14px wide (34 when .wide) because it began life as a
+   decorative colour rail beside a name. The review screen inherited it and
+   then asked an officer to COMPARE STRIPE PATTERNS through a 34px sliver,
+   while the card holding it stood two-thirds empty. That is the whole of
+   why this screen felt like noise: the one thing the task is about was the
+   smallest thing on it, and the supporting text was the largest.
+
+   Reversed here. The photo under review gets the card. Candidate photos get
+   enough width to actually show a stripe pattern. The metadata shrinks to
+   what it is -- context, not the subject.
+
+   `object-fit: contain`, not cover: a cropped flank compared against a
+   differently cropped flank is not a comparison. Nothing is cut off, and
+   the letterboxing is honest about the crop's real shape.
+   ═══════════════════════════════════════════════════════════════════════ */
+
+/* ── the photo under review ──────────────────────────────────────────── */
+.review .pair { align-items: flex-start; gap: var(--s5); }
+.review .pair > div:first-child { flex: 0 0 clamp(220px, 34%, 320px); }
+
+.review .stripe-thumb.wide.tall {
+  width: 100%;
+  min-height: 340px;
+  border-radius: var(--r-card);
+  background: var(--sunk);
+  border: 1px solid var(--line);
+}
+.review .stripe-thumb.wide.tall .real-crop {
+  object-fit: contain;
+  background: var(--sunk);
+}
+
+/* ── candidate photos, big enough to read a pattern from ─────────────── */
+.cand .stripe-thumb {
+  width: 108px;
+  min-height: 84px;
+  align-self: center;
+  border-radius: var(--r-ctl);
+  background: var(--sunk);
+  border: 1px solid var(--line-soft);
+}
+.cand .stripe-thumb .real-crop { object-fit: contain; background: var(--sunk); }
+.cand { align-items: center; padding: 10px 12px; gap: var(--s3); }
+.cand .k { font-size: 13.5px; }
+
+/* ── metadata: context, not the subject ──────────────────────────────── */
+.review .kv { font-size: 12.5px; }
+.review .kv dt {
+  font-family: var(--f-display); font-size: 10px; letter-spacing: .1em;
+  text-transform: uppercase; color: var(--muted);
+}
+.review .kv dd { color: var(--ink-2); }
+/* the reason line was set in amber monospace at body size, which made the
+   explanation louder than the photograph it was explaining */
+.review .kv dd:last-of-type {
+  font-family: inherit;
+  font-size: 12.5px;
+  color: var(--ink-2);
+  border-left: 3px solid var(--pelage);
+  padding-left: 10px;
+}
+
+/* ── the two columns ─────────────────────────────────────────────────── */
+.review { gap: var(--s5); align-items: start; }
+.review > div:first-child { position: sticky; top: var(--s4); }
+.review-guidance { gap: 5px; margin-bottom: var(--s3); }
+.rg-note { padding: 7px 11px; font-size: 11.5px; }
+
+@media (max-width: 1100px) {
+  .review { grid-template-columns: 1fr; }
+  .review > div:first-child { position: static; }
+  .review .pair > div:first-child { flex: 0 0 200px; }
+  .review .stripe-thumb.wide.tall { min-height: 240px; }
+}
+
+/* the honest placeholder fills the frame it stands in, so an absent photo
+   reads as a stated fact rather than as a rectangle that failed to paint */
+.stripe-thumb .no-photo {
+  position: absolute; inset: 0;
+  display: grid; place-items: center;
+  text-align: center;
+  padding: 4px;
+  font-size: 10px;
+  line-height: 1.35;
+  color: var(--watch);
+  background: color-mix(in srgb, var(--watch) 8%, var(--sunk));
+}
+.stripe-thumb .no-photo[hidden] { display: none; }
+
+/* ═══════════════════════════════════════════════════════════════════════
+   THUMBNAILS · the load-then-reveal deadlock
+   ───────────────────────────────────────────────────────────────────────
+   `.stripe-thumb .real-crop` was `display: none` until an onload handler
+   added `.loaded`. Combined with loading="lazy" that is a deadlock: a
+   display:none image has no layout box, so the browser's lazy-loading
+   observer never intersects it, so it never fetches, so onload never fires,
+   so it stays display:none. Eager images (the crop under review) escaped it;
+   every lazy one -- which is every candidate photo on the review screen and
+   every flank in the catalogue list -- silently never loaded.
+
+   What made it invisible as a bug: `.stripe-thumb` carries a cream-to-amber
+   gradient background, so the empty frames looked like tawny little photos
+   rather than like nothing at all.
+
+   Fixed by removing the dependency entirely. The photo is displayed from the
+   start and simply covers the placeholder beneath it; a failed load hides the
+   image and uncovers the honest message. Nothing waits on an event that
+   cannot fire.
+   ═══════════════════════════════════════════════════════════════════════ */
+
+.stripe-thumb .real-crop { display: block; z-index: 1; }
+.stripe-thumb .no-photo { z-index: 0; }
+.stripe-thumb .stripe { z-index: 0; }
+
+/* ═══════════════════════════════════════════════════════════════════════
+   PHOTO VIEWER · the stripes at a size you can actually judge
+   ───────────────────────────────────────────────────────────────────────
+   A 34px thumbnail cannot settle "is this the same tiger". Any thumbnail
+   with a real photo behind it opens full size; the cue only appears on
+   thumbnails that actually have one, so it never promises a photo that is
+   not there.
+   ═══════════════════════════════════════════════════════════════════════ */
+
+/* the affordance, on photos only */
+.stripe-thumb:has(img.real-crop) { cursor: zoom-in; }
+.stripe-thumb:has(img.real-crop)::after {
+  content: "⤢";
+  position: absolute; right: 3px; bottom: 2px; z-index: 3;
+  font-size: 10px; line-height: 1;
+  padding: 2px 4px;
+  border-radius: 4px;
+  color: #fff;
+  background: rgba(4, 12, 8, .62);
+  opacity: 0;
+  transition: opacity var(--d-fast) var(--ease);
+  pointer-events: none;
+}
+.stripe-thumb:has(img.real-crop):hover::after { opacity: 1; }
+/* a frame showing "No photo on file" is not clickable and says so */
+.stripe-thumb:has(.no-photo:not([hidden])) { cursor: default; }
+
+.photo-viewer {
+  position: fixed; inset: 0; z-index: 12000;
+  display: none;
+  align-items: center; justify-content: center;
+  padding: var(--s6);
+  background: rgba(3, 9, 6, .86);
+  -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px);
+}
+.photo-viewer.open { display: flex; animation: pv-in 160ms var(--ease-out); }
+@keyframes pv-in { from { opacity: 0; } to { opacity: 1; } }
+body.viewer-open { overflow: hidden; }
+
+.photo-viewer figure {
+  margin: 0;
+  display: flex; flex-direction: column; gap: var(--s3);
+  align-items: center;
+  max-width: min(1100px, 92vw);
+  max-height: 88vh;
+}
+.photo-viewer img {
+  max-width: 100%;
+  max-height: 78vh;
+  /* contain, never cover: a cropped comparison is not a comparison */
+  object-fit: contain;
+  border-radius: var(--r-card);
+  border: 1px solid var(--glass-line);
+  box-shadow: var(--glass-shadow);
+  background: var(--sunk);
+}
+.photo-viewer figcaption {
+  display: flex; align-items: baseline; gap: var(--s3);
+  font-family: var(--f-data);
+  color: var(--ink);
+  font-size: 14px;
+}
+.photo-viewer .pv-sub { color: var(--muted); font-size: 12px; }
+.photo-viewer .pv-close {
+  position: absolute; top: var(--s4); right: var(--s4);
+  width: 36px; height: 36px;
+  border-radius: 50%;
+  border: 1px solid var(--glass-line);
+  background: var(--glass);
+  color: var(--ink);
+  font-size: 15px;
+  cursor: pointer;
+}
+.photo-viewer .pv-close:hover { border-color: var(--pelage); color: var(--pelage); }
+
+@media (prefers-reduced-motion: reduce) {
+  .photo-viewer.open { animation: none; }
+}
+
+/* crop ⇄ whole-frame switch inside the viewer */
+.photo-viewer .pv-switch { display: inline-flex; gap: 2px; margin-left: var(--s3); }
+.photo-viewer .pv-switch[hidden] { display: none; }
+.photo-viewer .pv-switch button {
+  font-family: var(--f-display);
+  font-size: 10px; letter-spacing: .1em; text-transform: uppercase;
+  padding: 5px 11px;
+  border: 1px solid var(--glass-line);
+  background: var(--glass);
+  color: var(--muted);
+  cursor: pointer;
+}
+.photo-viewer .pv-switch button:first-child { border-radius: 999px 0 0 999px; }
+.photo-viewer .pv-switch button:last-child { border-radius: 0 999px 999px 0; }
+.photo-viewer .pv-switch button.on {
+  background: color-mix(in srgb, var(--pelage) 20%, transparent);
+  border-color: var(--pelage);
+  color: var(--pelage);
+}

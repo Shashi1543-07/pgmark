@@ -20,7 +20,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi import Body, Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
-from fastapi.responses import FileResponse, JSONResponse, Response
+from fastapi.responses import FileResponse, JSONResponse, Response, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 from edge import auth, config
@@ -457,12 +457,18 @@ def dev_restore_live(user: dict = Depends(require_role(*config.PERMISSIONS["dev_
         raise HTTPException(404, "no saved live data to restore -- nothing has been backed up yet")
     repo.close_all()
     try:
-        repo_ext.restore(backup_path)
+        # preserve_accounts=True: this swaps the DATA back, not the identities.
+        # Without it the operator was signed out and their password reverted to
+        # whatever it had been when the snapshot was taken -- a button labelled
+        # as a view locked an admin out of their own machine.
+        outcome = repo_ext.restore(backup_path)
     finally:
         repo.close_all()
     repo_ext.set_data_mode("live")
-    repo.audit("dev.restore_live", actor=user["username"])
-    return {"ok": True}
+    repo.audit("dev.restore_live", actor=user["username"],
+               after={"accounts_preserved": outcome.get("accounts_preserved"),
+                      "users_kept": outcome.get("users_kept")})
+    return {"ok": True, **outcome}
 
 
 @app.get("/api/dev/data-mode")
@@ -672,6 +678,31 @@ def get_crop_image(crop_id: str, user: dict = Depends(current_user)) -> FileResp
     p = Path(path)
     media_type = "image/jpeg" if p.suffix.lower() in (".jpg", ".jpeg") else "image/png"
     return FileResponse(p, media_type=media_type)
+
+
+@app.get("/api/crops/{crop_id}/source")
+def get_crop_source(crop_id: str, user: dict = Depends(current_user)):
+    """The full captured frame a crop was cut from.
+
+    A redirect to /api/images/{image_id}/file rather than a second file
+    server: that route carries the refusal for frames the triage cascade
+    routed to persons_restricted, and a parallel implementation here would
+    be a second place for that guard to be forgotten. One privacy check,
+    one route serving original frames.
+    """
+    image_id = repo.source_image_id_for_crop(crop_id)
+    if not image_id:
+        raise HTTPException(404, "no source frame recorded for this crop")
+    return RedirectResponse(f"/api/images/{image_id}/file", status_code=307)
+
+
+@app.get("/api/individuals/{ind_id}/source")
+def get_individual_source(ind_id: str, user: dict = Depends(current_user)):
+    """The full frame behind the photo that represents this individual."""
+    image_id = repo.source_image_id_for_individual(ind_id)
+    if not image_id:
+        raise HTTPException(404, "no source frame recorded for this individual")
+    return RedirectResponse(f"/api/images/{image_id}/file", status_code=307)
 
 
 @app.get("/api/images/{image_id}/file")

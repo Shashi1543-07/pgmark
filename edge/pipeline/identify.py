@@ -204,7 +204,8 @@ def quality_gate(keypoints: Keypoints, crop_shape: tuple[int, int],
 
 # ── rectification ───────────────────────────────────────────────────────
 
-def rectify_flank(image: np.ndarray, keypoints: Keypoints, side: str, cfg: config.Identify
+def rectify_flank(image: np.ndarray, keypoints: Keypoints, side: str, cfg: config.Identify,
+                   box: tuple[float, float, float, float] | None = None
                    ) -> np.ndarray | None:
     """Aligns the near side's shoulder-hip axis to the rectangle's long
     edge -- NOT a 4-point perspective warp of a true quadrilateral.
@@ -232,9 +233,47 @@ def rectify_flank(image: np.ndarray, keypoints: Keypoints, side: str, cfg: confi
     body_len = float(np.hypot(hx - sx, hy - sy))
     if body_len < 1.0:
         return None
-    depth = body_len * cfg.rect_body_depth_ratio
-    margin = body_len * cfg.rect_margin_ratio
 
+    # A collapsed pose: two confident keypoints far too close together to be
+    # a shoulder and a hip on THIS animal. The keypoints cannot show this on
+    # their own -- the detection box is the independent evidence of scale.
+    # Rather than warping a patch of leg and calling it a flank, fall back to
+    # the animal's own long axis, which is both the largest usable view of
+    # the tiger and closer to what the embedder was trained on: ATRW re-ID
+    # images are near-full-body crops (edge/pipeline/keypoints.py).
+    if box is not None and image is not None:
+        img_h, img_w = image.shape[:2]
+        bw, bh = float(box[2]) * img_w, float(box[3]) * img_h
+        longest = max(bw, bh)
+        # getattr, not attribute access: config.CONFIG can be an object built
+        # before this field existed -- a persisted data/config.json, or simply
+        # a process that imported config.py earlier than this module. Reading
+        # it directly raised AttributeError inside the per-detection try in
+        # stage3.py, which counted every one as "unreadable" and reported 29
+        # crashes to the operator as unreadable frames. quality_gate() above
+        # already uses this pattern for exactly this reason.
+        min_span = getattr(cfg, "min_body_span_ratio", 0.35)
+        if longest > 0 and body_len < min_span * longest:
+            bx, by = float(box[0]) * img_w, float(box[1]) * img_h
+            inset = 0.08 * bw
+            cy = by + bh / 2.0
+            # along the box's long edge, spanning almost the whole animal
+            sx, sy, hx, hy = bx + inset, cy, bx + bw - inset, cy
+            body_len = float(np.hypot(hx - sx, hy - sy))
+            depth_override = bh * 0.92
+            if body_len < 1.0:
+                return None
+            return _warp(image, sx, sy, hx, hy, body_len,
+                         depth_override, body_len * cfg.rect_margin_ratio)
+    return _warp(image, sx, sy, hx, hy, body_len,
+                 body_len * cfg.rect_body_depth_ratio,
+                 body_len * cfg.rect_margin_ratio)
+
+
+def _warp(image: np.ndarray, sx: float, sy: float, hx: float, hy: float,
+          body_len: float, depth: float, margin: float) -> np.ndarray:
+    """Shared by the pose-driven path and the box fallback: same rectangle
+    construction, different source of the axis."""
     ux, uy = (hx - sx) / body_len, (hy - sy) / body_len   # unit vector: shoulder -> hip
     px, py = -uy, ux                                      # perpendicular unit vector
 
@@ -380,7 +419,8 @@ def decide(best_score: float | None, cfg: config.Identify) -> tuple[str, str]:
 # ── orchestration ───────────────────────────────────────────────────────
 
 def identify_crop(image: np.ndarray, keypoints: Keypoints, catalogue: list[dict],
-                   model: TripletEmbedder, cfg: config.Identify | None = None) -> dict:
+                   model: TripletEmbedder, cfg: config.Identify | None = None,
+                   box: tuple[float, float, float, float] | None = None) -> dict:
     """The full pipeline for one detection crop. `catalogue` must already
     be restricted to a single side by the caller -- this function infers
     which side the crop itself shows, and it is the caller's job (via
@@ -395,7 +435,7 @@ def identify_crop(image: np.ndarray, keypoints: Keypoints, catalogue: list[dict]
                 "reason": quality.reason, "embedding": None, "best_match": None,
                 "candidates": [], "rect": None}
 
-    rect = rectify_flank(image, keypoints, quality.side, cfg)
+    rect = rectify_flank(image, keypoints, quality.side, cfg, box)
     if rect is None:
         return {"decision": "refuse", "side": quality.side, "quality": quality.quality,
                 "reason": "rectification failed: degenerate shoulder-hip distance",
@@ -407,4 +447,30 @@ def identify_crop(image: np.ndarray, keypoints: Keypoints, catalogue: list[dict]
     decision, why = decide(best["score"] if best else None, cfg)
     return {"decision": decision, "side": quality.side, "quality": quality.quality,
             "reason": why, "embedding": embedding, "best_match": best,
-            "candidates": ranked[:cfg.top_k_candidates], "rect": rect}
+            "candidates": _shortlist(ranked, cfg.top_k_candidates), "rect": rect}
+
+
+def _shortlist(ranked: list[dict], top_k: int) -> list[dict]:
+    """The candidate list a HUMAN chooses from: one row per individual.
+
+    match() ranks catalogue ENTITIES, and an individual can hold several
+    catalogue photos of the same flank, so slicing its output directly put
+    the same tiger in the list more than once -- observed in review as
+    PENCH-MH-P-A454317B appearing at rank 1 (80%), rank 2 (72%) and rank 4
+    (56%), which asks a reviewer to choose between three copies of one
+    animal and pushes genuinely different tigers off the end of the list.
+
+    Entity-level ranking stays correct for best_match and for scoring: the
+    strongest single photo is what the decision threshold should see. It is
+    only the human shortlist that has to be per individual, represented by
+    that individual's best-matching photo.
+    """
+    seen: dict[str, dict] = {}
+    for row in ranked:                      # already sorted best-first
+        ind = row.get("ind_id")
+        if ind is None or ind in seen:
+            continue
+        seen[ind] = row
+        if len(seen) >= top_k:
+            break
+    return list(seen.values())

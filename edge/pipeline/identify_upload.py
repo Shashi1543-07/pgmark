@@ -159,7 +159,7 @@ def process_upload(image_path: str, reserve_id: str, station_id: str | None,
     # which is exactly wrong if what actually failed was the quality
     # gate or rectification -- result["embedding"] is None in both those
     # cases, and that, not result["side"], is the real branch condition.
-    result = identify.identify_crop(image, kp, [], embed_model, cfg)
+    result = identify.identify_crop(image, kp, [], embed_model, cfg, box)
 
     if result["embedding"] is None:
         ranked, best_match = [], None
@@ -300,7 +300,7 @@ def complete_side_unknown(crop_id: str, side: str, actor: str, model=None) -> di
                           "shoulder/hip pair to rectify from."}
 
     embed_model = model or identify.load_embedder(identify.WEIGHTS_PATH)
-    result = identify.identify_crop(image, kp, [], embed_model, cfg)
+    result = identify.identify_crop(image, kp, [], embed_model, cfg, box)
 
     if result["embedding"] is None:
         repo_ext.close_review_items_for_crop(crop_id)

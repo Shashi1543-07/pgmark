@@ -19,6 +19,7 @@ import os
 import random
 import re
 import shutil
+import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -40,6 +41,7 @@ from fastapi.testclient import TestClient     # noqa: E402
 from edge import config, effort                 # noqa: E402
 from edge.app import app                       # noqa: E402
 from edge.db import repo                       # noqa: E402
+from edge.db import repo_ext                   # noqa: E402
 from edge.pipeline import occupancy             # noqa: E402
 from edge.sync import bundle as bundle_sync      # noqa: E402
 from tests.fixtures.ingest_corpus import build as build_ingest_corpus   # noqa: E402
@@ -1507,6 +1509,128 @@ def _run(c: TestClient) -> int:
     check("scrollbars are themed rather than left as OS chrome",
           "--sb-thumb" in css and "::-webkit-scrollbar" in css,
           "an unstyled scrollbar is a white stripe down a near-black UI")
+    # ── photographs must actually load ─────────────────────────────────
+    # Every thumbnail is loading="lazy" and was hidden with display:none
+    # until an onload handler added .loaded. That is a deadlock -- a
+    # display:none image has no layout box, so the lazy observer never
+    # intersects it, so it never fetches, so onload never fires. Nothing in
+    # the app displayed a tiger photograph; the .stripe-thumb gradient made
+    # the empty frames look like small tawny photos, which is why it went
+    # unnoticed. Officers were identifying tigers by reading catalogue IDs.
+    check("thumbnails are not hidden behind an onload that lazy loading "
+          "prevents from firing",
+          ".stripe-thumb .real-crop { display: block" in css,
+          "display:none + loading=lazy never resolves")
+    check("a thumbnail with no photo says so by default, rather than only "
+          "on an error that may never fire",
+          'class="no-photo${compact}">No photo on file' in js,
+          "a request that neither loads nor errors left an unexplained blank")
+    # A crop is the stripes with the context cut away. The frame it came from
+    # says where the animal was and what else was in shot, and a reviewer
+    # deciding an identity is entitled to it.
+    ind_with_crop = next((i["ind_id"] for i in c.get(
+        f"/api/individuals?reserve_id={rid}").json()
+        if repo.latest_crop_path(i["ind_id"])), None)
+    if not ind_with_crop:
+        # Say so out loud. Three checks that quietly do not run look exactly
+        # like three checks that passed, and the seeded catalogue has no crop
+        # files on disk -- only a real ingest produces them.
+        print("  (skipping source-frame checks: no individual in this fixture has "
+              "a crop image on disk — run an ingest to exercise them)")
+    if ind_with_crop:
+        crop_res = c.get(f"/api/individuals/{ind_with_crop}/thumbnail")
+        src_res = c.get(f"/api/individuals/{ind_with_crop}/source", follow_redirects=True)
+        check("an individual's source frame is reachable from its thumbnail",
+              src_res.status_code == 200 and src_res.content[:3] == bytes((0xFF, 0xD8, 0xFF)),
+              f"{src_res.status_code}, {len(src_res.content)} bytes")
+        check("the source frame is the whole photo, not the crop again",
+              len(src_res.content) > len(crop_res.content),
+              f"crop {len(crop_res.content)} vs frame {len(src_res.content)} bytes")
+        # The redirect target carries the persons_restricted refusal; a second
+        # file server here would be a second place to forget it.
+        raw = c.get(f"/api/individuals/{ind_with_crop}/source", follow_redirects=False)
+        check("the source route redirects to the one image route that enforces "
+              "the person-frame refusal",
+              raw.status_code in (307, 308)
+              and "/api/images/" in raw.headers.get("location", ""),
+              f"{raw.status_code} -> {raw.headers.get('location')}")
+
+    check("any photo can be opened full size",
+          "photo-viewer" in js and ".photo-viewer" in css,
+          "a 34px thumbnail cannot settle whether two tigers are the same")
+
+    # The human shortlist is per individual: match() ranks catalogue
+    # ENTITIES, and one tiger can hold several photos of one flank, so the
+    # same animal occupied several slots in the review list.
+    from edge.pipeline.identify import _shortlist
+    dupes = [{"ind_id": "A", "score": 0.8}, {"ind_id": "A", "score": 0.7},
+             {"ind_id": "B", "score": 0.6}, {"ind_id": "A", "score": 0.5},
+             {"ind_id": "C", "score": 0.4}]
+    short = _shortlist(dupes, 5)
+    ids = [r["ind_id"] for r in short]
+    # ── collapsed pose must not become a catalogue entry ───────────────
+    # Observed on a real upload: a clean frame, detector confident at 0.93
+    # over an 824x586 box, and the 2-keypoint regressor put shoulder and hip
+    # 132 px apart -- 16% of the animal. Rectifying from that produced a
+    # 188x143 patch of fence, which was enrolled as a tiger's stripe
+    # pattern. quality_gate() scored it 1.0, because it scores keypoint
+    # VISIBILITY, not whether two points are a plausible distance apart on
+    # the animal they belong to. The detection box is the independent
+    # evidence of scale.
+    import numpy as _np
+    from edge.pipeline import identify as _ident
+    # A gradient, not zeros: on a black frame both rectangles sample black and
+    # compare equal no matter where they were taken from, so the check passed
+    # nothing. Here each pixel encodes its own position, so two different
+    # sampled regions cannot come out identical.
+    _yy, _xx = _np.mgrid[0:1080, 0:1920]
+    _frame = _np.dstack([(_xx // 8) % 256, (_yy // 8) % 256,
+                         ((_xx + _yy) // 8) % 256]).astype(_np.uint8)
+    _box = (0.1155, 0.363, 0.4292, 0.5424)          # the real detection
+    _collapsed = {"right_shoulder": (639.0, 776.0, 2), "right_hip": (519.0, 721.0, 2)}
+    _icfg = config.CONFIG.identify
+
+    _no_box = _ident.rectify_flank(_frame, _collapsed, "R", _icfg)
+    _with_box = _ident.rectify_flank(_frame, _collapsed, "R", _icfg, _box)
+    check("a collapsed shoulder/hip pair is caught against the detection box",
+          _no_box is not None and _with_box is not None
+          and not _np.array_equal(_no_box, _with_box),
+          "the box fallback must produce a different rectangle than the "
+          "collapsed pose did")
+
+    # a healthy pose spanning most of the animal must be left alone
+    _healthy = {"right_shoulder": (300.0, 700.0, 2), "right_hip": (1000.0, 700.0, 2)}
+    check("a healthy pose is still rectified from the keypoints, not overridden",
+          _np.array_equal(_ident.rectify_flank(_frame, _healthy, "R", _icfg),
+                          _ident.rectify_flank(_frame, _healthy, "R", _icfg, _box)),
+          "the fallback must engage only when the pose collapses")
+
+    check("the body-span floor is a named threshold, not a literal in the "
+          "pipeline", hasattr(config.CONFIG.identify, "min_body_span_ratio"),
+          "CLAUDE.md rule 2")
+
+    # The fallback must survive a config object that predates the field.
+    # It did not: reading cfg.min_body_span_ratio directly raised
+    # AttributeError inside stage3's per-detection try, which counted every
+    # one as "unreadable" -- an entire 54-frame import produced 0 tigers and
+    # told the operator that 29 frames could not be read.
+    class _OldIdentifyCfg:
+        rect_body_depth_ratio = 0.6
+        rect_margin_ratio = 0.15
+    _old = _OldIdentifyCfg()
+    try:
+        _ident.rectify_flank(_frame, _collapsed, "R", _old, _box)
+        _survived = True
+    except AttributeError:
+        _survived = False
+    check("the pose fallback tolerates a config built before its threshold "
+          "existed", _survived,
+          "a missing config field must not crash identification")
+
+    check("the review shortlist offers each tiger once, at its best score",
+          len(ids) == len(set(ids)) and short[0]["score"] == 0.8,
+          str([(r["ind_id"], r["score"]) for r in short]))
+
     check("the satellite layer states its own coverage limit",
           "mapImageryNote" in page and "reserve only" in mapjs,
           "a lit button over blank imagery reads as broken")
@@ -1542,6 +1666,51 @@ def _run(c: TestClient) -> int:
     after_demo = c.get("/api/individuals?reserve_id=PENCH-MH").json()
     check("the demo option genuinely restores the 13-tiger spec fixture, "
           "not just returns ok", len(after_demo) == 13, f"{len(after_demo)} individuals")
+
+    # ── restoring live data must not restore IDENTITIES ────────────────
+    # Reported from use: clicking "show my live data" signed the operator out
+    # and their admin password stopped working. A SQLite file carries the
+    # users and sessions tables alongside the survey data, so swapping the
+    # data swapped the credentials back to whoever they were when the
+    # snapshot was taken -- a button labelled as a VIEW locked an admin out
+    # of their own machine. Restoring is about data; who may log in is a
+    # property of the machine now, not of the snapshot.
+    scratch = Path(tempfile.mkdtemp(prefix="pugmark_restore_"))
+    try:
+        live_db, snap_db = scratch / "live.db", scratch / "snap.db"
+        for dest in (live_db, snap_db):
+            src_c = sqlite3.connect(f"file:{config.DB_PATH}?mode=ro", uri=True)
+            dst_c = sqlite3.connect(dest)
+            try:
+                src_c.backup(dst_c)
+            finally:
+                src_c.close(); dst_c.close()
+
+        for path, mark in ((snap_db, "SNAPSHOT-HASH"), (live_db, "CURRENT-HASH")):
+            conn = sqlite3.connect(path)
+            conn.execute("UPDATE users SET pwd_hash=? WHERE username='admin'", (mark,))
+            conn.commit(); conn.close()
+
+        real_db = config.DB_PATH
+        try:
+            config.DB_PATH = live_db
+            outcome = repo_ext.restore(snap_db)
+        finally:
+            config.DB_PATH = real_db
+
+        conn = sqlite3.connect(live_db)
+        after_hash = conn.execute(
+            "SELECT pwd_hash FROM users WHERE username='admin'").fetchone()[0]
+        conn.close()
+        check("restoring live data keeps the CURRENT login credentials, not "
+              "the snapshot's", after_hash == "CURRENT-HASH",
+              f"admin hash after restore: {after_hash}")
+        check("restore reports which accounts it preserved",
+              outcome.get("accounts_preserved") is True
+              and outcome.get("users_kept", 0) > 0,
+              str({k: outcome.get(k) for k in ("accounts_preserved", "users_kept")}))
+    finally:
+        shutil.rmtree(scratch, ignore_errors=True)
 
     print("\n".join(f"  ok   {p}" for p in PASS))
     if FAIL:

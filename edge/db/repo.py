@@ -848,6 +848,36 @@ def individual_captures(ind_id: str) -> list[dict]:
         " ORDER BY im.captured_at DESC", (ind_id,)))
 
 
+def source_image_id_for_crop(crop_id: str) -> str | None:
+    """The captured frame a flank crop was cut out of.
+
+    A crop is evidence with its context removed -- it shows the stripes and
+    nothing about where the animal was, what else was in the frame, or how
+    much of it the detector actually had to work with. A reviewer deciding
+    an identity is entitled to look at the original.
+    """
+    row = _one(connect().execute(
+        "SELECT im.image_id FROM flank_crops c"
+        " JOIN detections d ON d.det_id = c.det_id"
+        " JOIN images    im ON im.image_id = d.image_id"
+        " WHERE c.crop_id = ?", (crop_id,)))
+    return row["image_id"] if row else None
+
+
+def source_image_id_for_individual(ind_id: str) -> str | None:
+    """Same, for the crop that represents an individual in the catalogue.
+    Mirrors latest_crop_path()'s choice of row so the enlarged frame is the
+    one the thumbnail beside it came from, not some other sighting."""
+    row = _one(connect().execute(
+        "SELECT im.image_id FROM assignments a"
+        " JOIN flank_crops c ON c.crop_id = a.crop_id"
+        " LEFT JOIN detections d ON d.det_id = c.det_id"
+        " LEFT JOIN images    im ON im.image_id = d.image_id"
+        " WHERE a.ind_id = ? AND a.superseded_by IS NULL"
+        " ORDER BY a.decided_at DESC LIMIT 1", (ind_id,)))
+    return row["image_id"] if row and row.get("image_id") else None
+
+
 def latest_crop_path(ind_id: str) -> str | None:
     row = _one(connect().execute(
         "SELECT c.path, im.orig_path FROM assignments a"

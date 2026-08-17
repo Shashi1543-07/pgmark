@@ -310,6 +310,31 @@ class Identify:
     guess, not a fitted value."""
 
     rect_margin_ratio: float = 0.15
+
+    min_body_span_ratio: float = 0.35
+    """How long the shoulder->hip line must be, as a fraction of the
+    detection box's longer side, before the pose is believed.
+
+    Observed on a real upload: a clean, well-lit frame of a standing tiger,
+    detector confident at 0.93 over an 824x586 px box -- and the 2-keypoint
+    regressor put shoulder and hip 132 px apart, 16% of the animal's length.
+    Rectifying from that produced a 188x143 patch of leg and fence, which
+    then went into the catalogue as a tiger's stripe pattern. quality_gate()
+    scored it 1.0, because it scores keypoint VISIBILITY flags, not whether
+    the two points are a plausible distance apart on the animal they were
+    predicted for.
+
+    A collapsed pair is the characteristic failure of a 2-point regressor on
+    a pose it was not trained for (head-on, foreshortened, partly occluded).
+    It cannot be detected from the keypoints alone -- two confident points
+    are two confident points -- but it is obvious against the detection box,
+    which is independent evidence of how big the animal is.
+
+    0.35 is a floor, not a measurement: a tiger seen at a strong angle
+    genuinely foreshortens, and the aim is to catch collapse (0.16 here),
+    not to demand a broadside. Needs re-measuring against Pench's own
+    uploads once enough exist -- see docs/RESULTS.md's caution on the other
+    thresholds here."""
     """How far the rectified crop extends past the shoulder and the hip
     along the body axis, as a fraction of the shoulder-hip distance --
     enough to catch a little neck and rump stripe pattern beyond the two

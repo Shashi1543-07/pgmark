@@ -105,19 +105,124 @@ function flankThumb(id, cls = '', eager = false, honest = false) {
     const compact = cls.includes('tall') ? '' : ' compact';
     return `<span class="stripe-thumb ${cls}">
       <img src="/api/individuals/${encodeURIComponent(id)}/thumbnail" class="real-crop"
+           data-source="/api/individuals/${encodeURIComponent(id)}/source"
            alt="Flank photo for ${esc(id)}" loading="${loading}"${priority}
-           onload="this.classList.add('loaded')"
-           onerror="this.style.display='none'; this.parentNode.querySelector('.no-photo').hidden=false">
-      <span class="no-photo${compact}" hidden>No photo on file</span>
+           onload="this.classList.add('loaded');
+                   this.parentNode.querySelector('.no-photo').hidden=true"
+           onerror="this.style.display='none'">
+      ${/* "No photo on file" is the DEFAULT state, hidden only once a real
+            image has decoded. It used to be revealed by onerror, which left a
+            third case with no handler: a request that neither loads nor errors
+            (slow response, or a 200 carrying something undecodable). That drew
+            an empty grey rectangle beside a tiger's name on the one screen
+            asking an officer to compare photographs, with nothing saying the
+            photo was missing. Defaulting to the honest message means the only
+            way to show a photo frame is to actually have a photo. */ ''}
+      <span class="no-photo${compact}">No photo on file</span>
     </span>`;
   }
   return `<span class="stripe-thumb ${cls}">
     <img src="/api/individuals/${encodeURIComponent(id)}/thumbnail" class="real-crop"
+         data-source="/api/individuals/${encodeURIComponent(id)}/source"
          alt="Flank photo for ${esc(id)}" loading="${loading}"${priority}
          onload="this.classList.add('loaded')" onerror="this.remove()">
     ${stripeRail(id, cls)}
   </span>`;
 }
+
+/* ── photo viewer ──────────────────────────────────────────────────────
+   Officers were identifying tigers by reading catalogue IDs, because the
+   photographs beside those IDs are 34px wide -- and until the lazy-load
+   deadlock was fixed, were not loading at all. An ID is not evidence of
+   anything; the stripes are. Any thumbnail in the application now opens
+   full size on click.
+
+   Delegated from document rather than bound per thumbnail: these are
+   rendered by a dozen different RENDER functions and re-rendered constantly,
+   and a listener attached at render time is a listener leaked at re-render. */
+(function photoViewer() {
+  let box = null;
+
+  function close() {
+    box?.classList.remove('open');
+    document.body.classList.remove('viewer-open');
+  }
+
+  function open(src, caption, sub, full) {
+    if (!box) {
+      box = document.createElement('div');
+      box.className = 'photo-viewer';
+      box.innerHTML = `
+        <button class="pv-close" type="button" aria-label="Close">✕</button>
+        <figure>
+          <img alt="">
+          <figcaption>
+            <span class="pv-title"></span><span class="pv-sub"></span>
+            <span class="pv-switch" hidden>
+              <button type="button" data-view="crop" class="on">Flank crop</button>
+              <button type="button" data-view="full">Whole photo</button>
+            </span>
+          </figcaption>
+        </figure>`;
+      document.body.appendChild(box);
+      box.addEventListener('click', (e) => {
+        const sw = e.target.closest('.pv-switch button');
+        if (sw) {
+          /* A crop is the stripes with the context cut away -- it cannot show
+             where the animal was, what else was in frame, or how much the
+             detector had to work with. The whole frame is the evidence the
+             crop was taken FROM, so a reviewer can reach it without leaving
+             the comparison. */
+          const img = box.querySelector('img');
+          const want = sw.dataset.view;
+          img.src = want === 'full' ? box.dataset.full : box.dataset.crop;
+          box.querySelectorAll('.pv-switch button').forEach(b =>
+            b.classList.toggle('on', b === sw));
+          return;
+        }
+        if (e.target === box || e.target.closest('.pv-close')) close();
+      });
+    }
+    box.dataset.crop = src;
+    box.dataset.full = full || '';
+    box.querySelector('img').src = src;
+    box.querySelector('.pv-title').textContent = caption || '';
+    box.querySelector('.pv-sub').textContent = sub || '';
+    // the toggle only appears when a source frame is actually recorded
+    const sw = box.querySelector('.pv-switch');
+    sw.hidden = !full;
+    sw.querySelectorAll('button').forEach(b => b.classList.toggle('on', b.dataset.view === 'crop'));
+    box.classList.add('open');
+    document.body.classList.add('viewer-open');
+    box.querySelector('.pv-close').focus();
+  }
+
+  document.addEventListener('click', (e) => {
+    const thumb = e.target.closest('.stripe-thumb');
+    if (!thumb) return;
+    const img = thumb.querySelector('img.real-crop');
+    // nothing to enlarge: a frame with no photo behind it must not pretend
+    if (!img || !img.complete || !img.naturalWidth) return;
+    // a thumbnail often sits inside a button (a candidate row, a tiger card).
+    // Opening the viewer must not also fire that button.
+    e.preventDefault();
+    e.stopPropagation();
+    const row = thumb.closest('[data-pick], .tiger-card-rich, .cand');
+    // `.k` holds the id AND the keyboard-shortcut badge, so take the first
+    // span rather than the whole cell, or the caption reads "PENCH-... Key 1"
+    const title = thumb.dataset.viewerTitle
+      || row?.querySelector('.k > span:first-child')?.textContent?.trim()
+      || row?.querySelector('h3')?.textContent?.trim()
+      || (img.alt || '').replace(/^Flank photo for\s*/i, '')
+      || 'Photo';
+    open(img.currentSrc || img.src, title, thumb.dataset.viewerSub || '',
+         img.dataset.source || '');
+  }, true);
+
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && box?.classList.contains('open')) close();
+  });
+})();
 
 /* Same idea, keyed by crop_id instead of individual -- the review screen
    shows the frame under review before it has been matched to anyone.
@@ -135,6 +240,7 @@ function cropThumb(cropId, fallbackId, cls = '',
   const priority = eager ? ' fetchpriority="high"' : '';
   return `<span class="stripe-thumb ${cls}">
     <img src="/api/crops/${encodeURIComponent(cropId)}/image" class="real-crop"
+         data-source="/api/crops/${encodeURIComponent(cropId)}/source"
          alt="Photo under review" loading="${eager ? 'eager' : 'lazy'}"${priority}
          onload="this.classList.add('loaded')"
          onerror="this.style.display='none';
@@ -573,26 +679,65 @@ RENDER.run = async () => {
               + (c.vehicle || 0) + (c.corrupt || 0);
   const other = Math.max(0, (c.total || 0) - named);
 
-  const boxes = [
-    ['Frames read', nf(c.total), 'every file found on the card'],
-    ['Tiger or other animal', nf(c.subject), `${pct}% of the card`],
-    ['Empty — no animal', nf(blankTotal), 'moved to quarantine, recoverable'],
-    ['People', nf(c.person), 'blurred, kept out of the tiger record'],
-  ];
-  if (c.vehicle) boxes.push(['Vehicles', nf(c.vehicle), 'not part of the tiger record']);
-  if (c.corrupt) boxes.push(['Damaged files', nf(c.corrupt), 'could not be opened — kept, not deleted']);
-  if (other) boxes.push(['Still being sorted', nf(other), 'not finished processing yet']);
+  /* Frames read is the TOTAL; everything else is a PART of it. Showing all
+     five as equal cards said the opposite -- five peers in a four-column
+     grid, which also left whichever one came fifth stranded alone on a
+     second row. The card count is not even fixed: vehicles, damaged files
+     and still-sorting appear only when non-zero, so any hard column count
+     orphans something eventually.
 
-  $('#runStats').innerHTML = boxes.map(([k, v, s], i) => `<div class="card stat${i === 1 ? ' lead' : ''}">
-      <div class="k">${esc(k)}</div><div class="v">${esc(v)}</div>
-      <div class="sub">${esc(s)}</div></div>`).join('')
-    + `<div class="card stat" style="grid-column:1/-1;background:var(--surface-2)">
-        <div class="sub">${nf(c.total)} frames read = ${nf(c.subject)} with an animal
-        + ${nf(blankTotal)} empty + ${nf(c.person)} with people`
-        + (c.vehicle ? ` + ${nf(c.vehicle)} vehicles` : '')
-        + (c.corrupt ? ` + ${nf(c.corrupt)} damaged` : '')
-        + (other ? ` + ${nf(other)} still sorting` : '')
-        + `. Nothing is unaccounted for.</div></div>`;
+     A total, a proportional bar and a part list says what the numbers
+     actually mean, and stays symmetric at four parts or seven. */
+  const parts = [
+    { key: 'subject', label: 'Tiger or other animal', term: 'with an animal',
+      n: c.subject || 0, note: 'kept for identification' },
+    { key: 'empty', label: 'Empty — no animal', term: 'empty',
+      n: blankTotal, note: 'quarantined, recoverable' },
+    { key: 'person', label: 'People', term: 'with people',
+      n: c.person || 0, note: 'blurred, kept out of the tiger record' },
+  ];
+  if (c.vehicle) parts.push({ key: 'vehicle', label: 'Vehicles', term: 'vehicles',
+                              n: c.vehicle, note: 'not part of the tiger record' });
+  if (c.corrupt) parts.push({ key: 'corrupt', label: 'Damaged files', term: 'damaged',
+                              n: c.corrupt, note: 'could not be opened — kept, not deleted' });
+  if (other) parts.push({ key: 'other', label: 'Still being sorted', term: 'still sorting',
+                          n: other, note: 'not finished processing yet' });
+
+  const total = c.total || 0;
+  const share = (n) => (total ? (n / total) * 100 : 0);
+
+  $('#runStats').innerHTML = `
+    <div class="triage-breakdown">
+      <div class="tb-total">
+        <div class="k">Frames read</div>
+        <div class="v">${nf(total)}</div>
+        <div class="sub">every file found on the card</div>
+      </div>
+
+      <div class="tb-body">
+        <div class="tb-bar" role="img"
+             aria-label="${esc(parts.map(p => `${p.n} ${p.label}`).join(', '))}">
+          ${parts.filter(p => p.n > 0).map(p =>
+            `<span class="tb-seg tb-${p.key}" style="width:${share(p.n).toFixed(2)}%"
+                   title="${esc(p.label)}: ${nf(p.n)}"></span>`).join('')}
+        </div>
+        <div class="tb-parts">
+          ${parts.map(p => `
+            <div class="tb-part${p.n === 0 ? ' is-zero' : ''}">
+              <span class="tb-dot tb-${p.key}"></span>
+              <span class="tb-n">${nf(p.n)}</span>
+              <span class="tb-pct">${share(p.n).toFixed(1)}%</span>
+              <span class="tb-label">${esc(p.label)}</span>
+              <span class="tb-note">${esc(p.note)}</span>
+            </div>`).join('')}
+        </div>
+      </div>
+    </div>
+
+    <div class="tb-reconcile">
+      ${nf(total)} frames read = ${parts.map(p => `${nf(p.n)} ${p.term}`).join(' + ')}.
+      Nothing is unaccounted for.
+    </div>`;
 
   const LABEL = {
     exif: 'Camera EXIF', ocr: 'Read from the timestamp strip',
@@ -712,17 +857,16 @@ async function nrRender() {
             <div class="sub">${esc(s)}</div></div>`).join('')}
       </div>
 
-      <div class="card pad" style="margin-top:var(--s3);background:var(--bg-elevated, #161e1b);border:1px solid var(--border-subtle, #25332c)">
-        <div style="display:flex;justify-content:space-between;align-items:center">
-          <h3 style="margin:0;font-size:14px;color:var(--tiger-amber, #f59e0b)">⚡ Node System Configuration & Edge Acceleration</h3>
-          <span class="badge" style="background:#064e3b;color:#10b981">100% Offline Air-Gapped</span>
-        </div>
-        <div class="grid g3" style="margin-top:var(--s2);font-size:12px;color:var(--text-muted, #9ca3af)">
-          <div><b>AI Models:</b> MegaDetector YOLOv9 + TriHard Re-ID</div>
-          <div><b>Batch Size:</b> Dynamic Adaptive Halving</div>
-          <div><b>Privacy Filter:</b> Automatic Human/Vehicle Redaction</div>
-        </div>
-      </div>
+      <!-- Removed: a "Node System Configuration & Edge Acceleration" strip.
+           It restated fixed facts about the build on a screen about THIS
+           scan, so it carried no information that changed with what the
+           operator was looking at. It was also hardcoded twice over --
+           literal model names that no longer matched edge/config.py, and
+           inline hex colours (#161e1b, #064e3b) that ignored the theme and
+           rendered as a dark slab across the light one. What it claimed is
+           either already true elsewhere on this screen (the offline badge in
+           the header) or belongs in System Health, which reads it from the
+           real configuration rather than from a string in a template. -->
       ${p.cross_run_duplicates ? `
         <div class="banner" style="margin-top:var(--s4)">
           <b>${nf(p.cross_run_duplicates)} file(s) already ingested by an earlier run</b>
@@ -1735,6 +1879,112 @@ let reviewTotalOpen = 0;
 let currentClaimedQid = null;
 let crossFlankItems = [];
 
+/* The queue stores WHY an item is waiting in the pipeline's own terms:
+   "score 0.835 in [t_low 0.55, t_high 0.95)". That string is the right
+   thing to keep in the database -- it is evidence, and it has to stay
+   reproducible years later (CLAUDE.md rule 2). It is the wrong thing to
+   show a forest officer, who is being asked to make a judgement, not to
+   read a threshold interval.
+
+   Translated here rather than at the source, so the record keeps the exact
+   numbers while the screen speaks plainly. The original is kept on the
+   element's title, so anyone who wants the raw form can still get it. */
+function plainReason(reason, item) {
+  const raw = String(reason || '');
+  const m = raw.match(/score\s+([\d.]+)\s+in\s+\[t_low\s+([\d.]+),\s*t_high\s+([\d.]+)\)/i);
+  if (m) {
+    const pct = (parseFloat(m[1]) * 100).toFixed(0);
+    const hi = (parseFloat(m[3]) * 100).toFixed(0);
+    return `The best match was ${pct}% — close, but under the ${hi}% the computer needs `
+         + `before it will decide on its own. A person has to look.`;
+  }
+  if (/species is unknown/i.test(raw)) {
+    return 'The computer could not confirm this is a tiger, so it never searched '
+         + 'the tiger record. Check the photo and clear it if it is not usable.';
+  }
+  if (/flank side is unknown/i.test(raw)) {
+    return 'This is a tiger, but the computer could not tell which flank is showing. '
+         + 'Left and right stripes are different patterns, so it could not search '
+         + 'either catalogue until someone says which side this is.';
+  }
+  if (/no candidate|empty catalogue|no catalogue/i.test(raw)) {
+    return 'There is nothing in the record for this side yet, so there was nothing '
+         + 'to compare against.';
+  }
+  return raw || 'The computer was not sure enough to decide on its own.';
+}
+
+/* The edge cases an officer has to be told about BEFORE choosing, because
+   none of them are visible in a list of percentages:
+
+     * which catalogue was searched. A tiger's left and right flanks carry
+       unrelated stripe patterns (CLAUDE.md rule 6), so a right-side photo
+       is only ever compared with right-side photos. Without saying so, a
+       reviewer can reasonably wonder why an obvious tiger is not listed --
+       it may simply have no photo of this side on file.
+     * how decisive the top match is. 83% against 49% is a clear leader;
+       83% against 81% is a coin toss wearing a percentage. The MARGIN is
+       the number that should drive the decision, and it was nowhere on
+       screen.
+     * whether the photo is good enough to judge at all. A poor crop with a
+       confident-looking score is the most dangerous item in the queue.
+     * that "not sure" is a real answer. The queue must never be cleared by
+       guessing (rule 8). */
+function reviewGuidance(it) {
+  const cands = (it.candidates || []).slice().sort((a, b) => (b.score || 0) - (a.score || 0));
+  const sideWord = it.side === 'L' ? 'left' : it.side === 'R' ? 'right' : null;
+  const notes = [];
+
+  if (sideWord) {
+    notes.push({ kind: 'side', text:
+      `Compared against <b>${sideWord}-side photos only</b> — the two flanks are different `
+      + `patterns. A tiger with no ${sideWord}-side photo on file cannot appear here.` });
+  }
+
+  if (cands.length >= 2) {
+    const gap = ((cands[0].score || 0) - (cands[1].score || 0)) * 100;
+    if (gap >= 20) {
+      notes.push({ kind: 'ok', text:
+        `<b>${cands[0].ind_id}</b> leads by ${gap.toFixed(0)} points — a clear gap. `
+        + `Check the stripes before saving.` });
+    } else {
+      notes.push({ kind: 'warn', text:
+        `Top two are ${gap.toFixed(0)} points apart — the score cannot separate them. Decide on the `
+        + `stripes, or choose "I am not sure". An unanswered photo beats a wrong identity.` });
+    }
+  } else if (cands.length === 1) {
+    notes.push({ kind: 'warn', text:
+      `Only one candidate was close enough to list — that is not the same as a match. `
+      + `If the stripes do not line up, this tiger is not in the record yet.` });
+  } else {
+    notes.push({ kind: 'warn', text:
+      `Nothing in the record came close. If the photo is usable, this is most likely a `
+      + `tiger we have not seen before.` });
+  }
+
+  const q = it.quality ?? null;
+  if (q !== null && q < 0.35) {
+    notes.push({ kind: 'warn', text:
+      `Crop quality is poor (${(q * 100).toFixed(0)}%). If you cannot resolve the stripes, `
+      + `do not confirm an identity — skip it.` });
+  }
+
+  return `<div class="review-guidance">${notes.map(n =>
+    `<div class="rg-note rg-${n.kind}">${n.text}</div>`).join('')}</div>`;
+}
+
+/* One row per individual, keeping that individual's best score. See
+   edge/pipeline/identify.py::_shortlist for why the pipeline produces
+   duplicates: it ranks catalogue ENTITIES, and one tiger can hold several
+   photos of the same flank. */
+function dedupeCandidates(cands) {
+  const best = new Map();
+  for (const c of (cands || []).slice().sort((a, b) => (b.score || 0) - (a.score || 0))) {
+    if (!best.has(c.ind_id)) best.set(c.ind_id, c);
+  }
+  return [...best.values()];
+}
+
 RENDER.review = async () => {
   const rid = S.reserve?.reserve_id;
   if (!rid) return;
@@ -1840,7 +2090,8 @@ function drawReview() {
             <dt>Camera</dt><dd>${esc(it.station_id)}</dd>
             <dt>Date and time</dt><dd>${esc((it.captured_at || '').slice(0, 16).replace('T', ' ')) || 'Not known'}</dd>
             ${it.rect_ok ? `<dt>Photo clarity</dt><dd>${(it.quality ?? 0) >= 0.6 ? 'Good' : (it.quality ?? 0) >= 0.35 ? 'Usable' : 'Poor'}</dd>` : ''}
-            <dt>Why you are being asked</dt><dd style="color:var(--pelage)">${esc(it.reason || 'The computer was not sure enough to decide on its own.')}</dd>
+            <dt>Why you are being asked</dt><dd style="color:var(--pelage)"
+                title="${esc(it.reason || '')}">${esc(plainReason(it.reason, it))}</dd>
           </dl>
         </div>
       </div>
@@ -1888,17 +2139,40 @@ function drawReview() {
 
       <div>
         <h2 style="margin-bottom:var(--s3)">Closest tigers already in the record</h2>
+        ${reviewGuidance(it)}
         <p class="note" style="margin-bottom:var(--s3)">Compare the stripes in the photo above with each one below.
           Pick the one that matches, or say it is a new tiger.</p>
-        ${it.candidates.map((c, i) => `
+        ${/* Deduped here as well as in edge/pipeline/identify.py: rows already
+              sitting in review_queue carry the candidate list as it was
+              generated BEFORE that fix, so a queue built yesterday would still
+              offer the same tiger three times. */ ''}
+        ${dedupeCandidates(it.candidates).map((c, i) => `
           <button class="cand ${i === reviewPick ? 'selected' : ''}" data-pick="${i}" aria-pressed="${i === reviewPick}">
-            ${flankThumb(c.ind_id)}
+            ${/* honest=true: never fall back to stripeRail() here. That draws
+                    bands from a hash of the id -- decoration, not a photograph --
+                    and this is the one screen that asks an officer to COMPARE
+                    STRIPES. A generated pattern presented as a reference flank
+                    invites confirming a match against something invented. */ ''}
+            ${flankThumb(c.ind_id, 'wide', false, true)}
             <div style="flex:1">
               <div class="k" style="display:flex;justify-content:space-between;align-items:center">
                 <span>${esc(c.ind_id)}</span>
                 <span class="review-kbd-badge">Key ${i + 1}</span>
               </div>
-              <div class="e">Stripes match <b>${(c.score * 100).toFixed(0)}%</b> · ${esc(c.evidence)}</div>
+              <div class="e">
+                ${/* Cosine similarity is legitimately negative when two patterns
+                     point away from each other, but "-4% match" is not a thing an
+                     officer can act on -- a negative reading means no resemblance,
+                     not a small one, and rendering it as a percentage invites
+                     reading it as "almost 0% but nearly matching". Floored at
+                     zero for display; the stored score keeps its sign. */ ''}
+                <b>${Math.max(0, c.score * 100).toFixed(0)}%</b>
+                <span class="cand-verdict">${c.score >= 0.85 ? 'very close'
+                  : c.score >= 0.7 ? 'close' : c.score >= 0.55 ? 'possible'
+                  : c.score > 0 ? 'unlikely' : 'no resemblance'}</span>
+                ${it.side ? `<span class="cand-side">${it.side === 'L' ? 'left' : 'right'} flank</span>` : ''}
+                <span class="cand-ev">${esc(c.evidence)}</span>
+              </div>
             </div>
           </button>`).join('')}
 

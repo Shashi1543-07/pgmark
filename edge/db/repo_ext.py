@@ -818,17 +818,80 @@ def backup(dest: Path) -> dict:
     return {"path": str(dest), "bytes": dest.stat().st_size, "at": now()}
 
 
-def restore(source: Path) -> dict:
+def _snapshot_accounts(db_path) -> dict[str, list[dict]]:
+    """Read the login accounts and sessions out of a database, if it has
+    any. Returns empty lists rather than raising: a snapshot taken before
+    these tables existed must not block a restore."""
+    out: dict[str, list[dict]] = {"users": [], "sessions": []}
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    try:
+        for table in ("users", "sessions"):
+            try:
+                out[table] = [dict(r) for r in conn.execute(f"SELECT * FROM {table}")]
+            except sqlite3.Error:
+                pass
+    finally:
+        conn.close()
+    return out
+
+
+def _write_accounts(db_path, snap: dict[str, list[dict]]) -> None:
+    """Put captured accounts back after a restore, replacing whatever the
+    restored file brought with it. Column names are read from the restored
+    schema, so a snapshot with extra or missing columns still lands."""
+    conn = sqlite3.connect(db_path)
+    try:
+        # users before sessions: sessions reference a username
+        for table in ("users", "sessions"):
+            rows = snap.get(table) or []
+            if not rows:
+                continue
+            cols = [r[1] for r in conn.execute(f"PRAGMA table_info({table})")]
+            if not cols:
+                continue
+            conn.execute(f"DELETE FROM {table}")
+            placeholders = ",".join("?" * len(cols))
+            conn.executemany(
+                f"INSERT OR REPLACE INTO {table}({','.join(cols)}) VALUES ({placeholders})",
+                [[r.get(c) for c in cols] for r in rows])
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def restore(source: Path, preserve_accounts: bool = True) -> dict:
     """The reverse of backup(): replaces the live database's content with
     a backup file's content, via the same SQLite backup API (safe under
     WAL mode, unlike copying the raw file while something might have it
     open). Callers must call close_all() immediately before this -- on
     Windows a connection this process is still holding will keep the
     live file locked and the swap will fail with PermissionError, same
-    class of bug connect()'s own docstring documents for close_all()."""
+    class of bug connect()'s own docstring documents for close_all().
+
+    `preserve_accounts` defaults to True, and that default is the whole
+    point. A SQLite file holds the users and sessions tables alongside the
+    survey data, so restoring one restored the other: the operator who
+    clicked "show my live data" was signed out mid-session and their
+    password silently reverted to whoever they had been when the snapshot
+    was taken. Observed in the field -- an admin locked themselves out of
+    their own machine with a button labelled as a VIEW.
+
+    Restoring is about DATA. Who may log in is a property of the machine
+    now, not of the snapshot, and the seed path already takes this position
+    (tools/seed_demo.py's _capture_existing_accounts, whose docstring says
+    a demo reset must never silently regenerate the admin account). This
+    makes the restore path agree with it.
+
+    Pass False only for a genuine disaster recovery, where the accounts in
+    the backup ARE the ones you want back.
+    """
     if not source.is_file():
         raise FileNotFoundError(f"no backup file at {source}")
     from edge import config as _cfg
+
+    keep = _snapshot_accounts(_cfg.DB_PATH) if preserve_accounts else None
+
     src = sqlite3.connect(source)
     out = sqlite3.connect(_cfg.DB_PATH)
     try:
@@ -836,7 +899,15 @@ def restore(source: Path) -> dict:
     finally:
         src.close()
         out.close()
-    return {"restored_from": str(source), "at": now()}
+
+    restored_accounts = False
+    if keep and (keep["users"] or keep["sessions"]):
+        _write_accounts(_cfg.DB_PATH, keep)
+        restored_accounts = True
+
+    return {"restored_from": str(source), "at": now(),
+            "accounts_preserved": restored_accounts,
+            "users_kept": len(keep["users"]) if keep else 0}
 
 
 def _live_backup_path() -> Path:
