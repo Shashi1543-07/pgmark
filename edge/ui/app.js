@@ -354,6 +354,19 @@ function applyTheme(mode, animate = true) {
   }
   try { localStorage.setItem('pugmark.theme', mode); } catch (e) { /* storage disabled */ }
 
+  // The map has two halves that answer the theme differently. The satellite
+  // imagery is a single tile set re-tinted by a CSS filter, so it follows the
+  // theme on its own. The world underneath it is drawn to a canvas from
+  // vector geometry, and a canvas cannot be restyled by stylesheet -- it has
+  // to be redrawn, which is what this asks for.
+  //
+  // This used to be conditional on window.PUGMARK_BASEMAP and swapped that
+  // object's `src` between two pre-toned JPEGs. Those rasters are gone (the
+  // map reads a real tile pyramid now), so the condition was about to become
+  // permanently false and silently strand the world map in whichever palette
+  // it first drew.
+  setTimeout(() => { try { window.PugMap?.refresh?.(); } catch (e) { /* map not open */ } }, 180);
+
   if (!animate) { swap(); return; }
 
   // Timed against the theme-gloom keyframes in app.css: the overlay is at

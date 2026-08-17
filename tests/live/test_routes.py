@@ -17,6 +17,7 @@ import json
 import math
 import os
 import random
+import re
 import shutil
 import subprocess
 import sys
@@ -959,19 +960,51 @@ def _run(c: TestClient) -> int:
     # ── review ──────────────────────────────────────────────────────────
     rv = c.get("/api/review").json()
     check("review queue populated", rv["open"] > 0, f"{rv['open']} open")
-    item = rv["items"][0]
     check("queue is prioritised by impact",
           rv["items"][0]["priority"] >= rv["items"][-1]["priority"])
-    if len(item["candidates"]) > 1:
-        target_ind = item["candidates"][1]["ind_id"]
-    elif len(item["candidates"]) == 1:
-        target_ind = item["candidates"][0]["ind_id"]
-    else:
-        target_ind = inds[0]["ind_id"]
+
+    # Confirming a review item MOVES a capture from one individual to another,
+    # and the route recomputes alerts straight afterwards. The eight seeded
+    # scenarios are this project's specification (CLAUDE.md), and every one of
+    # them is a statement about a particular tiger's captures this cycle -- so
+    # landing a decision on a scenario individual silently rewrites the fixture
+    # that the alert checks several hundred lines below then assert against.
+    #
+    # That is exactly how this bit: the top of the queue is not the seeded item
+    # on every run (the ingest, triage and /api/identify/upload stages above add
+    # items of their own first), and on a run where it targeted PENCH-002 the
+    # tiger whose whole scenario is BEING ABSENT gained a buffer-station
+    # capture, the absence alert stopped existing, and the suite failed on a
+    # bare next() far away from the cause.
+    #
+    # The correction still has to be a real one -- a different individual than
+    # the crop currently carries, so an assignment genuinely supersedes -- it
+    # just has to happen on a tiger the alert spec says nothing about.
+    SCENARIO_INDS = {"PENCH-002", "PENCH-004", "PENCH-005", "PENCH-007",
+                     "PENCH-009", "PENCH-011", "PENCH-P-001"}
+
+    def _pick(items):
+        """First queue item that can be decided without touching a scenario."""
+        for it in items:
+            cands = [x["ind_id"] for x in it["candidates"]]
+            if not cands or cands[0] in SCENARIO_INDS:
+                continue                     # would move a capture AWAY from one
+            for other in cands[1:]:
+                if other != cands[0] and other not in SCENARIO_INDS:
+                    return it, other         # ...and this moves it TO a safe one
+        return None, None
+
+    item, target_ind = _pick(rv["items"])
+    check("a review item exists that can be corrected without disturbing "
+          "the eight alert scenarios", item is not None,
+          "the seeded queue carries 14, spread across the whole catalogue")
     d = c.post(f"/api/review/{item['queue_id']}/decide",
                json={"ind_id": target_ind,
                      "actor": "tester"}).json()
     check("decision reduces the queue", d["remaining"] == rv["open"] - 1)
+    check("the correction moved the crop to a different individual than it "
+          "already carried", target_ind != item["candidates"][0]["ind_id"],
+          f"{item['candidates'][0]['ind_id']} -> {target_ind}")
 
     conn = repo.connect()
     sup = conn.execute(
@@ -1161,7 +1194,16 @@ def _run(c: TestClient) -> int:
           any(a["type"] == "new_station" for a in raised["items"]),
           "PENCH-011's case: a pre-existing station it simply hadn't used before")
 
-    real_absence = next(a for a in raised["items"] if a["type"] == "absence")
+    # Guarded rather than a bare next(): when this went missing it raised
+    # StopIteration and killed the whole run with no indication of which
+    # scenario had gone or why. A named failure that lists what DID fire is
+    # the difference between a five-minute diagnosis and an hour of it.
+    absences = [a for a in raised["items"] if a["type"] == "absence"]
+    check("the absence scenario still fires (PENCH-002, cameras all healthy)",
+          bool(absences),
+          "raised: " + ", ".join(sorted(f"{a['type']}/{a['ind_id']}"
+                                        for a in raised["items"])))
+    real_absence = absences[0]
     check("absence IS raised when effort was good",
           real_absence["effort_coverage"] >= 0.6,
           f"coverage {real_absence['effort_coverage']}")
@@ -1271,14 +1313,141 @@ def _run(c: TestClient) -> int:
     # ── UI is served, and reaches for nothing off-machine ───────────────
     page = c.get("/").text
     check("page served", "PUG" in page)
-    js = (Path(__file__).resolve().parents[2] / "edge/ui/app.js").read_text(encoding="utf-8")
-    css = (Path(__file__).resolve().parents[2] / "edge/ui/app.css").read_text(encoding="utf-8")
-    for name, text in (("page", page), ("script", js), ("stylesheet", css)):
+    ui = Path(__file__).resolve().parents[2] / "edge/ui"
+    js = (ui / "app.js").read_text(encoding="utf-8")
+    css = (ui / "app.css").read_text(encoding="utf-8")
+    # map.js was NOT checked before this, which was the worst possible file to
+    # omit: it is the one that decides where map tiles come from. A CDN tile
+    # URL there would have passed every check in this suite and shown a grey
+    # rectangle at the demo.
+    mapjs = (ui / "map.js").read_text(encoding="utf-8")
+    for name, text in (("page", page), ("script", js), ("stylesheet", css),
+                       ("map script", mapjs)):
         offenders = [t for t in ("http://", "https://", "cdn.", "googleapis",
-                                 "unpkg", "jsdelivr", "tile.openstreetmap")
+                                 "unpkg", "jsdelivr", "tile.openstreetmap",
+                                 "arcgisonline", "openstreetmap")
                      if t in text]
         check(f"{name} fetches nothing off this machine", not offenders,
               str(offenders))
+
+    # Every first-party UI file, not just the four named above -- a new file
+    # must not be able to reach the network merely by not being on a list.
+    for f in sorted(ui.rglob("*.js")) + sorted(ui.rglob("*.css")) + sorted(ui.rglob("*.html")):
+        if "vendor" in f.parts:
+            continue
+        text = f.read_text(encoding="utf-8", errors="replace")
+        bad = [t for t in ("http://", "https://") if t in text]
+        check(f"ui/{f.relative_to(ui).as_posix()} has no off-machine URL", not bad, str(bad))
+
+    # ── the map: Leaflet is vendored, the tiles are on disk ─────────────
+    leaflet_js = ui / "vendor/leaflet/leaflet.js"
+    leaflet_css = ui / "vendor/leaflet/leaflet.css"
+    check("Leaflet is vendored into the repo, not fetched from a CDN",
+          leaflet_js.exists() and leaflet_css.exists(),
+          "edge/ui/vendor/leaflet/")
+    lf = leaflet_js.read_text(encoding="utf-8", errors="replace")
+    # the SVG namespace is an XML identifier that createElementNS matches on,
+    # never a URL that is fetched -- it is the one permitted exception
+    stray = [u for u in re.findall(r"https?://[^\s'\"\)]+", lf)
+             if u != "http://www.w3.org/2000/svg"]
+    check("the vendored Leaflet bundle references no off-machine URL",
+          not stray, str(stray[:3]))
+    check("the vendored Leaflet ships its own icons, so leaflet.css resolves "
+          "locally", (ui / "vendor/leaflet/images/marker-icon.png").exists())
+
+    tiles = ui / "tiles"
+    tile_files = list(tiles.rglob("*.jpg")) if tiles.exists() else []
+    check("the offline basemap tile pyramid is present",
+          len(tile_files) > 500, f"{len(tile_files)} tiles")
+    zooms = sorted({int(t.parent.parent.name) for t in tile_files}) if tile_files else []
+    check("the pyramid covers a usable zoom range, not one flat level",
+          len(zooms) >= 4, f"z{zooms}")
+
+    manifest = json.loads((ui / "img/basemap-pench.json").read_text(encoding="utf-8"))
+    check("the basemap manifest records the tile template the UI reads",
+          manifest.get("tiles", "").startswith("/ui/"), manifest.get("tiles"))
+    check("the manifest's deepest zoom is one that was actually downloaded",
+          manifest.get("max_native_zoom") in zooms,
+          f"manifest says z{manifest.get('max_native_zoom')}, on disk {zooms}")
+
+    # served, not merely present on disk
+    sample = tile_files[len(tile_files) // 2]
+    z, x, y = sample.parent.parent.name, sample.parent.name, sample.stem
+    tile_res = c.get(f"/ui/tiles/{z}/{x}/{y}.jpg")
+    check("a basemap tile is actually served over HTTP",
+          tile_res.status_code == 200 and tile_res.content[:3] == bytes((0xFF, 0xD8, 0xFF)),
+          f"{tile_res.status_code}, {len(tile_res.content)} bytes")
+    check("the vendored Leaflet is served over HTTP",
+          c.get("/ui/vendor/leaflet/leaflet.js").status_code == 200)
+
+    # ── the world basemap: vectors, so zooming out has somewhere to go ──
+    # The satellite pyramid covers the reserve only. Without this layer the
+    # map ran out of data past the reserve boundary, which is not a map --
+    # and a raster world would be both enormous and impossible to recolour
+    # for the dark theme.
+    geo = ui / "geo"
+    for layer in ("ocean", "countries", "states", "lakes"):
+        f = geo / f"{layer}.geojson"
+        check(f"world basemap layer '{layer}' ships with the app", f.exists(),
+              str(f))
+        if not f.exists():
+            continue
+        gj = json.loads(f.read_text(encoding="utf-8"))
+        check(f"'{layer}' carries real geometry, not an empty stub",
+              len(gj.get("features", [])) > 0, f"{len(gj.get('features', []))} features")
+        served = c.get(f"/ui/geo/{layer}.geojson")
+        check(f"'{layer}' is served over HTTP", served.status_code == 200,
+              str(served.status_code))
+
+    world_bytes = sum(f.stat().st_size for f in geo.glob("*.geojson")) if geo.exists() else 0
+    check("the whole world costs a few MB, not a tile pyramid's worth",
+          0 < world_bytes < 12 * 1024 * 1024, f"{world_bytes/1024/1024:.2f} MB")
+    check("state/province borders are included, not just country outlines",
+          len(json.loads((geo / "states.geojson").read_text(encoding="utf-8"))["features"]) > 100,
+          "India's state boundaries are what make the zoomed-out view legible")
+
+    # The two pre-toned rasters the SVG map used are superseded by the tile
+    # pyramid; leaving them behind would ship 636 KB nothing reads.
+    # The map's palette must be driven by the same signal app.js writes --
+    # dark sets data-theme="dark", light REMOVES the attribute. When map.js
+    # fell back to prefers-color-scheme for the missing-attribute case, light
+    # mode on a dark-OS machine left the world map green while the page went
+    # white, and the theme button appeared not to affect the map at all.
+    # Assert on the MECHANISM, not on the word: an earlier version of this
+    # check grepped for "prefers-color-scheme" and failed on the comment
+    # explaining why the code must not use it. matchMedia is the only way to
+    # reach the OS preference from script, so its absence is the real
+    # guarantee.
+    check("the map reads the theme from the attribute app.js actually sets, "
+          "never from the operating system",
+          "matchMedia" not in mapjs and 'getAttribute(\'data-theme\')' in mapjs,
+          "map.js must not consult the OS colour scheme")
+    # A signed-out session hides the application by COVERING it, not by
+    # unmounting it, so anything inside a view that competes at page level
+    # will draw straight through the login screen. That is exactly what
+    # happened: the map's layer bar and zoom column (z-index 1000) sat on top
+    # of the tiger after logging out, because .auth-overlay carried a second,
+    # contradictory z-index of 200.
+    zs = [int(m) for m in re.findall(r"\.auth-overlay\s*\{[^}]*?z-index:\s*(\d+)", css, re.S)]
+    check("the sign-in overlay has one z-index, and it outranks the app's "
+          "own floating chrome", zs and len(set(zs)) == 1 and min(zs) >= 9999,
+          f"declared z-indexes: {zs}")
+    check("the map card is its own stacking context, so its controls cannot "
+          "escape onto other screens",
+          "isolation: isolate" in css,
+          "otherwise map furniture competes with every overlay in the app")
+    check("scrollbars are themed rather than left as OS chrome",
+          "--sb-thumb" in css and "::-webkit-scrollbar" in css,
+          "an unstyled scrollbar is a white stripe down a near-black UI")
+    check("the satellite layer states its own coverage limit",
+          "mapImageryNote" in page and "reserve only" in mapjs,
+          "a lit button over blank imagery reads as broken")
+
+    check("the superseded stitched basemap rasters are gone",
+          not (ui / "img/basemap-dark.jpg").exists()
+          and not (ui / "img/basemap-light.jpg").exists())
+    check("the page loads Leaflet from this machine",
+          "/ui/vendor/leaflet/leaflet.js" in page and "/ui/vendor/leaflet/leaflet.css" in page)
 
     # ── /api/dev/seed: last, since it replaces the whole database ───────
     # Runs each seeder as the real subprocess it is in production, proving

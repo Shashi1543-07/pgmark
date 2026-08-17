@@ -1,0 +1,12 @@
+{
+  "source": "Natural Earth 1:50m / 1:110m",
+  "attribution": "Boundaries: Natural Earth (public domain)",
+  "licence": "public domain (CC0)",
+  "precision_dp": 4,
+  "layers": {
+    "ocean": "/ui/geo/ocean.geojson",
+    "countries": "/ui/geo/countries.geojson",
+    "states": "/ui/geo/states.geojson",
+    "lakes": "/ui/geo/lakes.geojson"
+  }
+}

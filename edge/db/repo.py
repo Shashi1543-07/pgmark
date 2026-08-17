@@ -1014,7 +1014,11 @@ def review_open(limit: int = 50) -> list[dict]:
         " JOIN flank_crops c ON c.crop_id=q.crop_id"
         " JOIN detections  d ON d.det_id=c.det_id"
         " JOIN images     im ON im.image_id=d.image_id"
-        " WHERE q.state='open' ORDER BY q.priority DESC LIMIT ?", (limit,)))
+        # queue_id breaks priority ties. Without it SQLite is free to return
+        # tied rows in any order, so the queue could reshuffle between two
+        # refreshes and a reviewer would see items they had already worked
+        # through move back up the list.
+        " WHERE q.state='open' ORDER BY q.priority DESC, q.queue_id LIMIT ?", (limit,)))
     for r in rows:
         try:
             r["candidates"] = json.loads(r["candidates"])

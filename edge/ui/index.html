@@ -6,6 +6,7 @@
 <title>Pugmark</title>
 <!-- No CDN, no webfont fetch, no tile server. Everything this page needs
      is on disk, because a range office has no internet. -->
+<link rel="stylesheet" href="/ui/vendor/leaflet/leaflet.css">
 <link rel="stylesheet" href="/ui/app.css">
 <script>
 /* Applied before first paint, deliberately inline and before the
@@ -60,7 +61,7 @@
       </button>
       <button class="guide-reopen" id="guideReopen" type="button" aria-pressed="false"
               title="Show the guided walkthrough">
-        <span class="guide-btn-icon">📖</span> Guide
+        Guide
       </button>
       <button class="logout-btn" id="logoutBtn" type="button" title="Sign out" hidden>Log out</button>
     </div>
@@ -408,6 +409,7 @@
           <div class="map-canvas-card">
             <!-- Floating Layer Toggles -->
             <div class="map-layer-bar">
+              <button type="button" class="map-layer-btn active" data-layer="basemap">Satellite</button>
               <button type="button" class="map-layer-btn active" data-layer="boundaries">🗺 Boundaries</button>
               <button type="button" class="map-layer-btn active" data-layer="ranges">🐅 Home Ranges</button>
               <button type="button" class="map-layer-btn active" data-layer="stations">📷 Cameras</button>
@@ -427,10 +429,17 @@
             <!-- Floating Inspection Tooltip -->
             <div id="mapTooltip" class="map-tooltip"></div>
 
+
             <!-- SVG Map Canvas Container -->
             <div class="mapwrap" id="mapWrap">
-              <div id="mapSvg" style="width:100%;height:100%"></div>
+              <div id="mapSvg" class="pugmap-host" style="width:100%;height:100%"></div>
               <div id="mapSideDrawer" class="map-side-drawer"></div>
+              <!-- Says why the satellite layer is blank when it is blank.
+                   It lives INSIDE .mapwrap so `bottom` is measured from the
+                   map, not from the card, which also contains the playback
+                   bar -- positioned against the card it hung off the bottom
+                   edge and sat on top of the attribution. -->
+              <div id="mapImageryNote" class="map-imagery-note"></div>
             </div>
 
             <!-- Timeline Scrubber & Movement Playback -->
@@ -1043,6 +1052,7 @@
      demo station IDs (PN-C-008/009/015 as "dead"/"new") and stretched
      latitude and longitude independently, drawing every home range 87%
      out of shape. Loaded first so window.PugMap exists when app.js runs. -->
+<script src="/ui/vendor/leaflet/leaflet.js"></script>
 <script src="/ui/map.js"></script>
 <script src="/ui/app.js"></script>
 </body>

@@ -187,13 +187,14 @@ textarea, button, .modal-dialog, .tiger-card-rich, .cand, .stripe-thumb {
 }
 /* Respect the OS "reduce motion" setting everywhere, including the theme
    fade and every lift/shimmer added further down. */
+/* Reduced-motion handling lives in ONE place, at the end of this file.
+   It used to be here as a blanket `transition-duration: .001ms` on every
+   element, which does not reduce motion so much as delete feedback: a
+   button that cannot even change colour under the pointer reads as a dead
+   control, and nothing in WCAG asks for that. See the consolidated block
+   at the bottom. */
 @media (prefers-reduced-motion: reduce) {
-  *, *::before, *::after {
-    animation-duration: .001ms !important;
-    animation-iteration-count: 1 !important;
-    transition-duration: .001ms !important;
-    scroll-behavior: auto !important;
-  }
+  html { scroll-behavior: auto !important; }
 }
 
 * { box-sizing: border-box; }
@@ -404,9 +405,6 @@ a { color: var(--pelage); }
   box-shadow: 0 2px 6px rgba(0,0,0,0.04);
 }
 
-.guide-btn-icon {
-  font-size: 13px;
-}
 
 .offline-badge {
   display: flex;
@@ -661,7 +659,16 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 /* ── map (SVG, no tiles — a tile server needs internet) ──────────────── */
 .mapwrap { background: var(--surface); border: 1px solid var(--line-soft);
            border-radius: var(--r-card); overflow: hidden; }
-.mapwrap svg { display: block; width: 100%; height: auto; background: #edf0e8; }
+/* Sized by Leaflet, not by CSS.
+   This rule used to read `width: 100%; height: auto` because the map was a
+   single SVG that filled the box. Leaflet instead puts one SVG inside each
+   vector pane, and a pane is an absolutely positioned element with NO size --
+   it is only an anchor. So `width: 100%` resolved against a zero-width parent
+   and collapsed every overlay to 0x0: the paths still reported geometry, and
+   still drew, but the browser gave the SVG no box to hit-test against, so
+   nothing on the map could be hovered or clicked. Leaflet sets width/height
+   attributes on these itself; CSS must leave them alone. */
+.mapwrap svg { display: block; background: none; }
 
 #mapControls { flex-wrap: wrap; }
 .mapcheck { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--ink-2); }
@@ -842,9 +849,8 @@ kbd {
   .guide { left: var(--s4); right: var(--s4); bottom: var(--s4); width: auto; }
 }
 
-@media (prefers-reduced-motion: reduce) {
-  *, *::before, *::after { animation: none !important; transition: none !important; }
-}
+/* superseded by the consolidated reduced-motion block at the end of this
+   file -- `transition: none` on everything removed hover feedback too */
 
 
 /* ── map ─────────────────────────────────────────────────────────────────
@@ -1280,6 +1286,7 @@ kbd {
 .legend { margin-top: var(--s3); }
 .legend .keys { display: flex; flex-wrap: wrap; gap: var(--s4);
                 font-size: 12px; color: var(--muted); margin-bottom: var(--s3); }
+.legend .keys { display: flex; flex-wrap: wrap; gap: 6px 18px; align-items: center; }
 .legend .keys span { display: flex; align-items: center; gap: 6px; }
 .legend .k { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
 .legend .k.stn-active  { background: #2d3748; }
@@ -3155,8 +3162,7 @@ tbody tr:hover { background: var(--surface-2); box-shadow: inset 3px 0 0 var(--p
 /* Safe to darken: map.js draws boundaries in saturated mid-tones
    (#059669 / #d97706 / #0891b2) over low-alpha rgba fills, all of which
    hold contrast on charcoal. Checked before changing this. */
-[data-theme="dark"] .mapwrap { background: #12161a; }
-[data-theme="dark"] .mapwrap svg { background: #12161a; }
+/* superseded by the MAP theming layer at the end of this file */
 [data-theme="dark"] .map-zoom-btn:hover { background: var(--surface-2); }
 [data-theme="dark"] .map-roster-item.active { background: var(--pelage-dim); }
 [data-theme="dark"] .map-roster-badge.alert { background: var(--bad-bg); color: var(--bad-fg); }
@@ -3510,12 +3516,7 @@ tbody tr:hover { background: var(--surface-2); box-shadow: inset 3px 0 0 var(--p
 .guide-reopen.is-on { animation: guide-on-pulse var(--d-slow) var(--ease-out); }
 
 /* the little book leans in when the guide is live */
-.guide-reopen .guide-btn-icon {
-  font-size: 13px;
-  transition: transform var(--d-base) var(--ease-out);
-}
-.guide-reopen.is-on .guide-btn-icon { transform: rotate(-8deg) scale(1.1); }
-
+.guide-reopen .guide-reopen.is-on 
 /* ── log out: outlined red, never filled ─────────────────────────────── */
 /* Outline + text only, as asked: a solid red block in the corner of every
    screen reads as a permanent error state. It earns its fill on hover,
@@ -3583,9 +3584,8 @@ tbody tr:hover { background: var(--surface-2); box-shadow: inset 3px 0 0 var(--p
 
 /* ── narrow screens: labels collapse, icons stay ─────────────────────── */
 @media (max-width: 860px) {
-  .guide-reopen { padding: 0 10px; font-size: 0; gap: 0; }
-  .guide-reopen .guide-btn-icon { font-size: 14px; }
-  .userpill .user-name { display: none; }
+  .guide-reopen { padding: 0 10px; }
+  .guide-reopen   .userpill .user-name { display: none; }
 }
 
 /* ═══════════════════════════════════════════════════════════════════════
@@ -4358,7 +4358,13 @@ button.danger:hover:not(:disabled) {
   --jungle-muted:  #8fae9c;
   --eye-amber:     #ff9d3d;   /* the tiger's eyes                 */
 
-  position: fixed; inset: 0; z-index: 200;
+  /* 9999, not 200. This selector is declared twice in this file -- the
+     earlier block already says 9999 -- and being the later one, this used to
+     win and quietly demote the sign-in screen to z-index 200. Every other
+     full-screen overlay here sits at 9999, so at 200 the login page was
+     underneath the application's own floating chrome: log out while the map
+     was open and its layer bar and zoom column drew on top of the tiger. */
+  position: fixed; inset: 0; z-index: 9999;
   display: flex; align-items: center; justify-content: center;
   background: var(--jungle-void);
   overflow: hidden;
@@ -4794,15 +4800,7 @@ h2 { color: var(--ink-2); }
    Some operators run Windows' "reduce transparency". Honouring it is not
    optional: translucent panes over a busy ground are exactly what that
    setting exists to switch off. */
-@media (prefers-reduced-transparency: reduce) {
-  .card, .tiger-card-rich, .alert-card-rich, .cand, .quar-card,
-  .topbar, .nav, .modal-dialog, .banner, button, .btn {
-    background: var(--surface) !important;
-    -webkit-backdrop-filter: none !important;
-    backdrop-filter: none !important;
-  }
-  body, [data-theme="dark"] body { background: var(--canvas) !important; }
-}
+/* superseded by the consolidated block at the end of this file */
 
 /* ═══════════════════════════════════════════════════════════════════════
    GLASS · SECOND PASS: PANES, NOT PAINTED PANELS
@@ -4920,15 +4918,7 @@ tbody tr:nth-child(even) { background: rgba(255,255,255,.022); }
 tbody tr:hover { background: color-mix(in srgb, var(--glass-glow) 10%, transparent); }
 
 /* ── the whole thing honours reduced transparency ────────────────────── */
-@media (prefers-reduced-transparency: reduce) {
-  body::before { content: none !important; }
-  [data-theme="dark"] body { background-image: none !important; }
-  .card, .tiger-card-rich, .alert-card-rich, .quar-card, .banner,
-  .topbar, .nav, .meta-card {
-    background: var(--surface) !important;
-    box-shadow: 0 1px 2px rgba(0,0,0,.2) !important;
-  }
-}
+/* superseded by the consolidated block at the end of this file */
 
 /* ── explainer panels ───────────────────────────────────────────────────
    Guidance is not a warning. The "what Provisional means" panel borrowed
@@ -4946,3 +4936,735 @@ tbody tr:hover { background: color-mix(in srgb, var(--glass-glow) 10%, transpare
 .explainer strong, .explainer b { color: var(--ink); }
 .explainer ul { margin: 8px 0 0 20px; }
 .explainer li + li { margin-top: 6px; }
+
+/* ═══════════════════════════════════════════════════════════════════════
+   ACCESSIBILITY PREFERENCES · honoured precisely, not bluntly
+   ───────────────────────────────────────────────────────────────────────
+   Windows ships "Animation effects" and "Transparency effects" as ordinary
+   toggles in Settings, and plenty of machines have one or both switched
+   off -- especially the cheap laptops this is built for. Earlier revisions
+   answered those preferences with a sledgehammer:
+
+     * `transition: none !important` on every element, which does not
+       reduce motion so much as delete feedback. Buttons stopped responding
+       to the pointer at all, so the interface read as frozen.
+     * `background: var(--surface) !important` plus a flattened box-shadow
+       on every panel, which removed the DEPTH along with the translucency,
+       leaving plain rectangles on a plain field.
+
+   Neither is what the settings ask for. Reduced motion means do not MOVE
+   things; a 120ms colour change is not motion. Reduced transparency means
+   do not make surfaces SEE-THROUGH; a drop shadow is entirely opaque and
+   is the main thing telling the eye a card is lifted.
+   ═══════════════════════════════════════════════════════════════════════ */
+
+@media (prefers-reduced-motion: reduce) {
+  /* Kill travel, keep response. */
+  *, *::before, *::after {
+    animation-duration: .01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-property: background-color, border-color, color, box-shadow,
+                         opacity, fill, stroke !important;
+    transition-duration: 120ms !important;
+  }
+  /* nothing slides, lifts or scales */
+  .tiger-card-rich:hover, .alert-card-rich:hover, .quar-card:hover,
+  button:hover, .btn:hover, button:active, .btn:active,
+  .nav a:hover, .cand:hover, .auth-submit-btn:hover,
+  .theme-switch:hover, #themeToggle:hover {
+    transform: none !important;
+  }
+  /* the ambient drift on the sign-in photograph, and the pulse dots */
+  .auth-stage-img { animation: none !important; }
+  .runpill .dot, .hud-dot { animation: none !important; }
+  /* the knob still needs to arrive somewhere, just without the spring */
+  .theme-switch .theme-switch-knob {
+    transition: transform 120ms linear !important;
+  }
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  /* Surfaces go solid -- and KEEP their shadows, borders and radii, which
+     is what preserves the layered look without any translucency at all. */
+  .card, .tiger-card-rich, .alert-card-rich, .quar-card, .banner,
+  .cand, .meta-card, .explainer, .map-side-drawer,
+  .topbar, .nav, .modal-dialog, .auth-modal-card {
+    background: var(--surface) !important;
+    -webkit-backdrop-filter: none !important;
+    backdrop-filter: none !important;
+  }
+  .card .card, .card .meta-card, .meta-card { background: var(--surface-2) !important; }
+  button:not(.primary), .btn:not(.primary) { background: var(--surface-2) !important; }
+  .field-search input, .filter-bar select,
+  input[type="text"], input[type="password"], input[type="number"],
+  input[type="date"], select, textarea { background: var(--sunk) !important; }
+
+  /* the photographic ground goes, the colour field stays */
+  body::before { content: none !important; }
+  [data-theme="dark"] body {
+    background-image:
+      radial-gradient(1200px 700px at 12% -6%, var(--amb-1), transparent 58%) !important;
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   MAP · READABLE IN BOTH THEMES
+   ───────────────────────────────────────────────────────────────────────
+   The map was drawn entirely for a light background and never revisited:
+   station dots are `fill: #1a202c` (near-black), labels carry a WHITE
+   text-halo, the scalebar is slate grey, and the only dark-mode rules in
+   the whole file set the surface to #12161a. Put together, the dark theme
+   rendered near-black dots on a near-black field, with white-outlined text
+   floating over them -- which is why the map read as broken rather than
+   merely dim.
+
+   Everything below is the same map, re-tinted through tokens so both
+   themes get a legible surface, dots that separate from it, and label
+   halos that match the ground instead of fighting it.
+   ═══════════════════════════════════════════════════════════════════════ */
+
+/* ── the surface ─────────────────────────────────────────────────────── */
+.mapwrap {
+  background: var(--surface);
+  border: 1px solid var(--glass-line);
+  border-radius: 14px;
+  overflow: hidden;
+}
+.mapwrap svg,
+.mapwrap svg.pugmap { background: transparent; }
+
+/* a faint field so the reserve reads as ground rather than void */
+[data-theme="dark"] .mapwrap {
+  background:
+    radial-gradient(120% 90% at 50% 40%, rgba(28, 68, 46, .38), transparent 70%),
+    var(--sunk);
+}
+[data-theme="dark"] .mapwrap svg { background: transparent; }
+
+/* ── camera stations ─────────────────────────────────────────────────────
+   Four states that must stay apart at a glance AND separate from the
+   ground. A ring rather than a flat disc, so a dot stays visible whichever
+   colour it sits on.                                                    */
+.pugmap .stn {
+  cursor: pointer;
+  transition: r .12s var(--ease), stroke-width .12s var(--ease), fill .2s var(--ease);
+  stroke: var(--surface);
+  stroke-width: 1.4;
+  filter: none;
+}
+.pugmap .stn-active  { fill: #2f6f4e; }
+.pugmap .stn-idle    { fill: #8aa398; }
+.pugmap .stn-offline { fill: var(--act); }
+.pugmap .stn-new     { fill: #2f7fd0; }
+
+[data-theme="dark"] .pugmap .stn { stroke: rgba(6, 14, 10, .85); }
+[data-theme="dark"] .pugmap .stn-active  { fill: #56dc99; }
+[data-theme="dark"] .pugmap .stn-idle    { fill: #6f8a7c; }
+[data-theme="dark"] .pugmap .stn-offline { fill: #f5615c; }
+[data-theme="dark"] .pugmap .stn-new     { fill: #63b3f5; }
+
+.pugmap .stn:hover { r: 7 !important; stroke: var(--pelage) !important; stroke-width: 2.5 !important; }
+.pugmap .stn.in-range { stroke: var(--pelage) !important; stroke-width: 2.5 !important; }
+
+/* ── labels: the halo has to match the ground, not always be white ───── */
+.pugmap .hull-label,
+.boundary-label {
+  paint-order: stroke;
+  stroke: var(--surface);
+  stroke-width: 3.5px;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+[data-theme="dark"] .pugmap .hull-label,
+[data-theme="dark"] .boundary-label { stroke: rgba(4, 10, 7, .92); }
+
+/* the big boundary captions sat on top of the stations they describe */
+.boundary-watermark {
+  opacity: .5;
+  letter-spacing: .16em;
+  paint-order: stroke;
+  stroke: var(--surface);
+  stroke-width: 3px;
+}
+[data-theme="dark"] .boundary-watermark {
+  opacity: .55;
+  stroke: rgba(4, 10, 7, .9);
+  fill: #4fbf85 !important;
+}
+
+/* ── home ranges ─────────────────────────────────────────────────────── */
+.pugmap .hull { fill-opacity: .14; stroke-width: 1.6; }
+[data-theme="dark"] .pugmap .hull { fill-opacity: .20; }
+.pugmap .hull.focus { fill-opacity: .34 !important; }
+
+/* ── furniture: scalebar, north arrow ────────────────────────────────── */
+.pugmap .scalebar line, .pugmap .north line, .pugmap .north path {
+  stroke: var(--muted);
+  stroke-width: 1.3;
+  fill: none;
+}
+.pugmap .scalebar text, .pugmap .north text {
+  fill: var(--muted);
+  font-family: var(--f-data);
+  font-size: 10px;
+}
+[data-theme="dark"] .pugmap .scalebar line,
+[data-theme="dark"] .pugmap .north line,
+[data-theme="dark"] .pugmap .north path { stroke: #7f9a8b; }
+[data-theme="dark"] .pugmap .scalebar text,
+[data-theme="dark"] .pugmap .north text { fill: #7f9a8b; }
+
+/* ── map controls, in the app's material ─────────────────────────────── */
+.map-zoom-btn, .map-layer-btn {
+  background: var(--glass) !important;
+  border: 1px solid var(--glass-line) !important;
+  color: var(--ink-2) !important;
+  border-radius: 10px !important;
+  -webkit-backdrop-filter: blur(12px);
+  backdrop-filter: blur(12px);
+}
+.map-zoom-btn:hover, .map-layer-btn:hover {
+  border-color: var(--pelage) !important;
+  color: var(--pelage) !important;
+}
+.map-layer-btn.active {
+  background: color-mix(in srgb, var(--pelage) 18%, transparent) !important;
+  border-color: var(--pelage) !important;
+  color: var(--pelage) !important;
+}
+
+/* ── legend: was invisible on dark, and it is the key to the whole map ─ */
+.legend {
+  background: var(--glass);
+  border: 1px solid var(--glass-line);
+  border-radius: 10px;
+  color: var(--ink-2);
+}
+.legend .k.stn-active  { background: #2f6f4e; }
+.legend .k.stn-idle    { background: #8aa398; }
+.legend .k.stn-offline { background: var(--act); }
+.legend .k.stn-new     { background: #2f7fd0; }
+[data-theme="dark"] .legend .k.stn-active  { background: #56dc99; }
+[data-theme="dark"] .legend .k.stn-idle    { background: #6f8a7c; }
+[data-theme="dark"] .legend .k.stn-offline { background: #f5615c; }
+[data-theme="dark"] .legend .k.stn-new     { background: #63b3f5; }
+
+/* ── movement vectors ────────────────────────────────────────────────── */
+.pugmap .shift .was { fill: var(--muted); stroke: var(--surface); }
+[data-theme="dark"] .pugmap .shift .was { fill: #7f9a8b; stroke: rgba(4,10,7,.9); }
+
+/* ── survey zones ───────────────────────────────────────────────────────
+   `#d4dfca` / `#e5ead9` are pale sage fills chosen for a light map. On the
+   dark theme they rendered as two cream slabs sitting on top of the
+   reserve, which is the block of "white" covering the station grid. Tinted
+   through tokens so the zones read as ground in either theme.          */
+.pugmap .zone-core   { fill: color-mix(in srgb, var(--info) 12%, transparent); stroke: color-mix(in srgb, var(--info) 40%, transparent); }
+.pugmap .zone-buffer { fill: color-mix(in srgb, var(--pelage) 9%, transparent); stroke: color-mix(in srgb, var(--pelage) 32%, transparent); stroke-dasharray: 5 4; }
+[data-theme="dark"] .pugmap .zone-core   { fill: rgba(86, 220, 153, .09); stroke: rgba(86, 220, 153, .30); }
+[data-theme="dark"] .pugmap .zone-buffer { fill: rgba(243, 141, 63, .07); stroke: rgba(243, 141, 63, .26); }
+
+/* ── satellite basemap ──────────────────────────────────────────────── */
+.pugmap .basemap { pointer-events: none; }
+/* the imagery is the ground: everything drawn over it needs a touch more
+   weight than it did over a flat field */
+.pugmap .grid-line { stroke: rgba(255,255,255,.06); }
+[data-theme="dark"] .pugmap .grid-line { stroke: rgba(180,245,210,.05); }
+.pugmap .basemap-credit {
+  font-family: var(--f-data);
+  font-size: 8.5px;
+  fill: var(--muted);
+  opacity: .75;
+  pointer-events: none;
+}
+[data-theme="dark"] .pugmap .basemap-credit { fill: #9ab5a6; opacity: .7; }
+/* over photography the station rings need a darker keyline to stay crisp */
+.pugmap .stn { stroke-width: 1.6; }
+[data-theme="dark"] .pugmap .stn { stroke: rgba(0,0,0,.72); }
+
+/* ═══════════════════════════════════════════════════════════════════════
+   MAP · LAYOUT TIDY-UP
+   ───────────────────────────────────────────────────────────────────────
+   Three things were colliding in the same corner: the layer bar, the zoom
+   column and the detail drawer all claimed the top of the canvas, so the
+   drawer covered the controls, the layer row ran off the right edge with
+   "Core / Buffer" and "Roster" clipped, and the legend below was one long
+   undifferentiated strip.
+   ═══════════════════════════════════════════════════════════════════════ */
+
+/* ── layer bar: one tidy row that wraps instead of clipping ──────────── */
+.map-layer-bar {
+  top: 10px;
+  left: 10px;
+  right: 58px;                 /* leave the zoom column its own lane */
+  gap: 5px;
+  padding: 6px 8px;
+  border: 1px solid var(--glass-line);
+  border-radius: 12px;
+  box-shadow: var(--glass-shadow);
+  align-items: center;
+}
+.map-layer-btn {
+  font-size: 10px !important;
+  letter-spacing: .08em;
+  padding: 5px 10px !important;
+  white-space: nowrap;
+  line-height: 1;
+}
+
+/* ── the detail drawer clears the layer bar instead of covering it ───── */
+.map-side-drawer {
+  top: 62px;
+  right: 10px;
+  width: 272px;
+  max-height: calc(100% - 130px);   /* stays clear of the playback bar too */
+}
+.map-side-drawer .drawer-header {
+  padding: 10px 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.map-side-drawer .drawer-header h3 {
+  font-size: 12px;
+  letter-spacing: .04em;
+  margin: 0;
+}
+
+/* ── zoom column ─────────────────────────────────────────────────────── */
+.map-zoom-bar {
+  top: 10px;
+  right: 10px;
+  gap: 5px;
+  z-index: 11;
+}
+.map-zoom-btn { width: 30px !important; height: 30px !important; }
+
+/* ── legend: grouped, not a run-on sentence ──────────────────────────── */
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 18px;
+  align-items: center;
+  padding: 10px 14px;
+  margin-top: 10px;
+  background: var(--glass);
+  border: 1px solid var(--glass-line);
+  border-radius: 12px;
+  font-size: 11px;
+  color: var(--ink-2);
+}
+.legend .keys span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+/* ── playback bar ────────────────────────────────────────────────────── */
+.map-timeline-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  background: var(--glass);
+  border: 1px solid var(--glass-line);
+  border-radius: 12px;
+  margin-top: 10px;
+}
+
+/* ── the roster panel beside the map ─────────────────────────────────── */
+.map-sidebar {
+  background: var(--glass);
+  border: 1px solid var(--glass-line);
+  border-radius: 14px;
+}
+.roster-row {
+  border-bottom: 1px solid color-mix(in srgb, var(--glass-line) 60%, transparent);
+  transition: background var(--d-fast) var(--ease);
+}
+.roster-row:hover { background: color-mix(in srgb, var(--glass-glow) 10%, transparent); }
+
+/* ── narrow windows: the drawer stops competing for width ────────────── */
+@media (max-width: 1100px) {
+  .map-layer-bar { right: 10px; }
+  .map-side-drawer {
+    top: auto; bottom: 10px; left: 10px; right: 10px;
+    width: auto; max-height: 42%;
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   VERTICAL RHYTHM · one spacing rule for every screen
+   ───────────────────────────────────────────────────────────────────────
+   Blocks inside a view were direct siblings with no margin between them:
+
+       <div class="head">          -- had margin-bottom
+       <div class="grid g4">       -- gap spaces the CARDS, not the ROW
+       <div id="mapHeadline">      -- nothing
+       <div class="map-layout">    -- nothing
+
+   `gap` only separates items INSIDE a grid, so a row of stat cards sat
+   flush against the banner beneath it and the banner sat flush against the
+   map. Every screen was spaced by whatever ad-hoc margin its markup
+   happened to carry, which is why the result looked improvised rather than
+   laid out.
+
+   One rule, applied to the direct children of every view, fixes all of
+   them at once and keeps new screens consistent by default.
+   ═══════════════════════════════════════════════════════════════════════ */
+
+.view > * + * { margin-top: 20px; }
+
+/* the intro block gets a little more air beneath it than body blocks do */
+.view > .head { margin-bottom: 0; }
+.view > .head + * { margin-top: 24px; }
+
+/* stat rows: slightly wider gutters so four cards read as four, not a strip */
+.grid.g3, .grid.g4 { gap: 18px; }
+
+/* a card immediately following another card is a stack, not a collision */
+.view > .card + .card { margin-top: 16px; }
+
+/* elements that are purely containers should not add a second gap when
+   they happen to be empty (the map headline is empty until an alert fires) */
+.view > div:empty { margin-top: 0; }
+
+/* the map's own stacked furniture keeps the same beat */
+.map-layout { gap: 18px; }
+
+/* section rules get room on both sides rather than only below */
+.hr { margin: 26px 0; }
+
+/* the sticky bulk bar is positioned, so it must not inherit the rhythm */
+#provBulkBar { margin-top: 0; }
+
+/* ═══════════════════════════════════════════════════════════════════════
+   MAP LAYOUT · the two columns end level
+   ───────────────────────────────────────────────────────────────────────
+   `align-items: start` sized each column to its own content, and the
+   sidebar additionally carried a hardcoded `height: 640px`. The map column
+   is taller than that -- it is the layer bar plus the canvas plus the
+   playback bar -- so the roster stopped short and left a block of dead
+   space beside the map. Stretching the row and letting the ROSTER LIST be
+   the part that scrolls keeps both columns level at any window size,
+   instead of guessing a pixel height that is only correct on one screen.
+   ═══════════════════════════════════════════════════════════════════════ */
+.map-layout {
+  align-items: stretch;
+  gap: 18px;
+}
+.map-sidebar {
+  height: auto;            /* was a fixed 640px */
+  min-height: 0;
+  align-self: stretch;
+  padding: 14px;
+  gap: 10px;
+}
+/* the list absorbs the leftover height and scrolls inside itself */
+.map-sidebar-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+}
+.map-sidebar-tabs { flex: none; margin-bottom: 0; border-bottom: 1px solid var(--glass-line); }
+.map-sidebar-search { flex: none; }
+
+/* Which column decides the height?
+   ---------------------------------
+   Stretching BOTH is wrong in both directions. The map's SVG has a fixed
+   1000x640 viewBox, so a taller map card just gains dead space under the
+   imagery -- the picture cannot stretch to meet it. But leaving the row on
+   `auto` hands the height to whichever column has more content, and the
+   roster (13 tigers, 36 cameras) is always the longer one, so the map
+   ended up short beside a very tall list.
+
+   The map must set the height and the roster must fill it. The roster is
+   therefore taken out of the row's size calculation entirely -- an
+   absolutely positioned grid child with an explicit grid placement is laid
+   out inside its grid AREA, so `inset: 0` makes it exactly as tall as the
+   row the map defined, and its list scrolls inside that. */
+.map-layout { position: relative; }
+.map-canvas-card { grid-column: 1; grid-row: 1; }
+.map-sidebar {
+  position: absolute;
+  grid-column: 2;
+  grid-row: 1;
+  inset: 0;
+}
+
+@media (max-width: 1024px) {
+  /* stacked one above the other: the sidebar goes back in flow, and a
+     stretched one would be a mile long, so it gets a sensible fixed height */
+  .map-sidebar {
+    position: static;
+    height: 420px;
+    align-self: auto;
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   LEAFLET · the map is a real slippy map now
+   ───────────────────────────────────────────────────────────────────────
+   Leaflet ships a light-grey chrome designed for a white page. Dropped into
+   this theme unchanged it reads as a foreign widget bolted onto the app:
+   white popups, blue links, a grey attribution ribbon. Everything below
+   re-skins that chrome in the app's own material, and re-tints the
+   satellite imagery for dark mode.
+
+   The station/hull/zone colours are NOT redefined here. The map host div
+   carries `.pugmap`, so every `.pugmap .stn-*` rule written for the old SVG
+   map still matches the SVG paths Leaflet draws -- which is why the themed
+   four-state camera palette survived the rewrite untouched.
+   ═══════════════════════════════════════════════════════════════════════ */
+
+.pugmap-host { position: relative; z-index: 0; }
+.leaflet-container {
+  background: var(--sunk);
+  font-family: inherit;
+  font-size: 12px;
+  outline: none;
+}
+
+/* ── the imagery ──────────────────────────────────────────────────────
+   One tile set serves both themes. Esri imagery is shot in daylight, so on
+   the dark theme it glares against the surrounding glass; a filter costs
+   nothing and keeps the map sitting in the same room as the rest of the UI.
+   Light mode gets a much gentler lift -- the imagery is the subject there. */
+.leaflet-tile-pane { transition: filter var(--d-slow, 260ms) var(--ease); }
+[data-theme="dark"] .leaflet-tile-pane {
+  filter: brightness(.70) saturate(.80) contrast(1.06) hue-rotate(-6deg);
+}
+:root:not([data-theme="dark"]) .leaflet-tile-pane { filter: saturate(1.05) contrast(1.02); }
+
+/* ── attribution + scale, in the app's material ─────────────────────── */
+.leaflet-control-attribution {
+  background: color-mix(in srgb, var(--glass) 88%, transparent) !important;
+  color: var(--muted) !important;
+  border: 1px solid var(--glass-line);
+  border-right: none; border-bottom: none;
+  border-top-left-radius: 8px;
+  padding: 3px 8px;
+  font-size: 10px;
+  letter-spacing: .01em;
+  -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px);
+}
+.leaflet-control-attribution a { color: var(--muted) !important; text-decoration: none; }
+.leaflet-control-scale-line {
+  background: color-mix(in srgb, var(--glass) 86%, transparent);
+  border: 1px solid var(--glass-line);
+  border-top: none;
+  color: var(--ink-2);
+  font-family: var(--f-data);
+  font-size: 10px;
+  padding: 2px 6px;
+  -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px);
+}
+
+/* ── tooltips ─────────────────────────────────────────────────────────
+   The old map positioned a single floating div by hand, which clipped at
+   the canvas edges. Leaflet's own tooltip handles flipping and follows the
+   pointer; this is that tooltip wearing the app's card. */
+.leaflet-tooltip.pug-tip {
+  background: var(--glass-strong, var(--surface));
+  border: 1px solid var(--glass-line);
+  box-shadow: var(--glass-shadow);
+  color: var(--ink);
+  border-radius: 12px;
+  padding: 10px 12px;
+  /* Leaflet tooltips default to `white-space: nowrap` and shrink-wrap their
+     content. Switching to normal wrapping without also giving a width made
+     them collapse into a tall 90px column -- "Kolitmara North" broke across
+     three lines. width:max-content sizes to the longest line, then max-width
+     caps it, which is the behaviour a card wants. */
+  width: max-content;
+  min-width: 190px;
+  max-width: 280px;
+  white-space: normal;
+  font-size: 11.5px;
+  line-height: 1.5;
+  -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px);
+}
+.leaflet-tooltip.pug-tip::before { display: none; }   /* no pale arrow notch */
+.pug-tip h4 { margin: 0 0 6px; font-size: 12.5px; letter-spacing: .01em; }
+.pug-tip .meta-line { margin: 2px 0; color: var(--ink-2); }
+.pug-tip .tip-sep {
+  margin-top: 7px; padding-top: 6px;
+  border-top: 1px solid var(--glass-line);
+}
+.pug-tip .tip-hint {
+  margin-top: 7px; font-size: 10.5px; font-style: italic; color: var(--muted);
+}
+.pug-tip .tag-badge {
+  display: inline-block; border-radius: 999px;
+  padding: 1px 7px; margin: 1px; font-size: 10px; font-weight: 600;
+}
+
+/* permanent map labels: boundary captions and the focused tiger's ID.
+   The boundary captions are divIcon markers rather than tooltips, so they can
+   be anchored to each geometry's own north edge instead of stacking on a
+   shared centre point -- same typography, different carrier. */
+.boundary-label {
+  display: grid; place-items: center;
+  pointer-events: none;
+}
+.boundary-label span,
+.leaflet-tooltip.boundary-label-tip,
+.leaflet-tooltip.hull-label-tip {
+  background: none; border: none; box-shadow: none;
+  padding: 0;
+  font-family: var(--f-data);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: .14em;
+  /* Deliberately NOT var(--ink): these labels sit on satellite imagery, not
+     on the page. In light mode --ink is near-black, which put a dark caption
+     on dark forest canopy and made "CORE SANCTUARY" read as a smudge. The
+     ground under them is dark in both themes, so the label is light in both
+     themes, with a dark halo to hold it against bright terrain. */
+  color: #eafff3;
+  text-shadow: 0 0 4px rgba(2, 8, 5, .95), 0 0 9px rgba(2, 8, 5, .8);
+  white-space: nowrap;
+}
+.leaflet-tooltip.boundary-label-tip::before,
+.leaflet-tooltip.hull-label-tip::before { display: none; }
+.boundary-label span { white-space: nowrap; }
+
+/* Labels that only mean something at reserve scale. Below z10 the whole
+   reserve is a few pixels wide, so these stack into an unreadable pile over
+   central India; map.js adds `at-reserve-scale` once the view is close
+   enough for them to describe distinguishable things. */
+.pugmap .boundary-label,
+.pugmap .shift-label,
+.pugmap .leaflet-tooltip.hull-label-tip { visibility: hidden; }
+.pugmap.at-reserve-scale .boundary-label,
+.pugmap.at-reserve-scale .shift-label,
+.pugmap.at-reserve-scale .leaflet-tooltip.hull-label-tip { visibility: visible; }
+.leaflet-tooltip.hull-label-tip { font-size: 11px; letter-spacing: .04em; }
+
+/* ── movement furniture ───────────────────────────────────────────── */
+.shift-arrow { display: grid; place-items: center; font-size: 15px; line-height: 1; }
+.shift-arrow span { display: block; text-shadow: 0 0 4px rgba(2, 8, 5, .9); }
+.shift-label {
+  display: grid; place-items: center;
+  font-family: var(--f-data); font-size: 10px; font-weight: 700;
+  text-shadow: 0 0 4px rgba(2, 8, 5, .95);
+  pointer-events: none;
+}
+.radar-ping-label {
+  font-family: var(--f-data); font-size: 10.5px; font-weight: 700;
+  text-shadow: 0 0 5px rgba(2, 8, 5, .95);
+  pointer-events: none;
+}
+.pugmap .radar-ping {
+  animation: pug-ping 1.15s ease-out infinite;
+  transform-origin: center;
+}
+@keyframes pug-ping {
+  0%   { stroke-opacity: 1;  stroke-width: 2.5; }
+  70%  { stroke-opacity: .15; stroke-width: 11; }
+  100% { stroke-opacity: 0;  stroke-width: 13; }
+}
+
+/* ── station pins: keep the hover affordance the SVG map had ────────── */
+.pugmap .stn { cursor: pointer; transition: stroke-width 120ms var(--ease); }
+.pugmap .stn:hover { stroke-width: 3 !important; }
+.pugmap .hull { cursor: pointer; }
+
+/* ── stacking: the app's own floating controls sit above the map ─────
+   Leaflet's panes climb to z-index 400-700, which would put tiles and
+   popups over the layer bar, the zoom column and the detail drawer. */
+/* `isolation: isolate` makes the map card its own stacking context, so the
+   z-indexes below are measured against EACH OTHER and against Leaflet's
+   panes -- never against the page. Without it, 1000/1100/1200 competed with
+   every overlay in the application, and the map's furniture escaped its own
+   card: signing out from the map left the layer bar and zoom column floating
+   over the login screen, because a signed-out view is hidden by covering it,
+   not by unmounting it.
+
+   Fixing the overlay's z-index alone would have papered over that. This is
+   what stops it recurring the next time any overlay is added. */
+.map-canvas-card { isolation: isolate; }
+
+.map-layer-bar, .map-zoom-bar, .map-zoom-controls, .map-zoom-col { z-index: 1000; }
+.map-side-drawer { z-index: 1100; }
+.map-tooltip { z-index: 1200; }
+
+/* Leaflet insists on grabbing focus outlines for the container */
+.leaflet-container:focus, .leaflet-container:focus-visible { outline: none; }
+
+@media (prefers-reduced-motion: reduce) {
+  .pugmap .radar-ping { animation: none !important; }
+  .leaflet-tile-pane { transition: none !important; }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   SCROLLBARS · they were the last piece of untouched browser chrome
+   ───────────────────────────────────────────────────────────────────────
+   Nothing in this stylesheet had ever styled a scrollbar, so every scrolling
+   surface -- the page, the sidebar, the roster, every overflow panel -- drew
+   the operating system's default: a white track with a grey thumb. On the
+   dark theme that is a bright vertical stripe down the side of a near-black
+   interface, and it was the most visible unthemed thing left on screen.
+
+   Two mechanisms, because coverage differs: `scrollbar-color` is the
+   standard property (Firefox, and Chromium 121+), and the ::-webkit rules
+   cover the older Chromium/Edge builds a range office is likely to have.
+   ═══════════════════════════════════════════════════════════════════════ */
+
+:root {
+  --sb-thumb: #c2cfc7;
+  --sb-thumb-hover: #a6b8ac;
+  --sb-track: transparent;
+}
+[data-theme="dark"] {
+  --sb-thumb: #24402f;
+  --sb-thumb-hover: #35604a;
+  --sb-track: transparent;
+}
+
+* { scrollbar-width: thin; scrollbar-color: var(--sb-thumb) var(--sb-track); }
+
+*::-webkit-scrollbar { width: 10px; height: 10px; }
+*::-webkit-scrollbar-track { background: var(--sb-track); }
+*::-webkit-scrollbar-thumb {
+  background: var(--sb-thumb);
+  border-radius: 999px;
+  /* the transparent border is what makes the thumb read as a slim pill
+     rather than a bar filling the full gutter */
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+*::-webkit-scrollbar-thumb:hover { background: var(--sb-thumb-hover); background-clip: content-box; }
+*::-webkit-scrollbar-corner { background: transparent; }
+
+/* ── satellite coverage, stated rather than implied ──────────────────── */
+.map-imagery-note {
+  position: absolute;
+  left: 50%;
+  bottom: 34px;          /* clear of the scale bar and the attribution */
+  transform: translate(-50%, 6px);
+  z-index: 1000;
+  padding: 6px 12px;
+  border-radius: 999px;
+  background: var(--glass);
+  border: 1px solid var(--glass-line);
+  box-shadow: var(--glass-shadow);
+  -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px);
+  color: var(--muted);
+  font-size: 10.5px;
+  letter-spacing: .04em;
+  white-space: nowrap;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 180ms var(--ease), transform 180ms var(--ease);
+}
+.map-imagery-note.show { opacity: 1; transform: translate(-50%, 0); }
+
+/* a layer whose data does not reach this view: still togglable, visibly
+   not in effect */
+.map-layer-btn.unavailable {
+  opacity: .45;
+  text-decoration: line-through;
+  text-decoration-thickness: 1px;
+}

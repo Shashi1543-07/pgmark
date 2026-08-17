@@ -1,0 +1,13 @@
+{
+  "north": 21.820707853875017,
+  "south": 21.453068633086772,
+  "west": 79.013671875,
+  "east": 79.62890625,
+  "zoom": 13,
+  "source": "Esri World Imagery",
+  "attribution": "Imagery \u00a9 Esri, Maxar, Earthstar Geographics",
+  "tiles": "/ui/tiles/{z}/{x}/{y}.jpg",
+  "min_zoom": 10,
+  "max_native_zoom": 14,
+  "pad_deg": 0.06
+}
