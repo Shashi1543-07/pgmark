@@ -129,8 +129,8 @@ def process_upload(image_path: str, reserve_id: str, station_id: str | None,
                    after={"decision": "side_unknown", "side_source": side_evidence.source})
         return {"decision": "side_unknown", "image_id": image_id, "det_id": det_id,
                 "crop_id": crop_id, "queue_id": queue_id,
-                "species": species.label, "side": "unknown",
-                "side_confidence": side_evidence.confidence}
+                "species": species.label, "species_confidence": species.confidence,
+                "side": "unknown", "side_confidence": side_evidence.confidence}
 
     raw_keypoints = keypoints.estimate_keypoints(box, image_path)
     kp = keypoints.apply_physical_side(raw_keypoints, side_evidence.label)
@@ -286,6 +286,13 @@ def complete_side_unknown(crop_id: str, side: str, actor: str, model=None) -> di
 
     cfg = config.CONFIG.identify
     if kp is None:
+        # A refusal is a terminal outcome (CLAUDE.md rule 8), not "still
+        # needs a human" -- there are no keypoints to hand a reviewer, side
+        # or no side. Leaving the queue item open/claimed here was the bug:
+        # the reviewer's own answer was recorded (the audit entry below),
+        # but the item never closed, so it kept reappearing on every page
+        # load as if nothing had been answered.
+        repo_ext.close_review_items_for_crop(crop_id)
         repo.audit("review.side_confirmed", actor=actor, entity_type="crop", entity_id=crop_id,
                    after={"side": side, "outcome": "still_incomplete_pose"})
         return {"decision": "refuse", "crop_id": crop_id, "side": side,
@@ -296,6 +303,7 @@ def complete_side_unknown(crop_id: str, side: str, actor: str, model=None) -> di
     result = identify.identify_crop(image, kp, [], embed_model, cfg)
 
     if result["embedding"] is None:
+        repo_ext.close_review_items_for_crop(crop_id)
         repo.audit("review.side_confirmed", actor=actor, entity_type="crop", entity_id=crop_id,
                    after={"side": side, "outcome": "refuse", "reason": result["reason"]})
         return {"decision": "refuse", "crop_id": crop_id, "side": side, "reason": result["reason"]}

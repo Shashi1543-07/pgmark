@@ -1,6 +1,7 @@
 """A large, synthetic reserve for VISUAL evaluation at production scale --
-what does the map look like with 150 tigers on it, does the catalogue
-grid hold up, does a review queue in the hundreds feel different. This is
+what does the map look like with a realistic single-reserve population on
+it, does the catalogue grid hold up, does a review queue in the dozens
+feel different. This is
 NOT tools/seed_demo.py's job and does not touch it: seed_demo's eight
 planted scenarios ARE the alert-engine specification (CLAUDE.md is
 explicit about this) and must stay exactly as they are. This script has
@@ -43,7 +44,9 @@ CENTER = (21.6500, 79.3000)
 RNG = random.Random(20260815)
 
 GRID_SIDE = 9                      # 81 stations -- dense enough to be a real map
-N_INDIVIDUALS = 150
+N_INDIVIDUALS = 55                 # realistic for one reserve -- ATRW's whole
+                                    # China-wide catalogue is ~92 Amur tigers;
+                                    # 150 in a single reserve read as fabricated
 N_CYCLES = 6
 CYCLE_SPACING_DAYS = 46
 PROVISIONAL_FRACTION = 0.12

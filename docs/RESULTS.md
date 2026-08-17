@@ -116,6 +116,65 @@ around, not a number to round away.
 
 ---
 
+## Species classification
+
+10-class TorchScript classifier (`edge/models/species/species_classifier.ts`)
+distinguishing tiger from nine other labels a Pench camera trap actually
+produces: leopard, dhole, sambar, chital, boar, langur, human, vehicle,
+unknown. Same transfer-learning approach used for the physical-flank-side
+classifier (`edge/pipeline/classifiers.py`'s other TorchScript artifact,
+not otherwise written up in this file yet) -- a ResNet-50 backbone
+initialised from the local re-ID embedder (`edge/pipeline/identify.py`'s
+`TripletEmbedder`), not ImageNet or a scratch CNN, for the same reason: no
+network download is permitted even at training time, and the embedder's
+backbone already represents tiger body shape and texture well enough to
+tell individuals apart -- a more relevant starting point than random
+weights.
+
+Two-phase training (`tools/train_classifiers.py --arch pretrained
+--optimizer adamw`), class-weighted cross-entropy loss (both manifests are
+dominated by one class -- an unweighted loss lets the network default to
+it), best-checkpoint export rather than whichever epoch a training run
+happens to end on:
+
+| | |
+|---|---|
+| Train / val rows | 51,162 / 8,593 |
+| Validation accuracy | **92.94%** |
+| Optimizer | AdamW, weight_decay 1e-4, dropout 0.3 |
+| Epochs completed | 8 of a 24-epoch budget (stopped by a wall-clock time cap, not by running out of improvement -- accuracy was still climbing: 88.7% -> 91.3% -> 92.65% -> 92.94% across the last four checkpoints) |
+
+### A confidently wrong answer outside the training distribution -- found, not hidden
+
+The classifier has exactly 10 possible outputs. Shown a species that is
+not one of them, it cannot say so -- it has no "none of the above" signal
+to fall back on beyond the `unknown` label, which was trained to mean
+"an ambiguous or low-quality crop of an expected species," not "a
+different animal entirely." Tested against a clear, unambiguous photo of
+an adult male lion (full mane, no stripes -- about as visually distinct
+from a tiger as two big cats get): the model calls it tiger at **96.78%
+confidence**, reproduced identically across three separate uploads of the
+same image, not a one-off. `species` came back a real, specific label
+with a genuine (if wrong) confidence score -- this is the model's honest
+best guess among its 10 classes, not a fallback or an error path.
+
+This is a known, textbook limitation of closed-set classifiers in general,
+not specific to how this one was built or trained: it has never been
+taught to recognise "a big cat I don't know," because its training data
+contains no such examples, only the species that actually appear in
+Pench's camera traps. Geographically, the lion case itself is low field
+risk -- Asiatic lions exist only in Gir Forest, Gujarat, nowhere near
+Pench -- but the same weakness applies to any species that genuinely
+could appear in a Pench camera trap without being one of the 10 trained
+classes (jackal, hyena, civet, and wild-dog species other than dhole are
+the plausible real candidates). A real fix is open-set recognition --
+either an explicit "unknown species" negative class trained on a broad
+set of non-target animals, or a calibrated out-of-distribution detector
+on top of the existing logits -- not attempted here; flagged for a
+decision, not silently worked around.
+
+---
+
 ## Re-identification
 
 See `docs/MODEL_CHOICES.md` for the model and rectification decisions,

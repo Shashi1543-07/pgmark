@@ -500,18 +500,21 @@
           <div class="card pad"><h2>Thresholds in force</h2><dl class="kv" id="cfgKv"></dl></div>
         </div>
         <div class="hr"></div>
-        <div class="banner">
-          <b>Demo data — for rehearsal and UI review only</b>
-          <span>Each option below <b>replaces every reserve, run, tiger and alert
-            currently on this machine</b> — there is no undo but loading a different
-            option. Never use this on a machine holding real field data.</span>
+        <div class="banner" id="seedModeBanner">
+          <b id="seedModeLabel">Checking current data…</b>
+          <span id="seedModeNote"></span>
         </div>
         <div class="card pad">
           <h2>Load or clear</h2>
-          <div class="toolbar" style="margin-top:var(--s3)">
-            <button type="button" id="seedBulkBtn">Load a big demo (150 tigers)</button>
+          <p class="note" style="margin:0 0 var(--s2)">Loading a demo automatically saves whatever
+            data you've fed in by hand first, and "Show my live data" brings it back exactly —
+            safe to switch back and forth during a presentation. <b>"Clear all data" is the one
+            exception: it is permanent</b>, with nothing saved to restore from.</p>
+          <div class="toolbar" style="margin-top:var(--s3);flex-wrap:wrap">
+            <button type="button" id="seedBulkBtn">Load a big demo (55 tigers)</button>
             <button type="button" id="seedDemoBtn">Load the small spec demo (13 tigers)</button>
-            <button type="button" class="danger" id="seedBlankBtn">Clear all data</button>
+            <button type="button" class="primary" id="restoreLiveBtn">Show my live data</button>
+            <button type="button" class="danger" id="seedBlankBtn">Clear all data (permanent)</button>
             <span class="note" id="seedMsg"></span>
           </div>
         </div>
@@ -924,14 +927,21 @@
       <div class="modal-body">
         <p class="note" style="margin:0">Fold a provisional or duplicated tiger record into an existing primary individual. Re-assigns all crops, sightings, and territory records.</p>
         <div class="form-row" style="margin-top:var(--s3)">
-          <label for="mergeSourceId">Source Tiger ID (Will be superseded)</label>
-          <input type="text" id="mergeSourceId" readonly style="background:var(--surface-2);font-weight:bold">
+          <label>Source tiger (will be superseded)</label>
+          <div style="display:flex;align-items:center;gap:var(--s3)">
+            <div class="tiger-flank-box" style="width:56px;height:56px;flex-shrink:0" id="mergeSourceThumb"></div>
+            <input type="text" id="mergeSourceId" readonly style="background:var(--surface-2);font-weight:bold;flex:1">
+          </div>
+          <p id="mergeSourceNoPhoto" class="auth-error" hidden style="margin-top:var(--s2)">
+            This tiger has no saved photo on file. You cannot visually verify this merge from a
+            picture &mdash; only proceed if you are confident from other evidence (same camera,
+            same day, same track). If unsure, Cancel instead of guessing.
+          </p>
         </div>
-        <div class="form-row" style="margin-top:var(--s2)">
-          <label for="mergeTargetId">Target Tiger ID (Surviving entity)</label>
-          <select id="mergeTargetId" required style="width:100%;padding:8px;border:1px solid var(--line);border-radius:var(--r-ctl)">
-            <option value="">-- Select surviving tiger --</option>
-          </select>
+        <div class="form-row" style="margin-top:var(--s3)">
+          <label>Target tiger (surviving entity) &mdash; compare the stripes, then click the matching tiger</label>
+          <input type="hidden" id="mergeTargetId" required>
+          <div id="mergeTargetPicker" style="display:flex;flex-direction:column;gap:6px;max-height:300px;overflow-y:auto;margin-top:var(--s2)"></div>
         </div>
         <div id="mergeError" class="auth-error" hidden></div>
       </div>

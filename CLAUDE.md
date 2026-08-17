@@ -22,7 +22,7 @@ GPU and no internet.** Every decision follows from that.
 ```
 python -m tools.seed_demo --reset          # rebuild the demo database
 python -m uvicorn edge.app:app --port 7860 # run  → http://127.0.0.1:7860
-python -m tests.live.test_routes           # verify: 42 checks, must be 42/42
+python -m tests.live.test_routes           # verify: 184 checks, must be N/N (count grows as features are added)
 ```
 
 Run from the repo root. These are `python -m` module invocations.

@@ -391,8 +391,19 @@ def dev_seed(payload: dict = Body(...), user: dict = Depends(require_role(*confi
     args = _SEED_MODULES.get(which)
     if not args:
         raise HTTPException(400, "which must be 'bulk', 'demo', or 'blank'")
+
+    # Loading seed data replaces the whole database, and would otherwise
+    # destroy whatever the operator fed in by hand (real test uploads,
+    # confirmed/merged tigers). Snapshot the live state first -- but only
+    # on an actual live->seed transition, not on every seed load, or
+    # loading a second seed on top of the first would overwrite the real
+    # live snapshot with a snapshot of seed data instead.
+    backed_up = False
     repo.close_all()
     try:
+        if which in ("bulk", "demo") and repo_ext.data_mode() == "live":
+            repo_ext.backup(repo_ext._live_backup_path())
+            backed_up = True
         result = subprocess.run(
             [sys.executable, "-m", *args], cwd=str(Path(__file__).resolve().parent.parent),
             capture_output=True, text=True, timeout=300)
@@ -400,8 +411,36 @@ def dev_seed(payload: dict = Body(...), user: dict = Depends(require_role(*confi
         repo.close_all()
     if result.returncode != 0:
         raise HTTPException(500, f"seed failed:\n{result.stderr[-3000:]}")
-    repo.audit("dev.seed", actor=user["username"], after={"which": which})
-    return {"ok": True, "which": which, "output": result.stdout.strip()}
+    repo_ext.set_data_mode("seeded" if which in ("bulk", "demo") else "live")
+    repo.audit("dev.seed", actor=user["username"],
+               after={"which": which, "live_data_backed_up": backed_up})
+    return {"ok": True, "which": which, "output": result.stdout.strip(),
+            "live_data_backed_up": backed_up}
+
+
+@app.post("/api/dev/restore-live")
+def dev_restore_live(user: dict = Depends(require_role(*config.PERMISSIONS["dev_seed"]))) -> dict:
+    """Swap seeded demo data back out for whatever live data was snapshotted
+    the last time /api/dev/seed backed it up. Never touches the snapshot
+    file itself -- restoring is repeatable within a session (load a demo,
+    go back to live, load a different demo, go back to live again) without
+    losing the original live data partway through."""
+    backup_path = repo_ext._live_backup_path()
+    if not backup_path.is_file():
+        raise HTTPException(404, "no saved live data to restore -- nothing has been backed up yet")
+    repo.close_all()
+    try:
+        repo_ext.restore(backup_path)
+    finally:
+        repo.close_all()
+    repo_ext.set_data_mode("live")
+    repo.audit("dev.restore_live", actor=user["username"])
+    return {"ok": True}
+
+
+@app.get("/api/dev/data-mode")
+def dev_data_mode(user: dict = Depends(current_user)) -> dict:
+    return {"mode": repo_ext.data_mode(), "live_backup_available": repo_ext._live_backup_path().is_file()}
 
 
 # ── runs ────────────────────────────────────────────────────────────────

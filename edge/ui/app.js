@@ -84,10 +84,36 @@ function stripeRail(id, cls = '') {
   </svg>`;
 }
 
-function flankThumb(id, cls = '') {
+function flankThumb(id, cls = '', eager = false, honest = false) {
+  const loading = eager ? 'eager' : 'lazy';
+  // fetchpriority matters separately from loading: "eager" only stops the
+  // browser from DEFERRING an off-screen image, it says nothing about
+  // ordering among the many other eager images a busy page (30+ tiger
+  // cards, the provisional table) can be requesting at the same moment.
+  // Browsers cap concurrent connections per origin at 6 -- confirmed via
+  // the server's own access log: a real identify-photo comparator request
+  // never reached the server at all, not even as a failure, consistent
+  // with it losing that queue and being dropped when its view changed
+  // before a connection freed up. fetchpriority="high" tells the browser
+  // this specific request should jump the queue.
+  const priority = eager ? ' fetchpriority="high"' : '';
+  // honest=true skips the stripeRail() decoration entirely -- for a merge
+  // decision specifically, a generated pattern that merely LOOKS like a
+  // photo is worse than no photo, because it invites comparing two fakes
+  // and believing something real was checked.
+  if (honest) {
+    const compact = cls.includes('tall') ? '' : ' compact';
+    return `<span class="stripe-thumb ${cls}">
+      <img src="/api/individuals/${encodeURIComponent(id)}/thumbnail" class="real-crop"
+           alt="Flank photo for ${esc(id)}" loading="${loading}"${priority}
+           onload="this.classList.add('loaded')"
+           onerror="this.style.display='none'; this.parentNode.querySelector('.no-photo').hidden=false">
+      <span class="no-photo${compact}" hidden>No photo on file</span>
+    </span>`;
+  }
   return `<span class="stripe-thumb ${cls}">
     <img src="/api/individuals/${encodeURIComponent(id)}/thumbnail" class="real-crop"
-         alt="Flank photo for ${esc(id)}" loading="lazy"
+         alt="Flank photo for ${esc(id)}" loading="${loading}"${priority}
          onload="this.classList.add('loaded')" onerror="this.remove()">
     ${stripeRail(id, cls)}
   </span>`;
@@ -101,15 +127,19 @@ function flankThumb(id, cls = '') {
    to a reviewer as the frame under review, and nothing on screen says so.
    A reviewer must either see the actual pixels or be told plainly that
    there are none. */
-function cropThumb(cropId, fallbackId, cls = '') {
+function cropThumb(cropId, fallbackId, cls = '',
+                    noPhotoMsg = 'No photo saved for this frame. Do not confirm an identity — use Skip and report it.',
+                    eager = false) {
+  // See flankThumb()'s comment on fetchpriority -- loading="eager" alone
+  // does not win a busy page's connection-pool queue.
+  const priority = eager ? ' fetchpriority="high"' : '';
   return `<span class="stripe-thumb ${cls}">
     <img src="/api/crops/${encodeURIComponent(cropId)}/image" class="real-crop"
-         alt="Photo under review" loading="lazy"
+         alt="Photo under review" loading="${eager ? 'eager' : 'lazy'}"${priority}
          onload="this.classList.add('loaded')"
          onerror="this.style.display='none';
                   this.parentNode.querySelector('.no-photo').hidden=false">
-    <span class="no-photo" hidden>No photo saved for this frame.
-      Do not confirm an identity — use Skip and report it.</span>
+    <span class="no-photo" hidden>${esc(noPhotoMsg)}</span>
   </span>`;
 }
 
@@ -306,7 +336,15 @@ function guideInit() {
 RENDER.run = async () => {
   const runs = await api(`/api/runs?reserve_id=${S.reserve.reserve_id}`);
   if (!runs.length) { $('#runStats').innerHTML = '<div class="empty">No cycles processed yet.</div>'; return; }
-  S.run = await api(`/api/runs/${runs[0].run_id}`);
+  // Prefer the newest run that actually finished, not just the newest run
+  // row -- an Import Photos wizard closed after the preflight step (before
+  // Confirm) leaves a real row behind with a started_at newer than any
+  // completed cycle and finished_at still null. Without this, S.run --
+  // which the map, alerts, quarantine restore and triage all read from --
+  // silently points at that empty, abandoned attempt instead of the
+  // reserve's actual data.
+  const best = runs.find(r => r.finished_at) || runs[0];
+  S.run = await api(`/api/runs/${best.run_id}`);
   const c = S.run.counts;
 
   $('#runTitle').textContent = S.run.cycle_label || S.run.run_id;
@@ -993,19 +1031,43 @@ RENDER.tigers = async () => {
             <button type="button" class="btn small" id="rebuildEntitiesBtn">⟲ Rebuild Biometric Entities</button>
           </div>
         </div>
+        <div class="card pad" style="background:#fffaf5;border-color:#f0c987;margin-top:var(--s3)">
+          <p style="margin:0;font-size:13.5px;line-height:1.55"><strong>What "Provisional" means:</strong>
+            the computer found stripes it does not recognise and made a new record. For each tiger below,
+            look at the photo and pick one:</p>
+          <ul style="margin:8px 0 0 20px;font-size:13.5px;line-height:1.65">
+            <li><strong>It really is a tiger nobody has on record</strong> &mdash; click
+              <b>Confirm New Tiger</b>. This is the common case, and you can select several at once below.</li>
+            <li><strong>It is actually the same animal as one already in the catalogue</strong> (its other
+              flank, or a repeat sighting that scored just under the match threshold) &mdash; click
+              <b>Merge Into Existing&hellip;</b> and pick the matching tiger by its photo.</li>
+            <li><strong>Not sure yet?</strong> Leave it as Provisional. Nothing stops working &mdash; it still
+              shows on the map and gets tracked. You do not have to clear this list in one sitting.</li>
+          </ul>
+        </div>
+        <div id="provBulkBar" class="toolbar" style="margin-top:var(--s3);align-items:center;gap:var(--s3);display:none">
+          <span id="provBulkCount" class="note" style="margin:0"></span>
+          <button type="button" class="btn small primary" id="provBulkConfirm">Confirm Selected as New Tigers</button>
+          <button type="button" class="btn small" id="provBulkClear">Clear Selection</button>
+        </div>
         <table style="margin-top:var(--s3)">
           <thead>
-            <tr><th>Provisional ID</th><th>Reserve</th><th>First Sighted</th><th>Crops</th><th>Actions</th></tr>
+            <tr>
+              <th style="width:28px"><input type="checkbox" id="provSelectAll" title="Select all"></th>
+              <th>Photo</th><th>Provisional ID</th><th>First Sighted</th><th>Sightings</th><th>Actions</th>
+            </tr>
           </thead>
           <tbody>
             ${items.map(p => `
               <tr>
+                <td><input type="checkbox" class="provRowCheck" data-ind="${esc(p.ind_id)}"></td>
+                <td><div class="tiger-flank-box" style="width:44px;height:44px">${flankThumb(p.ind_id, '', true, true)}</div></td>
                 <td><strong>${esc(p.ind_id)}</strong></td>
-                <td>${esc(p.reserve_id)}</td>
                 <td>${esc((p.first_seen || '').slice(0, 10) || '—')}</td>
                 <td>${nf(p.crop_count || 0)}</td>
-                <td>
-                  <button type="button" class="btn small primary mergeTigerBtn" data-ind="${esc(p.ind_id)}">Merge into Existing…</button>
+                <td style="display:flex;gap:6px;flex-wrap:wrap">
+                  <button type="button" class="btn small primary confirmTigerBtn" data-ind="${esc(p.ind_id)}">Confirm New Tiger</button>
+                  <button type="button" class="btn small mergeTigerBtn" data-ind="${esc(p.ind_id)}">Merge Into Existing&hellip;</button>
                 </td>
               </tr>`).join('')}
           </tbody>
@@ -1014,6 +1076,52 @@ RENDER.tigers = async () => {
       provCard.querySelectorAll('.mergeTigerBtn').forEach(b => {
         b.onclick = () => _openMergeModal(b.dataset.ind);
       });
+
+      const promoteOne = async (indId) => {
+        await api(`/api/individuals/${encodeURIComponent(indId)}/promote`, { method: 'POST' });
+      };
+      provCard.querySelectorAll('.confirmTigerBtn').forEach(b => {
+        b.onclick = async () => {
+          b.disabled = true; b.textContent = 'Confirming…';
+          try {
+            await promoteOne(b.dataset.ind);
+            await RENDER.tigers();
+          } catch (e) {
+            alert('Could not confirm this tiger: ' + (e.detail || e.message));
+            b.disabled = false; b.textContent = 'Confirm New Tiger';
+          }
+        };
+      });
+
+      const updateProvBulkBar = () => {
+        const checked = provCard.querySelectorAll('.provRowCheck:checked');
+        const bar = $('#provBulkBar');
+        bar.style.display = checked.length ? 'flex' : 'none';
+        $('#provBulkCount').textContent = `${checked.length} selected`;
+      };
+      provCard.querySelectorAll('.provRowCheck').forEach(cb => { cb.onchange = updateProvBulkBar; });
+      $('#provSelectAll').onchange = (e) => {
+        provCard.querySelectorAll('.provRowCheck').forEach(cb => { cb.checked = e.target.checked; });
+        updateProvBulkBar();
+      };
+      $('#provBulkClear').onclick = () => {
+        provCard.querySelectorAll('.provRowCheck').forEach(cb => { cb.checked = false; });
+        $('#provSelectAll').checked = false;
+        updateProvBulkBar();
+      };
+      $('#provBulkConfirm').onclick = async (e) => {
+        const btn = e.currentTarget;
+        const ids = [...provCard.querySelectorAll('.provRowCheck:checked')].map(cb => cb.dataset.ind);
+        if (!ids.length) return;
+        btn.disabled = true; btn.textContent = `Confirming ${ids.length}…`;
+        const failed = [];
+        for (const id of ids) {
+          try { await promoteOne(id); } catch (e2) { failed.push(id); }
+        }
+        if (failed.length) alert(`Confirmed ${ids.length - failed.length} of ${ids.length}. Failed: ${failed.join(', ')}`);
+        await RENDER.tigers();
+      };
+
       $('#rebuildEntitiesBtn')?.addEventListener('click', async () => {
         try {
           const res = await api('/api/individuals/rebuild-entities', { method: 'POST', body: { reserve_id: rid } });
@@ -1043,13 +1151,48 @@ function _openMergeModal(sourceIndId) {
   const modal = $('#mergeIndividualModal');
   if (!modal) return;
   $('#mergeSourceId').value = sourceIndId;
-  const targetSelect = $('#mergeTargetId');
+  const noPhotoWarn = $('#mergeSourceNoPhoto');
+  noPhotoWarn.hidden = true;
+  // honest=true: no stripeRail() decoration here. A generated pattern that
+  // merely looks like a photo is worse than no photo for a merge decision
+  // specifically -- it invites comparing two fakes and believing something
+  // real was checked. eager=true: this modal is the whole point of being
+  // open, not an off-screen list item -- see the loading="lazy" bug fixed
+  // earlier tonight for the identify-photo comparator, same root cause.
+  $('#mergeSourceThumb').innerHTML = flankThumb(sourceIndId, 'wide tall', true, true);
+  const srcImg = $('#mergeSourceThumb img');
+  if (srcImg) srcImg.addEventListener('error', () => { noPhotoWarn.hidden = false; }, { once: true });
+  $('#mergeTargetId').value = '';
+  // A merge folds one identity into another -- picking the target from ID
+  // text alone was exactly the gap being reported: nothing on screen let a
+  // reviewer actually compare stripes before committing to "these are the
+  // same tiger". Same clickable-card pattern as the review queue's own
+  // candidate picker (.cand), just populated with every other tiger here.
   const otherTigers = (S.tigers || []).filter(t => t.ind_id !== sourceIndId);
-  targetSelect.innerHTML = '<option value="">-- Select surviving tiger --</option>' +
-    otherTigers.map(t => `<option value="${esc(t.ind_id)}">${esc(t.ind_id)}${t.label ? ` (${esc(t.label)})` : ''} - ${t.provisional ? 'Provisional' : 'Confirmed'}</option>`).join('');
+  const picker = $('#mergeTargetPicker');
+  picker.innerHTML = otherTigers.length ? otherTigers.map(t => `
+    <button type="button" class="cand" data-ind="${esc(t.ind_id)}" aria-pressed="false">
+      ${flankThumb(t.ind_id, '', true, true)}
+      <div style="flex:1">
+        <div class="k">${esc(t.ind_id)}${t.label ? ` (${esc(t.label)})` : ''}</div>
+        <div class="e">${t.provisional ? 'Provisional' : 'Confirmed'}${t.crop_count != null ? ` &middot; ${nf(t.crop_count)} sighting${t.crop_count === 1 ? '' : 's'}` : ''}</div>
+      </div>
+    </button>`).join('') : '<p class="note">No other tigers in this reserve to merge into.</p>';
   $('#mergeError').hidden = true;
   modal.hidden = false;
 }
+
+$('#mergeTargetPicker')?.addEventListener('click', (e) => {
+  const btn = e.target.closest('.cand');
+  if (!btn) return;
+  $('#mergeTargetId').value = btn.dataset.ind;
+  $('#mergeTargetPicker').querySelectorAll('.cand').forEach(b => {
+    const picked = b === btn;
+    b.classList.toggle('selected', picked);
+    b.setAttribute('aria-pressed', String(picked));
+  });
+  $('#mergeError').hidden = true;
+});
 
 $('#mergeIndividualClose')?.addEventListener('click', () => { $('#mergeIndividualModal').hidden = true; });
 $('#mergeIndividualCancel')?.addEventListener('click', () => { $('#mergeIndividualModal').hidden = true; });
@@ -1112,9 +1255,9 @@ function filterAndRenderTigers() {
             <strong style="font-family:var(--f-mono);font-size:13.5px">${esc(t.ind_id)}</strong>
             ${t.label ? `<span style="font-size:12px;color:var(--muted)">· ${esc(t.label)}</span>` : ''}
           </div>
-          ${t.provisional 
-            ? '<span class="tag prov" style="font-size:10.5px">Provisional</span>' 
-            : '<span class="tag" style="background:#e6f4ea;color:#137333;font-size:10.5px">Confirmed</span>'}
+          ${t.provisional
+            ? '<span class="tag prov" style="font-size:10.5px" title="Not yet reviewed by a person. See the Provisional Enrolments list above to confirm or merge it.">Provisional</span>'
+            : '<span class="tag" style="background:#e6f4ea;color:#137333;font-size:10.5px" title="A person has confirmed this is a real, distinct tiger.">Confirmed</span>'}
         </div>
         <div class="tiger-card-body">
           <div class="tiger-flank-box">
@@ -1138,6 +1281,21 @@ function filterAndRenderTigers() {
   gridEl.querySelectorAll('.tiger-card-rich').forEach(card => {
     card.onclick = () => showTigerDetail(card.dataset.ind);
   });
+
+  // A "Catalogue ID" link elsewhere (identify-a-photo match, etc.) sets
+  // S.tigerJumpTo and switches to this view -- without this, landing here
+  // just dumps a reader into a wall of 31 look-alike IDs with no way to
+  // tell which one they were just told matched.
+  if (S.tigerJumpTo) {
+    const target = S.tigerJumpTo;
+    S.tigerJumpTo = null;
+    const card = gridEl.querySelector(`[data-ind="${CSS.escape(target)}"]`);
+    if (card) {
+      card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      card.classList.add('pulse-highlight');
+      setTimeout(() => card.classList.remove('pulse-highlight'), 2500);
+    }
+  }
 }
 
 async function showTigerDetail(indId) {
@@ -1151,7 +1309,7 @@ async function showTigerDetail(indId) {
       <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:var(--s3)">
         <div style="display:flex;gap:var(--s4);align-items:center">
           <div class="tiger-flank-box" style="width:96px;height:96px">
-            ${flankThumb(t.ind_id, 'wide tall')}
+            ${flankThumb(t.ind_id, 'wide tall', true)}
           </div>
           <div>
             <div style="display:flex;align-items:center;gap:8px">
@@ -1294,7 +1452,7 @@ function drawIdResult(r) {
           <div>
             <h3>Uploaded Flank Query</h3>
             <div class="tiger-flank-box" style="width:100%;height:180px;margin-top:var(--s2)">
-              <div style="color:#aaa;font-size:12px">Uploaded Image Frame</div>
+              ${r.crop_id ? cropThumb(r.crop_id, null, 'wide tall', 'No crop image was saved for this upload.', true) : '<div class="note" style="padding:var(--s3)">No crop was extracted from this photo.</div>'}
             </div>
             <dl class="kv" style="margin-top:var(--s3)">
               <dt>Flank Side</dt><dd>${r.side === 'L' ? 'Left Flank' : 'Right Flank'}</dd>
@@ -1304,11 +1462,11 @@ function drawIdResult(r) {
           <div>
             <h3>Matched Catalogue Flank (${esc(best.ind_id)})</h3>
             <div class="tiger-flank-box" style="width:100%;height:180px;margin-top:var(--s2)">
-              ${flankThumb(best.ind_id, 'wide tall')}
+              ${flankThumb(best.ind_id, 'wide tall', true)}
             </div>
             <dl class="kv" style="margin-top:var(--s3)">
               <dt>Cosine Score</dt><dd><b>${best.score.toFixed(3)}</b></dd>
-              <dt>Catalogue ID</dt><dd><a href="#tigers">${esc(best.ind_id)}</a></dd>
+              <dt>Catalogue ID</dt><dd><a href="#tigers" onclick="S.tigerJumpTo='${esc(best.ind_id)}';">${esc(best.ind_id)}</a></dd>
             </dl>
           </div>
         </div>
@@ -1454,7 +1612,7 @@ function drawReview() {
       <h2>${it.rect_ok ? 'Which tiger is this?' : 'The computer could not read this photo'}</h2>
       <div class="pair" style="margin-top:var(--s4)">
         <div style="display:flex;flex-direction:column;gap:var(--s2)">
-          ${cropThumb(it.crop_id, it.crop_id, 'wide tall')}
+          ${cropThumb(it.crop_id, it.crop_id, 'wide tall', undefined, true)}
           ${it.image_id ? `<a class="btn" target="_blank" rel="noopener"
             href="/api/images/${encodeURIComponent(it.image_id)}/file">
             See the whole photo</a>` : ''}
@@ -1576,13 +1734,13 @@ function drawCrossFlankReview() {
               <div class="card pad" style="background:var(--surface-2)">
                 <h3>Left Flank: ${esc(c.l_ind_id)}</h3>
                 <div class="tiger-flank-box" style="width:100%;height:140px;margin-top:var(--s2)">
-                  ${flankThumb(c.l_ind_id, 'wide tall')}
+                  ${flankThumb(c.l_ind_id, 'wide tall', true)}
                 </div>
               </div>
               <div class="card pad" style="background:var(--surface-2)">
                 <h3>Right Flank: ${esc(c.r_ind_id)}</h3>
                 <div class="tiger-flank-box" style="width:100%;height:140px;margin-top:var(--s2)">
-                  ${flankThumb(c.r_ind_id, 'wide tall')}
+                  ${flankThumb(c.r_ind_id, 'wide tall', true)}
                 </div>
               </div>
             </div>
@@ -2470,6 +2628,8 @@ RENDER.ops = async () => {
   const refreshBtn = $('#refreshReadinessBtn');
   if (refreshBtn) refreshBtn.onclick = () => RENDER.ops();
 
+  await renderSeedModeStatus();
+
   // Operations DB maintenance actions
   const actionMsg = $('#opsActionMsg');
   const actionRes = $('#opsActionResult');
@@ -2592,10 +2752,19 @@ RENDER.ops = async () => {
    (edge/app.py's /api/dev/seed) rather than in-process, so a reload here
    is the reliable way back to a consistent UI -- every screen's own
    in-memory state (S.run, S.tigers, the guide, the wizard) was built
-   against a database that no longer exists otherwise. */
+   against a database that no longer exists otherwise. Loading 'bulk' or
+   'demo' has the server snapshot whatever's live first (once, not on
+   every load -- see /api/dev/seed's own comment), so this is safe to use
+   mid-presentation and reverse with restoreLiveData() below. 'blank' is
+   the one genuinely permanent option -- no snapshot is taken for it. */
 async function devSeed(which, label) {
-  if (!confirm(`This replaces every reserve, run, tiger and alert currently on this `
-    + `machine with ${label}. There is no undo but loading something else. Continue?`)) return;
+  const permanent = which === 'blank';
+  const warning = permanent
+    ? `This permanently clears every reserve, run, tiger and alert on this machine. `
+      + `There is no saved copy to restore afterward. Continue?`
+    : `This will show ${label} instead of your current data. Whatever's currently active gets `
+      + `saved automatically first, and "Show my live data" brings it back. Continue?`;
+  if (!confirm(warning)) return;
   $$('#v-ops .toolbar button').forEach((b) => { b.disabled = true; });
   $('#seedMsg').textContent = 'Working…';
   try {
@@ -2607,11 +2776,59 @@ async function devSeed(which, label) {
   }
 }
 $('#seedBulkBtn').addEventListener('click',
-  () => devSeed('bulk', 'a large synthetic reserve (~150 tigers)'));
+  () => devSeed('bulk', 'a large synthetic reserve (~55 tigers)'));
 $('#seedDemoBtn').addEventListener('click',
   () => devSeed('demo', 'the small spec-demo reserve (13 tigers)'));
 $('#seedBlankBtn').addEventListener('click',
   () => devSeed('blank', 'an empty reserve'));
+
+async function restoreLiveData() {
+  if (!confirm('Show your live data again, in place of the demo that\'s currently active? '
+    + 'The demo data itself is not deleted -- you can load it again later.')) return;
+  $$('#v-ops .toolbar button').forEach((b) => { b.disabled = true; });
+  $('#seedMsg').textContent = 'Restoring…';
+  try {
+    await api('/api/dev/restore-live', { method: 'POST' });
+    location.reload();
+  } catch (e) {
+    $('#seedMsg').textContent = `Failed: ${e.detail || e.message}`;
+    $$('#v-ops .toolbar button').forEach((b) => { b.disabled = false; });
+  }
+}
+$('#restoreLiveBtn').addEventListener('click', restoreLiveData);
+
+async function renderSeedModeStatus() {
+  const banner = $('#seedModeBanner');
+  const label = $('#seedModeLabel');
+  const note = $('#seedModeNote');
+  const restoreBtn = $('#restoreLiveBtn');
+  if (!banner) return;
+  try {
+    const d = await api('/api/dev/data-mode');
+    if (d.mode === 'seeded') {
+      banner.style.background = '#fef3c7';
+      banner.style.borderColor = '#d97706';
+      label.textContent = 'Showing: Demo Data';
+      label.style.color = '#92400e';
+      note.textContent = d.live_backup_available
+        ? 'Your own data is saved and hidden right now -- click "Show my live data" to bring it back.'
+        : 'No live data has been saved yet (nothing was active before this demo was loaded).';
+      if (restoreBtn) restoreBtn.disabled = !d.live_backup_available;
+    } else {
+      banner.style.background = '#e6f4ea';
+      banner.style.borderColor = '#137333';
+      label.textContent = 'Showing: Your Live Data';
+      label.style.color = '#137333';
+      note.textContent = d.live_backup_available
+        ? 'A saved demo-time snapshot also exists if you need to restore it again.'
+        : 'This is the data you have fed in yourself.';
+      if (restoreBtn) restoreBtn.disabled = !d.live_backup_available;
+    }
+  } catch (e) {
+    label.textContent = 'Could not check current data mode';
+    note.textContent = e.detail || e.message || '';
+  }
+}
 
 /* ── sync ──────────────────────────────────────────────────────────────── */
 RENDER.sync = async () => {

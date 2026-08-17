@@ -555,6 +555,19 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 .cand[aria-pressed="true"] { border-color: var(--pelage); background: #fdf6f0; box-shadow: 0 0 0 2px rgba(223, 139, 61, 0.35); }
 .cand .k { font-family: var(--f-data); font-weight: 700; color: var(--ink); }
 .cand .e { font-size: 12.5px; color: var(--muted); margin-top: 3px; }
+
+/* "Jump to this tiger" landing effect -- clicking a catalogue ID (e.g. from
+   the identify-a-photo match) switches views and scrolls the grid, and
+   without this a reader has to re-read 31 IDs to find which card just
+   moved into the middle of the screen. */
+@keyframes pugmark-jump-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(223, 139, 61, 0.55); }
+  50% { box-shadow: 0 0 0 12px rgba(223, 139, 61, 0); }
+}
+.pulse-highlight {
+  animation: pugmark-jump-pulse 0.8s ease-out 3;
+  border-color: var(--pelage) !important;
+}
 kbd {
   font-family: var(--f-data); font-size: 11px; padding: 1px 5px;
   border: 1px solid var(--line); border-bottom-width: 2px;
@@ -1867,6 +1880,33 @@ kbd {
   border-radius: 4px;
 }
 
+/* The small-tile default above (28x52, sized for a grid-card icon) was
+   winning over .stripe-thumb.wide/.tall's own sizing everywhere .tiger-
+   flank-box wraps a thumbnail, including the large photo comparators
+   (identify-a-photo result, cross-flank review, tiger detail header) that
+   pass 'wide tall' specifically to ask for a legible, full-size image --
+   real crops were being squeezed into a 28x52 sliver regardless of how
+   large their container actually was. Three classes beats two, so this
+   correctly overrides only where 'wide tall' was actually requested. */
+.tiger-flank-box .stripe-thumb.wide.tall {
+  width: 100%;
+  height: 100%;
+  border-radius: 4px;
+}
+
+/* stripeRail()'s decorative <svg class="stripe"> is a sibling of the real
+   photo, not sized by the override above (different class, .stripe not
+   .stripe-thumb) -- without this it stays pinned to its small 34x108
+   default and floats in the corner of the now much larger box instead of
+   filling it, whenever a real photo genuinely isn't available here. */
+.tiger-flank-box .stripe-thumb.wide.tall .stripe {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+}
+
 .tiger-meta-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -2702,3 +2742,17 @@ kbd {
   border-radius: 4px;
 }
 .stripe-thumb .no-photo[hidden] { display: none; }
+
+/* Small list-row thumbnails (merge/candidate cards) -- the full-size
+   message above assumes a big single-photo comparator; unmodified it would
+   force every such row to a 120px minimum height regardless of its
+   neighbours. */
+.stripe-thumb .no-photo.compact {
+  min-height: 0;
+  padding: 2px;
+  font-size: 8.5px;
+  line-height: 1.2;
+  border-width: 1px;
+}
+
+  

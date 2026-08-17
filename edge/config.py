@@ -356,11 +356,23 @@ class ClassifierTraining:
     epochs: int = 24
     batch_size: int = 16
     learning_rate: float = 0.001
+    weight_decay: float = 1e-4
     seed: int = 20260815
     grayscale_probability: float = 0.25
     blur_radius_max: float = 1.5
     brightness_min: float = 0.45
     brightness_max: float = 1.35
+    saturation_min: float = 0.7
+    saturation_max: float = 1.3
+    contrast_min: float = 0.7
+    contrast_max: float = 1.3
+    crop_probability: float = 0.4
+    crop_min_scale: float = 0.8
+    dropout_scratch: float = 0.25
+    dropout_pretrained: float = 0.3
+    sgd_momentum: float = 0.9
+    sgd_head_lr: float = 1e-2
+    sgd_finetune_lr: float = 1e-3
 
 
 @dataclass

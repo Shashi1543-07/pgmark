@@ -818,6 +818,58 @@ def backup(dest: Path) -> dict:
     return {"path": str(dest), "bytes": dest.stat().st_size, "at": now()}
 
 
+def restore(source: Path) -> dict:
+    """The reverse of backup(): replaces the live database's content with
+    a backup file's content, via the same SQLite backup API (safe under
+    WAL mode, unlike copying the raw file while something might have it
+    open). Callers must call close_all() immediately before this -- on
+    Windows a connection this process is still holding will keep the
+    live file locked and the swap will fail with PermissionError, same
+    class of bug connect()'s own docstring documents for close_all()."""
+    if not source.is_file():
+        raise FileNotFoundError(f"no backup file at {source}")
+    from edge import config as _cfg
+    src = sqlite3.connect(source)
+    out = sqlite3.connect(_cfg.DB_PATH)
+    try:
+        src.backup(out)
+    finally:
+        src.close()
+        out.close()
+    return {"restored_from": str(source), "at": now()}
+
+
+def _live_backup_path() -> Path:
+    from edge import config as _cfg
+    return _cfg.DATA_DIR / "backups" / "live_data_snapshot.db"
+
+
+def _data_mode_marker_path() -> Path:
+    from edge import config as _cfg
+    return _cfg.DATA_DIR / "backups" / ".data_mode"
+
+
+def data_mode() -> str:
+    """'live' (your own fed-in data is what's active, the default and the
+    safe fallback if the marker is missing or unreadable) or 'seeded' (a
+    demo/bulk reserve is active and your live data, if any existed, is
+    sitting safely in the snapshot instead)."""
+    p = _data_mode_marker_path()
+    if p.is_file():
+        text = p.read_text(encoding="utf-8").strip()
+        if text in ("live", "seeded"):
+            return text
+    return "live"
+
+
+def set_data_mode(mode: str) -> None:
+    if mode not in ("live", "seeded"):
+        raise ValueError(f"data mode must be 'live' or 'seeded', got {mode!r}")
+    p = _data_mode_marker_path()
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(mode, encoding="utf-8")
+
+
 def integrity_check() -> dict:
     conn = connect()
     quick = conn.execute("PRAGMA quick_check").fetchone()[0]

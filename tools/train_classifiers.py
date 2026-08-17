@@ -11,7 +11,9 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import random
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -37,8 +39,9 @@ class ManifestRow:
 class LocalClassifierNet(nn.Module):
     """High-accuracy CNN with BatchNorm and Dropout for TorchScript export."""
 
-    def __init__(self, class_count: int):
+    def __init__(self, class_count: int, dropout: float | None = None):
         super().__init__()
+        dropout = config.CONFIG.classifier_training.dropout_scratch if dropout is None else dropout
         self.features = nn.Sequential(
             nn.Conv2d(3, 32, kernel_size=3, stride=2, padding=1, bias=False),
             nn.BatchNorm2d(32),
@@ -55,7 +58,7 @@ class LocalClassifierNet(nn.Module):
             nn.AdaptiveAvgPool2d((1, 1)),
         )
         self.classifier = nn.Sequential(
-            nn.Dropout(0.25),
+            nn.Dropout(dropout),
             nn.Linear(256, class_count)
         )
 
@@ -85,8 +88,9 @@ class PretrainedClassifierNet(nn.Module):
     not loaded here.
     """
 
-    def __init__(self, class_count: int, embedder_weights_path: Path):
+    def __init__(self, class_count: int, embedder_weights_path: Path, dropout: float | None = None):
         super().__init__()
+        dropout = config.CONFIG.classifier_training.dropout_pretrained if dropout is None else dropout
         backbone = torchvision.models.resnet50(weights=None)
         backbone = nn.Sequential(*list(backbone.children())[:-1])  # drop its own FC
         if not embedder_weights_path.is_file():
@@ -104,7 +108,7 @@ class PretrainedClassifierNet(nn.Module):
                 "silently mismatched initialisation")
         self.backbone = backbone
         self.classifier = nn.Sequential(
-            nn.Dropout(0.3),
+            nn.Dropout(dropout),
             nn.Linear(2048, class_count),
         )
 
@@ -161,8 +165,25 @@ def _transform(image: Image.Image, *, augment: bool, allow_mirror: bool = True) 
             image = ImageOps.grayscale(image).convert("RGB")
         if allow_mirror and random.random() < 0.5:
             image = ImageOps.mirror(image)
+        if random.random() < training.crop_probability:
+            # Crop a random sub-region rather than always feeding the model
+            # the exact same pixel grid for a given source image every
+            # epoch -- with ~1,500 training images and a 2,048-channel
+            # backbone, that exact-pixel repetition is what memorisation
+            # latches onto (measured: 99.9% train accuracy vs 67.1% val on
+            # the pre-crop-augmentation side classifier).
+            width, height = image.size
+            scale = random.uniform(training.crop_min_scale, 1.0)
+            crop_w, crop_h = max(1, int(width * scale)), max(1, int(height * scale))
+            left = random.randint(0, width - crop_w)
+            top = random.randint(0, height - crop_h)
+            image = image.crop((left, top, left + crop_w, top + crop_h))
         image = ImageEnhance.Brightness(image).enhance(
             random.uniform(training.brightness_min, training.brightness_max))
+        image = ImageEnhance.Color(image).enhance(
+            random.uniform(training.saturation_min, training.saturation_max))
+        image = ImageEnhance.Contrast(image).enhance(
+            random.uniform(training.contrast_min, training.contrast_max))
         if random.random() < 0.3:
             image = image.filter(ImageFilter.GaussianBlur(random.uniform(0.0, training.blur_radius_max)))
     image = image.resize((config.CONFIG.classifiers.input_width,
@@ -220,8 +241,100 @@ def _output_path(task: str, output: str | None) -> Path:
     return path
 
 
+def _build_optimizer(params, optimizer_name: str, phase: str, weight_decay: float):
+    """phase is 'head'/'scratch' (randomly-initialised weights, needs a
+    larger step) or 'finetune' (already-trained weights, needs a smaller
+    one) -- the same 10x split the original AdamW-only code used, just
+    generalised to also cover SGD, which needs its own, larger magnitude
+    since it has no per-parameter adaptive scaling to compensate."""
+    training = config.CONFIG.classifier_training
+    high_phase = phase in ("head", "scratch")
+    if optimizer_name == "sgd":
+        lr = training.sgd_head_lr if high_phase else training.sgd_finetune_lr
+        return torch.optim.SGD(params, lr=lr, momentum=training.sgd_momentum,
+                                weight_decay=weight_decay, nesterov=True)
+    lr = 1e-3 if high_phase else 1e-4
+    return torch.optim.AdamW(params, lr=lr, weight_decay=weight_decay)
+
+
+def _checkpoint_path(output_path: Path) -> Path:
+    return output_path.with_suffix(".checkpoint.pt")
+
+
+def _save_checkpoint(ckpt_path: Path, *, phase: str, epoch: int, model, optimizer, scheduler,
+                      best_state, best_acc: float, task: str, arch: str, optimizer_name: str,
+                      weight_decay: float, dropout_used: float, total_epochs: int,
+                      manifest_sha256: str) -> None:
+    """Written after every epoch, unconditionally, so a killed process loses
+    at most one epoch of work instead of the whole run. best_state above
+    only ever lived in RAM -- a crash before this existed meant restarting
+    from epoch 0 no matter how far training had actually got, which is a
+    real risk for an unattended multi-hour run on a laptop that can sleep,
+    lose power or just get bumped.
+
+    A failed save here must never crash a training run that was otherwise
+    healthy -- that would turn a safety feature into a new source of the
+    exact failure it exists to prevent. Confirmed by testing: on Windows the
+    atomic rename below can transiently fail with PermissionError if
+    anything else -- antivirus, an indexer, a tool peeking at progress --
+    briefly has the destination file open (POSIX rename() would not care,
+    but os.replace() maps to MoveFileExW there and Windows enforces sharing
+    locks strictly). Retried a few times, then given up on quietly rather
+    than raised."""
+    tmp = ckpt_path.with_suffix(ckpt_path.suffix + ".tmp")
+    try:
+        torch.save({
+            "phase": phase, "epoch": epoch,
+            "model_state": model.state_dict(),
+            "optimizer_state": optimizer.state_dict(),
+            "scheduler_state": scheduler.state_dict(),
+            "best_state": best_state, "best_acc": best_acc,
+            "task": task, "arch": arch, "optimizer_name": optimizer_name,
+            "weight_decay": weight_decay, "dropout": dropout_used,
+            "total_epochs": total_epochs, "manifest_sha256": manifest_sha256,
+        }, tmp)
+        for attempt in range(5):
+            try:
+                tmp.replace(ckpt_path)  # atomic on both POSIX and Windows
+                return
+            except OSError:
+                if attempt == 4:
+                    raise
+                time.sleep(0.3)
+    except OSError as exc:
+        print(f"Warning: could not write checkpoint this epoch ({exc}) -- "
+              "training continues, will try again next epoch")
+        tmp.unlink(missing_ok=True)
+
+
+def _load_checkpoint(ckpt_path: Path, *, task: str, arch: str, optimizer_name: str,
+                      weight_decay: float, dropout_used: float, total_epochs: int,
+                      manifest_sha256: str) -> dict:
+    if not ckpt_path.is_file():
+        raise FileNotFoundError(
+            f"--resume was passed but no checkpoint exists at {ckpt_path} -- "
+            "nothing to resume from; omit --resume to start a fresh run")
+    ckpt = torch.load(ckpt_path, map_location="cpu", weights_only=False)
+    # Refuse a mismatched resume rather than silently continuing training
+    # under different settings than the checkpoint was saved with -- e.g.
+    # loading AdamW momentum buffers into a freshly-built SGD optimizer
+    # would not error, it would just train wrong, quietly.
+    expected = {"task": task, "arch": arch, "optimizer_name": optimizer_name,
+                "weight_decay": weight_decay, "dropout": dropout_used,
+                "total_epochs": total_epochs, "manifest_sha256": manifest_sha256}
+    mismatches = [f"{key} (checkpoint={ckpt[key]!r}, this run={want!r})"
+                  for key, want in expected.items() if ckpt[key] != want]
+    if mismatches:
+        raise ValueError(
+            f"checkpoint at {ckpt_path} does not match this run's settings, refusing to "
+            f"resume from a mismatched configuration: {'; '.join(mismatches)}")
+    return ckpt
+
+
 def train(task: str, manifest: Path, output: str | None, epochs: int | None,
-          batch_size: int | None, arch: str = "scratch") -> Path:
+          batch_size: int | None, arch: str = "scratch", optimizer_name: str = "adamw",
+          weight_decay: float | None = None, dropout: float | None = None,
+          resume: bool = False, max_minutes: float | None = None) -> Path:
     rows = _rows(manifest, task)
     _require_all_labels(rows, task)
     train_rows = [row for row in rows if row.split == "train"]
@@ -230,6 +343,36 @@ def train(task: str, manifest: Path, output: str | None, epochs: int | None,
     random.seed(training.seed)
     np.random.seed(training.seed)
     torch.manual_seed(training.seed)
+    weight_decay = training.weight_decay if weight_decay is None else weight_decay
+    total_epochs = epochs or training.epochs
+    path = _output_path(task, output)
+    ckpt_path = _checkpoint_path(path)
+    manifest_sha256 = _hash_file(manifest)
+    dropout_used = (training.dropout_pretrained if arch == "pretrained" else training.dropout_scratch) \
+        if dropout is None else dropout
+
+    resume_state = None
+    if resume:
+        resume_state = _load_checkpoint(
+            ckpt_path, task=task, arch=arch, optimizer_name=optimizer_name,
+            weight_decay=weight_decay, dropout_used=dropout_used, total_epochs=total_epochs,
+            manifest_sha256=manifest_sha256)
+        print(f"Resuming from checkpoint: phase={resume_state['phase']} "
+              f"epoch={resume_state['epoch'] + 1} best_acc={resume_state['best_acc'] * 100:.2f}%")
+    elif ckpt_path.is_file():
+        print(f"Note: an existing checkpoint at {ckpt_path} will be overwritten "
+              f"as this run progresses (pass --resume to continue from it instead)")
+
+    # A wall-clock ceiling, not just an epoch count -- epoch count alone
+    # cannot bound how long a run actually takes, and it showed: an
+    # unbounded species run on 55,000 images ran past 11 hours with no way
+    # to know how much longer it needed. Checked once per epoch (the
+    # granularity available -- there is no mid-epoch checkpoint), so this is
+    # a ceiling on top of that, not a promise of an exact stop time.
+    deadline = time.time() + max_minutes * 60 if max_minutes else None
+    if deadline:
+        print(f"Time budget: stopping after at most {max_minutes:.0f} minutes "
+              f"(exports the best checkpoint seen so far, whichever epoch it was)")
 
     # Device selection: GPU strongly prioritized
     use_cuda = torch.cuda.is_available()
@@ -253,23 +396,42 @@ def train(task: str, manifest: Path, output: str | None, epochs: int | None,
     allow_mirror = task != "side"
     labels = _labels(task)
     size = batch_size or (64 if use_cuda else 32)
+    # num_workers=0 loads and augments every image synchronously on the main
+    # thread -- invisible at side's ~1,900 images, a real bottleneck at
+    # species' ~55,000 (confirmed: an overnight run was still mid-epoch
+    # after 11 hours with GPU utilisation reading near 0% between batches,
+    # consistent with the CPU-bound PIL pipeline being the actual limiter,
+    # not the model or the GPU). __main__ guard already present below, which
+    # is what Windows' spawn-based multiprocessing requires for this to be
+    # safe.
+    # 6 workers per loader (12 total, both persistent) crashed a real species
+    # run: "Couldn't open shared file mapping ... error code: 1455" --
+    # Windows' commit limit for the page-file-backed shared memory each
+    # worker holds open. Confirmed real, not theoretical (this exact crash
+    # happened at finetune epoch 2). Pulled back on both axes: fewer workers,
+    # and val_loader's are no longer persistent -- validation is one short
+    # burst per epoch, not continuous work, so there is no reason for its
+    # workers to sit holding memory for the whole epoch in between.
+    workers = min(4, os.cpu_count() or 0)
     train_loader = DataLoader(
         ManifestDataset(train_rows, augment=True, allow_mirror=allow_mirror),
         batch_size=size,
         shuffle=True,
         pin_memory=use_cuda,
-        num_workers=0)
+        num_workers=workers,
+        persistent_workers=workers > 0)
     val_loader = DataLoader(
         ManifestDataset(val_rows, augment=False, allow_mirror=allow_mirror),
         batch_size=size,
         shuffle=False,
         pin_memory=use_cuda,
-        num_workers=0)
+        num_workers=workers,
+        persistent_workers=False)
 
     if arch == "pretrained":
-        model = PretrainedClassifierNet(len(labels), config.EMBEDDER_MODEL_PATH).to(device)
+        model = PretrainedClassifierNet(len(labels), config.EMBEDDER_MODEL_PATH, dropout=dropout).to(device)
     else:
-        model = LocalClassifierNet(len(labels)).to(device)
+        model = LocalClassifierNet(len(labels), dropout=dropout).to(device)
 
     # Class-balanced loss: both manifests are dominated by one class (UNKNOWN
     # side, unknown species -- docs/STAGE2_MODEL_WORKFLOW.md). An unweighted
@@ -284,7 +446,6 @@ def train(task: str, manifest: Path, output: str | None, epochs: int | None,
         dtype=torch.float32, device=device)
     loss_fn = nn.CrossEntropyLoss(weight=class_weights)
     scaler = torch.cuda.amp.GradScaler(enabled=use_cuda)
-    total_epochs = epochs or training.epochs
 
     # Best-checkpoint tracking, not "whatever the last epoch happened to be".
     # A model with 2,048 backbone channels and only ~1,500 training images has
@@ -295,10 +456,21 @@ def train(task: str, manifest: Path, output: str | None, epochs: int | None,
     # land on, not the model that actually generalised best.
     best_state: dict[str, torch.Tensor] | None = None
     best_acc = -1.0
+    if resume_state is not None:
+        best_state = resume_state["best_state"]
+        best_acc = resume_state["best_acc"]
 
-    def run_epochs(n: int, optimizer, scheduler, phase: str) -> None:
+    def run_epochs(n: int, optimizer, scheduler, phase: str, start_epoch: int = 0) -> bool:
+        """Returns True if the time budget was hit before this phase's
+        epochs finished -- callers use that to skip starting a fresh phase
+        with no time left for it, rather than begin work that cannot
+        possibly complete in the remaining budget."""
         nonlocal best_state, best_acc
-        for epoch in range(n):
+        for epoch in range(start_epoch, n):
+            if deadline is not None and time.time() >= deadline:
+                print(f"  [{phase}] Time budget reached before epoch {epoch + 1:02d}/{n:02d} -- "
+                      "stopping here; exporting the best checkpoint seen so far.")
+                return True
             model.train()
             total_loss = 0.0
             for images, expected in train_loader:
@@ -321,9 +493,16 @@ def train(task: str, manifest: Path, output: str | None, epochs: int | None,
                 marker = "  <- best so far"
             print(f"  [{phase}] Epoch [{epoch + 1:02d}/{n:02d}] - "
                   f"Loss: {total_loss / len(train_loader):.4f} - Val Accuracy: {acc * 100:.2f}%{marker}")
+            _save_checkpoint(
+                ckpt_path, phase=phase, epoch=epoch, model=model, optimizer=optimizer,
+                scheduler=scheduler, best_state=best_state, best_acc=best_acc,
+                task=task, arch=arch, optimizer_name=optimizer_name, weight_decay=weight_decay,
+                dropout_used=dropout_used, total_epochs=total_epochs, manifest_sha256=manifest_sha256)
+        return False
 
     print(f"Training {task} classifier ({arch}) on {len(train_rows)} train / "
-          f"{len(val_rows)} val samples ({total_epochs} epochs)...")
+          f"{len(val_rows)} val samples ({total_epochs} epochs, optimizer={optimizer_name}, "
+          f"weight_decay={weight_decay}, dropout={dropout_used})...")
 
     if arch == "pretrained":
         # Two-phase transfer learning, not a single pass at the from-scratch
@@ -338,21 +517,50 @@ def train(task: str, manifest: Path, output: str | None, epochs: int | None,
         warmup_epochs = min(5, max(1, total_epochs // 4))
         finetune_epochs = max(1, total_epochs - warmup_epochs)
 
-        for p in model.backbone.parameters():
-            p.requires_grad = False
-        head_optimizer = torch.optim.AdamW(model.classifier.parameters(), lr=1e-3, weight_decay=1e-4)
-        head_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(head_optimizer, T_max=warmup_epochs)
-        run_epochs(warmup_epochs, head_optimizer, head_scheduler, "warmup")
+        # A checkpoint saved mid-finetune means warmup already ran to
+        # completion in a previous process -- re-running it here would
+        # overwrite the fine-tuned weights this resume exists to preserve
+        # with a fresh, backbone-frozen pass.
+        timed_out = False
+        if resume_state is None or resume_state["phase"] == "warmup":
+            for p in model.backbone.parameters():
+                p.requires_grad = False
+            head_optimizer = _build_optimizer(model.classifier.parameters(), optimizer_name, "head", weight_decay)
+            head_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(head_optimizer, T_max=warmup_epochs)
+            start = 0
+            if resume_state is not None:
+                model.load_state_dict(resume_state["model_state"])
+                head_optimizer.load_state_dict(resume_state["optimizer_state"])
+                head_scheduler.load_state_dict(resume_state["scheduler_state"])
+                start = resume_state["epoch"] + 1
+            timed_out = run_epochs(warmup_epochs, head_optimizer, head_scheduler, "warmup", start_epoch=start)
 
-        for p in model.backbone.parameters():
-            p.requires_grad = True
-        full_optimizer = torch.optim.AdamW(model.parameters(), lr=1e-4, weight_decay=1e-4)
-        full_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(full_optimizer, T_max=finetune_epochs)
-        run_epochs(finetune_epochs, full_optimizer, full_scheduler, "finetune")
+        # Starting finetune with no time left for it would mean unfreezing
+        # the whole backbone and constructing a fresh optimiser only to
+        # immediately hit the same deadline -- skip straight to export
+        # instead, on whatever best_state warmup already found.
+        if not timed_out:
+            for p in model.backbone.parameters():
+                p.requires_grad = True
+            full_optimizer = _build_optimizer(model.parameters(), optimizer_name, "finetune", weight_decay)
+            full_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(full_optimizer, T_max=finetune_epochs)
+            start = 0
+            if resume_state is not None and resume_state["phase"] == "finetune":
+                model.load_state_dict(resume_state["model_state"])
+                full_optimizer.load_state_dict(resume_state["optimizer_state"])
+                full_scheduler.load_state_dict(resume_state["scheduler_state"])
+                start = resume_state["epoch"] + 1
+            timed_out = run_epochs(finetune_epochs, full_optimizer, full_scheduler, "finetune", start_epoch=start)
     else:
-        optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3, weight_decay=1e-4)
+        optimizer = _build_optimizer(model.parameters(), optimizer_name, "scratch", weight_decay)
         scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=total_epochs)
-        run_epochs(total_epochs, optimizer, scheduler, "train")
+        start = 0
+        if resume_state is not None and resume_state["phase"] == "train":
+            model.load_state_dict(resume_state["model_state"])
+            optimizer.load_state_dict(resume_state["optimizer_state"])
+            scheduler.load_state_dict(resume_state["scheduler_state"])
+            start = resume_state["epoch"] + 1
+        timed_out = run_epochs(total_epochs, optimizer, scheduler, "train", start_epoch=start)
 
     if best_state is not None:
         model.load_state_dict(best_state)
@@ -360,18 +568,24 @@ def train(task: str, manifest: Path, output: str | None, epochs: int | None,
               f"(the final epoch's own accuracy may have drifted from this)")
 
     accuracy, matrix = _evaluate(model, val_loader, device, len(labels))
-    path = _output_path(task, output)
     path.parent.mkdir(parents=True, exist_ok=True)
     model.cpu().eval()
     torch.jit.script(model).save(str(path))
     metadata = {
         "task": task, "arch": arch, "labels": list(labels), "manifest": str(manifest.resolve()),
-        "manifest_sha256": _hash_file(manifest), "model_sha256": _hash_file(path),
+        "manifest_sha256": manifest_sha256, "model_sha256": _hash_file(path),
         "validation_accuracy": accuracy, "confusion_matrix": matrix,
         "train_rows": len(train_rows), "val_rows": len(val_rows),
+        "optimizer": optimizer_name, "weight_decay": weight_decay, "dropout": dropout_used,
+        "epochs": total_epochs, "max_minutes": max_minutes,
+        "stopped_early_on_time_budget": timed_out,
     }
     path.with_suffix(path.suffix + ".json").write_text(json.dumps(metadata, indent=2) + "\n",
                                                         encoding="utf-8")
+    # Training finished cleanly -- the checkpoint's only job was crash
+    # recovery mid-run. Leaving it next to a successfully exported model
+    # invites a future --resume into a run that already finished.
+    ckpt_path.unlink(missing_ok=True)
     print(f"Saved TorchScript classifier: {path}")
     return path
 
@@ -386,9 +600,28 @@ def main() -> int:
     parser.add_argument("--arch", choices=("scratch", "pretrained"), default="scratch",
                         help="scratch = small CNN trained from nothing (original default); "
                              "pretrained = ResNet-50 initialised from the local re-ID embedder")
+    parser.add_argument("--optimizer", choices=("adamw", "sgd"), default="adamw",
+                        help="adamw = adaptive with decoupled weight decay (original default); "
+                             "sgd = classic momentum SGD, which often generalises better than "
+                             "Adam-family optimizers when fine-tuning a CNN on a small dataset")
+    parser.add_argument("--weight-decay", type=float,
+                        help="L2 penalty; defaults to config.classifier_training.weight_decay")
+    parser.add_argument("--dropout", type=float,
+                        help="classifier-head dropout probability; defaults to the arch's "
+                             "config value (dropout_scratch / dropout_pretrained)")
+    parser.add_argument("--resume", action="store_true",
+                        help="continue from the checkpoint next to --output (saved after every "
+                             "epoch automatically) instead of starting fresh; refuses if no "
+                             "checkpoint exists or its settings don't match this invocation")
+    parser.add_argument("--max-minutes", type=float,
+                        help="stop after at most this many minutes (checked once per epoch) and "
+                             "export the best checkpoint seen so far, rather than run to --epochs "
+                             "regardless of how long that actually takes")
     args = parser.parse_args()
     try:
-        train(args.task, args.manifest.resolve(), args.output, args.epochs, args.batch_size, args.arch)
+        train(args.task, args.manifest.resolve(), args.output, args.epochs, args.batch_size,
+              args.arch, args.optimizer, args.weight_decay, args.dropout, args.resume,
+              args.max_minutes)
     except (FileNotFoundError, ValueError, RuntimeError) as exc:
         print(f"offline classifier training refused: {exc}")
         return 2
