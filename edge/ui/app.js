@@ -340,6 +340,27 @@ function scrollViewToTop(behavior = 'smooth') {
   if (window.scrollY) window.scrollTo({ top: 0, behavior });
 }
 
+/* Open one individual's profile.
+   This used to set location.hash and then, 200ms later, hope a
+   `[data-ind=...]` element existed and click it. Three problems: assigning
+   the hash already in the bar fires no hashchange so the view never
+   re-renders; 200ms is a guess at how long an API-backed render takes; and
+   the selector is not scoped to the catalogue, so it could match a map
+   roster row instead of the card it meant. Awaiting the render and calling
+   the detail function directly removes all three. */
+window.openTigerProfile = async function openTigerProfile(indId) {
+  if (location.hash !== '#tigers') {
+    location.hash = '#tigers';
+  }
+  try {
+    await RENDER.tigers?.();
+    scrollViewToTop('auto');
+    await showTigerDetail(indId);
+  } catch (e) {
+    console.error('openTigerProfile', e);
+  }
+};
+
 /* Jump to the map with one individual focused.
    A plain `location.hash = '#map'` is not enough on its own: if the hash is
    ALREADY '#map' the browser fires no hashchange, so route() never runs, the
@@ -1661,7 +1682,11 @@ function filterAndRenderTigers() {
         </div>
         <div class="tiger-card-body">
           <div class="tiger-flank-box">
-            ${flankThumb(t.ind_id)}
+            ${/* The catalogue grid is where an officer scans for a tiger they
+                 recognise. A generated stripe pattern here is the worst place
+                 of all for one: it invites recognising something that was
+                 never photographed. */ ''}
+            ${flankThumb(t.ind_id, '', false, true)}
           </div>
           <div style="flex:1">
             <div class="tiger-meta-grid">
@@ -1709,7 +1734,10 @@ async function showTigerDetail(indId) {
       <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:var(--s3)">
         <div style="display:flex;gap:var(--s4);align-items:center">
           <div class="tiger-flank-box" style="width:96px;height:96px">
-            ${flankThumb(t.ind_id, 'wide tall', true)}
+            ${/* honest=true: this is the animal's identity page. A pattern
+                 generated from a hash of the id has no business standing in
+                 for its photograph here. */ ''}
+            ${flankThumb(t.ind_id, 'wide tall', true, true)}
           </div>
           <div>
             <div style="display:flex;align-items:center;gap:8px">
@@ -2585,8 +2613,16 @@ function renderAlertsList(items) {
     return;
   }
 
+  // Acknowledged alerts sink to the bottom: an operator working a list of 11
+  // wants it to shrink as they go. They stay visible -- an acknowledgement is
+  // a record of who accepted the alert, not a delete.
+  filtered = [...filtered].sort((x, y) =>
+    (x.acknowledged_at ? 1 : 0) - (y.acknowledged_at ? 1 : 0));
+
   listEl.innerHTML = filtered.map(a => {
     const col = window.PugMap.getTigerColor(a.ind_id);
+    const ackAt = a.acknowledged_at
+      ? String(a.acknowledged_at).slice(0, 16).replace('T', ' ') : null;
     const isAct = a.severity === 'act';
     const isWatch = a.severity === 'watch';
     const sevLabel = isAct ? '🚨 URGENT ACTION' : isWatch ? '⚠ WARNING WATCH' : 'ℹ ADVISORY INFO';
@@ -2605,10 +2641,14 @@ function renderAlertsList(items) {
     ` : '';
 
     return `
-      <div class="alert-card-rich ${esc(a.severity)}">
+      <div class="alert-card-rich ${esc(a.severity)}${ackAt ? ' is-acknowledged' : ''}">
         <div class="alert-tiger-hero">
           <div class="tiger-flank-box alert-flank-pelt">
-            ${flankThumb(a.ind_id)}
+            ${/* honest=true. Without it a missing catalogue photo falls back to
+                 stripeRail(), which draws bands from a hash of the id -- the
+                 vertical stripe bar on every alert card was that, not a
+                 photograph of the animal the alert is about. */ ''}
+            ${flankThumb(a.ind_id, 'wide tall', false, true)}
           </div>
           <div class="alert-tiger-dot" style="background:${col.fill}" title="Map territory color"></div>
         </div>
@@ -2648,9 +2688,15 @@ function renderAlertsList(items) {
             <button type="button" class="btn small alertViewTiger" data-ind="${esc(a.ind_id)}">
               🐅 Tiger Profile
             </button>
-            <button type="button" class="btn small alertAckBtn" data-alert-id="${esc(a.alert_id)}">
-              ✓ Acknowledge
-            </button>
+            ${ackAt ? `
+              <span class="alert-ack-state" title="Acknowledgement is recorded in the audit log">
+                ✓ Acknowledged by ${esc(a.acknowledged_by || 'someone')} · ${esc(ackAt)}
+              </span>`
+            : `
+              <button type="button" class="btn small alertAckBtn" data-alert-id="${esc(a.alert_id)}"
+                      title="Record that you have seen this and are handling it. The alert stays on file.">
+                ✓ Acknowledge
+              </button>`}
           </div>
         </div>
       </div>`;
@@ -2671,19 +2717,15 @@ function renderAlertsList(items) {
 
   listEl.querySelectorAll('.alertShowMap').forEach(b => {
     b.onclick = () => {
-      S.mapFocus = b.dataset.ind;
-      location.hash = '#map';
+      // Same helper the catalogue uses. Assigning location.hash directly
+      // fires no hashchange when the map is already open, and leaves the
+      // scroller wherever it was -- see window.locateOnMap().
+      locateOnMap(b.dataset.ind);
     };
   });
 
   listEl.querySelectorAll('.alertViewTiger').forEach(b => {
-    b.onclick = () => {
-      location.hash = '#tigers';
-      setTimeout(() => {
-        const tigerBtn = document.querySelector(`[data-ind="${b.dataset.ind}"]`);
-        tigerBtn?.click();
-      }, 200);
-    };
+    b.onclick = () => openTigerProfile(b.dataset.ind);
   });
 }
 

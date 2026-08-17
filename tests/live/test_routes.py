@@ -1592,6 +1592,41 @@ def _run(c: TestClient) -> int:
     # location.hash to the hash already in the bar fires no hashchange, so
     # nothing re-renders; and `main` is the scrolling element, so resetting
     # window.scrollY leaves the map scrolled out of view.
+    # Acknowledge wrote acknowledged_by/acknowledged_at and an audit entry
+    # from the day it was added, and the UI never read either column back --
+    # so the list re-rendered identically and the button looked ornamental.
+    # An invisible effect is indistinguishable from no effect.
+    check("acknowledging an alert changes what the operator sees",
+          "acknowledged_at" in js and "is-acknowledged" in js
+          and ".alert-card-rich.is-acknowledged" in css,
+          "the button wrote to the database but nothing on screen moved")
+
+    # stripeRail() draws bands from a hash of the id. On a screen that asks
+    # someone to recognise an animal, that is an invented pattern presented
+    # as a photograph.
+    # Only real call sites: skip the definition, and skip prose mentions like
+    # "see flankThumb()'s comment", which the previous version of this check
+    # counted as dishonest calls and failed on.
+    dishonest = []
+    for line in js.splitlines():
+        if "flankThumb(" not in line or "function flankThumb" in line:
+            continue
+        arg = line.split("flankThumb(", 1)[1]
+        if arg.startswith(")"):          # a bare mention in a comment
+            continue
+        call = arg.split(")", 1)[0]
+        if not call.rstrip().endswith("true"):
+            dishonest.append(line.strip()[:70])
+    check("no screen falls back to a generated stripe pattern in place of a "
+          "photograph", not dishonest, f"non-honest flankThumb calls: {dishonest[:3]}")
+
+    check("alerts reach the map through the same helper as the catalogue",
+          "locateOnMap(b.dataset.ind)" in js,
+          "a raw hash assignment does nothing when the map is already open")
+    check("alerts reach a tiger profile without guessing at render timing",
+          "openTigerProfile" in js and "}, 200);" not in js.split("openTigerProfile")[0][-400:],
+          "the old path waited 200ms and hoped the DOM existed")
+
     check("focusing an individual is drawn outside the toggleable layers",
           "pug-focus" in mapjs and "focus-halo" in mapjs,
           "a focused tiger must not depend on Home Ranges being switched on")

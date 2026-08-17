@@ -6433,3 +6433,38 @@ body.viewer-open { overflow: hidden; }
 @media (prefers-reduced-motion: reduce) {
   .pugmap .focus-halo { animation: none; stroke-opacity: .9; }
 }
+
+/* ═══════════════════════════════════════════════════════════════════════
+   ALERTS · acknowledgement you can see
+   ───────────────────────────────────────────────────────────────────────
+   The Acknowledge button always worked -- it wrote acknowledged_by /
+   acknowledged_at and an audit entry. The UI simply never read those
+   columns back, so the list re-rendered identically and the button looked
+   ornamental. It was invisible, not useless, which is the harder failure to
+   notice and the easier one to mistake for dead UI.
+
+   An acknowledgement is a record of who accepted an alert, not a delete, so
+   the card stays -- quieter, stamped with who and when, and sorted below the
+   ones still waiting.
+   ═══════════════════════════════════════════════════════════════════════ */
+
+.alert-card-rich.is-acknowledged {
+  opacity: .62;
+  filter: saturate(.75);
+  border-left-color: var(--line) !important;
+}
+.alert-card-rich.is-acknowledged:hover { opacity: .85; }
+
+.alert-ack-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--info) 40%, transparent);
+  background: color-mix(in srgb, var(--info) 12%, transparent);
+  color: var(--info);
+  font-family: var(--f-data);
+  font-size: 11px;
+  white-space: nowrap;
+}
