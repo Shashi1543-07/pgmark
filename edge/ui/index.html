@@ -69,11 +69,18 @@
 
   <div id="body">
     <nav class="nav" id="nav" aria-label="Sections">
-      <button class="nav-collapse" id="navCollapse" type="button"
-              aria-expanded="true" title="Collapse the menu">
-        <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M10 3.5 5.5 8l4.5 4.5"/></svg>
-        <span class="nav-collapse-label">Collapse</span>
-      </button>
+      <!-- Its own zone, above the rule that starts the menu. The control
+           used to sit in the list styled like an entry, so it read as a
+           thirteenth destination rather than as a panel control. -->
+      <div class="nav-rail-top">
+        <button class="nav-collapse" id="navCollapse" type="button"
+                aria-expanded="true" title="Collapse the menu">
+          <span class="nav-collapse-ico">
+            <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M10 3.5 5.5 8l4.5 4.5"/></svg>
+          </span>
+          <span class="nav-collapse-label">Collapse</span>
+        </button>
+      </div>
 
       <div class="nav-section" data-section="cycle">
         <button class="nav-group" type="button" aria-expanded="true">

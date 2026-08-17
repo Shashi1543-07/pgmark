@@ -5861,3 +5861,110 @@ tbody tr:hover { background: color-mix(in srgb, var(--glass-glow) 10%, transpare
 @media (max-width: 900px) {
   .head h1 { font-size: 24px; }
 }
+
+/* ═══════════════════════════════════════════════════════════════════════
+   RAIL COLLAPSE CONTROL
+   ───────────────────────────────────────────────────────────────────────
+   It was a full-width transparent row with an uppercase label and the same
+   hover treatment as a nav link, sitting directly above the first section.
+   So it read as a thirteenth destination -- the eye kept stopping on it
+   while scanning the menu, and it is not a place you can go.
+
+   Three changes, all aimed at "this operates the panel, it is not in it":
+     * its own zone above the rule that starts the menu, so it is outside
+       the list rather than the first thing in it
+     * LEFT-aligned, so the button does not move when the rail does. On the
+       right edge it sat at x~180 expanded and x~30 collapsed: collapsing it
+       moved the control 150px out from under the cursor, so expanding again
+       meant hunting for it. Against the left edge both states put it within
+       a few pixels of the same place and you can toggle repeatedly without
+       moving the mouse -- which is the whole point of a rail you fold in and
+       out while working
+     * quiet until addressed: the label is folded away and unfurls on hover
+       or keyboard focus, so nothing competes with the menu at rest while
+       the control still says what it does before you commit to clicking it
+   ═══════════════════════════════════════════════════════════════════════ */
+
+.nav-rail-top {
+  display: flex;
+  justify-content: flex-start;
+  padding: 0 10px 8px;
+  margin-bottom: 6px;
+  border-bottom: 1px solid var(--line);
+}
+
+.nav-collapse {
+  display: inline-flex !important;
+  align-items: center;
+  gap: 0;
+  width: auto !important;
+  margin: 0 !important;
+  padding: 4px !important;
+  border-radius: 999px !important;
+  border: 1px solid transparent !important;
+  background: transparent !important;
+  color: var(--muted) !important;
+  font-size: 10px;
+  letter-spacing: .12em;
+  overflow: hidden;
+  transition: background var(--d-fast) var(--ease),
+              border-color var(--d-fast) var(--ease),
+              color var(--d-fast) var(--ease);
+}
+
+/* the icon sits on its own plate, which is what makes it read as a button
+   rather than as a bullet in front of a word */
+.nav-collapse-ico {
+  display: grid;
+  place-items: center;
+  width: 24px; height: 24px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  transition: background var(--d-fast) var(--ease),
+              border-color var(--d-fast) var(--ease);
+}
+.nav-collapse svg { width: 13px; height: 13px; }
+
+/* folded away at rest, unfurled on hover or focus */
+.nav-collapse-label {
+  max-width: 0;
+  opacity: 0;
+  margin-left: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  transition: max-width var(--d-base) var(--ease-out),
+              opacity var(--d-fast) var(--ease),
+              margin-left var(--d-base) var(--ease-out);
+}
+.nav-collapse:hover .nav-collapse-label,
+.nav-collapse:focus-visible .nav-collapse-label {
+  max-width: 96px;
+  opacity: 1;
+  margin-left: 8px;
+  margin-right: 4px;
+}
+
+.nav-collapse:hover {
+  background: transparent !important;
+  border-color: transparent !important;
+  color: var(--pelage) !important;
+}
+.nav-collapse:hover .nav-collapse-ico {
+  background: var(--pelage-dim);
+  border-color: var(--pelage);
+}
+.nav-collapse:focus-visible {
+  outline: 2px solid var(--pelage);
+  outline-offset: 2px;
+}
+
+/* collapsed rail: the control centres and the chevron points the other way,
+   which is the only state feedback a 60px rail has room for */
+/* Deliberately NOT centred: centring in a 60px rail would shift the button
+   sideways as the rail collapses, which is exactly what this alignment
+   exists to avoid. It keeps the same left inset in both states, so the
+   control stays under the pointer through a toggle. */
+body.nav-collapsed .nav-rail-top { justify-content: flex-start; padding: 0 10px 8px; }
+body.nav-collapsed .nav-collapse { justify-content: center; margin: 0 !important; }
