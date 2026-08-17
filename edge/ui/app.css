@@ -5827,3 +5827,37 @@ tbody tr:hover { background: color-mix(in srgb, var(--glass-glow) 10%, transpare
 
 /* icons keep their proportion to the text rather than shrinking against it */
 .nav .nav-ico { width: 17px; height: 17px; }
+
+/* ═══════════════════════════════════════════════════════════════════════
+   PAGE TITLES · the first thing on the screen should read like it
+   ───────────────────────────────────────────────────────────────────────
+   Page titles were 21px, which lost the top of every screen to the stat
+   cards beneath them -- those carry numbers at roughly 34px, so the eye
+   went to "32 / 36" before it went to "Territories & Reserve Map". A title
+   that loses to the furniture underneath it is not doing its job: on a
+   screen an officer opens from a sidebar, the title is what confirms they
+   landed where they meant to.
+
+   Scoped to `.head h1` rather than bare `h1` on purpose. Every h1 in the
+   app is a page title today, but the rule should keep meaning what it says
+   if that ever stops being true.
+   ═══════════════════════════════════════════════════════════════════════ */
+
+.head h1 {
+  font-size: 28px;
+  line-height: 1.18;
+  font-weight: 700;
+  /* larger display type needs tighter tracking, not the same tracking --
+     letter-spacing that reads as confident at 21px reads as loose at 28px */
+  letter-spacing: -.02em;
+  color: var(--ink);
+}
+
+/* the eyebrow is a label FOR the title, so it sits closer to it than the
+   description sits below */
+.head .eyebrow { margin-bottom: 4px; }
+.head p { margin-top: var(--s2); font-size: 13.5px; line-height: 1.6; }
+
+@media (max-width: 900px) {
+  .head h1 { font-size: 24px; }
+}
