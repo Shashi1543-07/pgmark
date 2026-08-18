@@ -2733,6 +2733,143 @@ function renderAlertsList(items) {
 }
 
 /* ── audit ─────────────────────────────────────────────────────────────── */
+
+/* ── the audit log, in words ────────────────────────────────────────────
+   The record stores what the SYSTEM did, in the system's own vocabulary:
+   "location.read.precise", "review.side_confirmed", "stage3.bulk". That is
+   the right thing to store -- it is exact, greppable, and stable across
+   versions. It is the wrong thing to show a range officer, who is being
+   asked to audit their own reserve's history, not to read event codes.
+
+   Translated at the point of display. The raw code stays on the row (small,
+   and in the CSV export) so nothing is lost. */
+const AUDIT_WORDS = {
+  'auth.login_success':       ['Signed in', 'auth'],
+  'auth.login_failure':       ['Failed sign-in attempt', 'auth'],
+  'auth.logout':              ['Signed out', 'auth'],
+  'auth.locked':              ['Account locked after repeated failures', 'auth'],
+  'password.change':          ['Changed a password', 'auth'],
+  'password.reset':           ['Reset a password', 'auth'],
+  'user.create':              ['Created a user account', 'auth'],
+  'user.disable':             ['Disabled a user account', 'auth'],
+
+  'location.read.precise':    ['Viewed exact tiger locations', 'privacy'],
+  'location.read.generalised':['Viewed approximate tiger locations', 'privacy'],
+  'image.read':               ['Opened a photo', 'privacy'],
+  'person_image.access_refused': ['Blocked a photo containing a person', 'privacy'],
+
+  'ingest.preflight':         ['Scanned a folder of photos', 'cycle'],
+  'ingest.confirm':           ['Confirmed a photo import', 'cycle'],
+  'run.stage':                ['Moved the cycle to its next stage', 'cycle'],
+  'triage.stage_a':           ['Filtered out frames with no movement', 'cycle'],
+  'triage.stage_b':           ['Looked for animals, people and vehicles', 'cycle'],
+  'quarantine.restore':       ['Brought a quarantined frame back', 'cycle'],
+  'job.create':               ['Started a background job', 'cycle'],
+  'job.done':                 ['Finished a background job', 'cycle'],
+
+  'stage3.bulk':              ['Matched flanks against the catalogue', 'tiger'],
+  'identify.upload':          ['Identified an uploaded photo', 'tiger'],
+  'individual.auto_enroll':   ['Enrolled a new tiger automatically', 'tiger'],
+  'individual.promote':       ['Promoted a tiger to confirmed', 'tiger'],
+  'individual.merge':         ['Merged two tiger records', 'tiger'],
+  'review.claim':             ['Opened a photo for review', 'tiger'],
+  'review.decide':            ['Confirmed which tiger a photo shows', 'tiger'],
+  'review.dismiss':           ['Cleared a photo from the review list', 'tiger'],
+  'review.side_confirmed':    ['Confirmed which flank was showing', 'tiger'],
+
+  'occupancy.compute':        ['Recalculated home ranges', 'intel'],
+  'alerts.generate':          ['Recalculated alerts', 'intel'],
+  'alert.acknowledge':        ['Acknowledged an alert', 'intel'],
+
+  'occupancy.export':         ['Exported home-range data', 'share'],
+  'camtrapdp.export':         ['Exported a Camtrap DP package', 'share'],
+  'sync.bundle.export':       ['Wrote a sync bundle to a drive', 'share'],
+  'sync.bundle.apply':        ['Applied a sync bundle from another laptop', 'share'],
+
+  'dev.seed':                 ['Replaced the database with sample data', 'danger'],
+  'dev.restore_live':         ['Restored this reserve\'s own data', 'danger'],
+  'seed.demo':                ['Loaded the demo dataset', 'danger'],
+  'seed.bulk':                ['Loaded the large sample dataset', 'danger'],
+};
+
+const AUDIT_ICON = { auth:'\u{1F511}', privacy:'\u{1F4CD}', cycle:'\u{1F4E5}',
+                     tiger:'\u{1F405}', intel:'\u{1F514}', share:'\u{1F4E4}',
+                     danger:'\u26A0' };
+
+function auditWords(action) {
+  const known = AUDIT_WORDS[action];
+  if (known) return { text: known[0], cat: known[1] };
+  // An unmapped code must still read as a sentence rather than as an
+  // identifier: "sync.bundle.verify" -> "Sync bundle verify".
+  const pretty = String(action || '')
+    .replace(/[._]/g, ' ')
+    .replace(/^\w/, (c) => c.toUpperCase());
+  return { text: pretty, cat: 'cycle' };
+}
+
+/* "3 minutes ago" answers "is this recent?" without arithmetic. The exact
+   timestamp stays on the row's title attribute and in the export. */
+function auditWhen(iso) {
+  const t = Date.parse(iso);
+  if (!Number.isFinite(t)) return '';
+  const secs = Math.max(0, (Date.now() - t) / 1000);
+  if (secs < 60) return 'just now';
+  if (secs < 3600) return `${Math.floor(secs / 60)} min ago`;
+  if (secs < 86400) return `${Math.floor(secs / 3600)} hr ago`;
+  const days = Math.floor(secs / 86400);
+  return days === 1 ? 'yesterday' : `${days} days ago`;
+}
+
+function auditDayLabel(iso) {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return 'Unknown date';
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const that = new Date(d); that.setHours(0, 0, 0, 0);
+  const diff = Math.round((today - that) / 86400000);
+  if (diff === 0) return 'Today';
+  if (diff === 1) return 'Yesterday';
+  return d.toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long' });
+}
+
+/* Collapse a run of identical actions by the same person into one row.
+   Ninety-nine consecutive "Viewed exact tiger locations" entries are one
+   fact, not ninety-nine, and printing them separately is what buried the
+   entries that actually matter. */
+function auditGroup(rows) {
+  const out = [];
+  for (const r of rows) {
+    const prev = out[out.length - 1];
+    if (prev && prev.action === r.action && prev.actor === r.actor
+        && auditDayLabel(prev.ts) === auditDayLabel(r.ts)) {
+      prev.count += 1;
+      prev.lastTs = r.ts;
+      if (r.entity_id && !prev.entities.includes(r.entity_id)) prev.entities.push(r.entity_id);
+    } else {
+      out.push({ ...r, count: 1, lastTs: r.ts,
+                 entities: r.entity_id ? [r.entity_id] : [] });
+    }
+  }
+  return out;
+}
+
+function auditDetail(r) {
+  if (r.note) return String(r.note);
+  const after = r.after;
+  if (!after) return '';
+  let obj = after;
+  if (typeof after === 'string') {
+    try { obj = JSON.parse(after); } catch (e) { return after; }
+  }
+  if (obj && typeof obj === 'object') {
+    // key: value pairs read better than raw JSON braces
+    return Object.entries(obj)
+      .filter(([, v]) => v !== null && v !== '' && v !== undefined)
+      .map(([k, v]) => `${k.replace(/_/g, ' ')}: ${typeof v === 'object' ? JSON.stringify(v) : v}`)
+      .join('  ·  ');
+  }
+  return String(obj);
+}
+
 let auditCategory = 'all';
 
 RENDER.audit = async () => {
@@ -2781,21 +2918,36 @@ function renderAuditRecords(rows) {
   const tableEl = document.getElementById('auditTable');
 
   if (timelineEl) {
-    timelineEl.innerHTML = filtered.slice(0, 30).map(r => {
-      const ts = (r.ts || '').replace('T', ' ').slice(0, 19);
+    const grouped = auditGroup(filtered).slice(0, 60);
+    let lastDay = null;
+    timelineEl.innerHTML = grouped.map(r => {
+      const { text, cat } = auditWords(r.action);
+      const day = auditDayLabel(r.ts);
+      const dayHeader = day === lastDay ? '' :
+        `<div class="audit-day">${esc(day)}</div>`;
+      lastDay = day;
+      const detail = auditDetail(r);
+      const exact = (r.ts || '').replace('T', ' ').slice(0, 19);
+      const ents = r.entities.slice(0, 3).map(e =>
+        `<span class="audit-entity">${esc(e)}</span>`).join('');
+      const more = r.entities.length > 3
+        ? `<span class="audit-entity muted">+${r.entities.length - 3} more</span>` : '';
       return `
-        <div class="audit-item">
-          <div class="audit-header">
-            <div>
-              <strong style="font-family:var(--f-mono);color:var(--pelage)">${esc(r.action)}</strong>
-              ${r.entity_id ? `<span class="tag" style="font-size:11px;margin-left:6px">${esc(r.entity_id)}</span>` : ''}
+        ${dayHeader}
+        <div class="audit-item audit-${esc(cat)}" title="${esc(r.action)} · ${esc(exact)}">
+          <span class="audit-icon">${AUDIT_ICON[cat] || '•'}</span>
+          <div class="audit-body">
+            <div class="audit-line">
+              <span class="audit-what">${esc(text)}</span>
+              ${r.count > 1 ? `<span class="audit-count">${r.count}×</span>` : ''}
+              ${ents}${more}
             </div>
-            <div style="font-size:11.5px;color:var(--muted)">
-              Officer: <b>${esc(r.actor)}</b> &nbsp;|&nbsp; ${esc(ts)}
-            </div>
+            ${detail ? `<div class="audit-detail">${esc(detail)}</div>` : ''}
           </div>
-          ${r.note ? `<div style="font-size:12px;color:var(--text)">${esc(r.note)}</div>` : ''}
-          ${r.after ? `<div class="audit-diff-box">${esc(typeof r.after === 'string' ? r.after : JSON.stringify(r.after, null, 2))}</div>` : ''}
+          <div class="audit-meta">
+            <span class="audit-who">${esc(r.actor)}</span>
+            <span class="audit-ago" title="${esc(exact)}">${esc(auditWhen(r.ts))}</span>
+          </div>
         </div>`;
     }).join('');
   }
@@ -3223,7 +3375,11 @@ RENDER.ops = async () => {
             ${statusBadge}
           </div>
           <p class="note" style="margin:6px 0 0;font-size:12px">${esc(c.detail || '')}</p>
-          ${c.fix ? `<div style="margin-top:6px;font-size:11px;background:var(--surface-2);padding:4px 8px;border-radius:3px"><code>${esc(c.fix)}</code></div>` : ''}
+          ${/* A remedy belongs to a problem. Every card carried its fix command
+                whether or not anything was wrong, so nine green "READY" cards
+                each displayed an instruction to install something -- which
+                reads as nine outstanding tasks on a healthy machine. */ ''}
+          ${(!isOk && c.fix) ? `<div class="ops-fix"><span class="ops-fix-lbl">To fix</span><code>${esc(c.fix)}</code></div>` : ''}
         </div>`;
     }).join('');
   }

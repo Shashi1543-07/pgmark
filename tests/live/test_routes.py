@@ -1596,6 +1596,32 @@ def _run(c: TestClient) -> int:
     # from the day it was added, and the UI never read either column back --
     # so the list re-rendered identically and the button looked ornamental.
     # An invisible effect is indistinguishable from no effect.
+    # The audit log is append-only, enforced by SQL triggers -- a real and
+    # defensible property. It is NOT cryptographically verifiable: there is
+    # no hash chain in the schema. The History screen claimed there was.
+    check("the History screen does not claim cryptographic verification it "
+          "does not implement",
+          "Cryptographically verifiable" not in page,
+          "audit_log has append-only triggers, not a hash chain")
+    conn3 = repo.connect()
+    trig = [r["name"] for r in conn3.execute(
+        "SELECT name FROM sqlite_master WHERE type='trigger' AND tbl_name='audit_log'")]
+    check("...because the property it DOES have is enforced in the database",
+          {"audit_no_update", "audit_no_delete"} <= set(trig), str(trig))
+
+    # Two hundred rows of "location.read.precise" is a record, not a screen.
+    check("audit events are shown in plain language, not as event codes",
+          "AUDIT_WORDS" in js and "Viewed exact tiger locations" in js,
+          "a range officer should not have to read event codes")
+    check("repeated identical events collapse instead of burying the rest",
+          "auditGroup" in js and "audit-count" in css,
+          "99 consecutive identical entries are one fact")
+
+    # A remedy shown beside a green tick reads as an outstanding task.
+    check("System Health only prints a fix command when something is wrong",
+          "(!isOk && c.fix)" in js,
+          "every READY card was also printing an install instruction")
+
     check("acknowledging an alert changes what the operator sees",
           "acknowledged_at" in js and "is-acknowledged" in js
           and ".alert-card-rich.is-acknowledged" in css,

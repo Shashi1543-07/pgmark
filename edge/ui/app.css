@@ -6468,3 +6468,104 @@ body.viewer-open { overflow: hidden; }
   font-size: 11px;
   white-space: nowrap;
 }
+
+/* ═══════════════════════════════════════════════════════════════════════
+   HISTORY · the audit log in words
+   ───────────────────────────────────────────────────────────────────────
+   The record stores what the system did in the system's own vocabulary --
+   "location.read.precise", "stage3.bulk". That is right for a record: exact,
+   greppable, stable. It is wrong for the screen, where a range officer is
+   auditing their own reserve and reading two hundred event codes.
+
+   Translated at display time, grouped by day, and consecutive identical
+   actions by one person collapsed into a single row with a count: ninety-nine
+   "viewed exact tiger locations" entries are one fact, and printing them
+   ninety-nine times is what buried the entries that mattered.
+   ═══════════════════════════════════════════════════════════════════════ */
+
+.audit-day {
+  font-family: var(--f-display);
+  font-size: 10.5px; letter-spacing: .14em; text-transform: uppercase;
+  color: var(--muted);
+  margin: var(--s4) 0 6px;
+  padding-bottom: 5px;
+  border-bottom: 1px solid var(--line-soft);
+}
+.audit-day:first-child { margin-top: 0; }
+
+.audit-item {
+  display: grid;
+  grid-template-columns: 26px 1fr auto;
+  align-items: start;
+  gap: 10px;
+  padding: 9px 12px;
+  margin-bottom: 4px;
+  border: 1px solid var(--line-soft);
+  border-left-width: 3px;
+  border-radius: var(--r-card);
+  background: var(--surface);
+  transition: border-color var(--d-fast) var(--ease), background var(--d-fast) var(--ease);
+}
+.audit-item:hover { background: var(--surface-2); }
+
+/* the category is carried by colour so the eye can skim for one kind of
+   event without reading every line */
+.audit-auth    { border-left-color: #6f8ad6; }
+.audit-privacy { border-left-color: var(--pelage); }
+.audit-cycle   { border-left-color: var(--muted); }
+.audit-tiger   { border-left-color: var(--info); }
+.audit-intel   { border-left-color: var(--watch); }
+.audit-share   { border-left-color: #56b8d6; }
+.audit-danger  { border-left-color: var(--act); }
+
+.audit-icon { font-size: 14px; line-height: 1.35; text-align: center; }
+.audit-body { min-width: 0; }
+.audit-line { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.audit-what { font-size: 13px; color: var(--ink); font-weight: 500; }
+.audit-count {
+  font-family: var(--f-data); font-size: 10.5px; font-weight: 700;
+  color: var(--pelage);
+  background: color-mix(in srgb, var(--pelage) 16%, transparent);
+  border-radius: 999px; padding: 1px 7px;
+}
+.audit-entity {
+  font-family: var(--f-data); font-size: 10px;
+  color: var(--muted);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--r-ctl);
+  padding: 1px 6px;
+}
+.audit-entity.muted { border-style: dashed; }
+.audit-detail {
+  margin-top: 3px;
+  font-size: 11.5px;
+  color: var(--muted);
+  line-height: 1.5;
+  word-break: break-word;
+}
+.audit-meta {
+  display: flex; flex-direction: column; align-items: flex-end; gap: 2px;
+  white-space: nowrap;
+}
+.audit-who { font-size: 11.5px; color: var(--ink-2); font-weight: 600; }
+.audit-ago { font-size: 10.5px; color: var(--muted); font-family: var(--f-data); }
+
+/* ── System Health: a remedy only when there is a problem ────────────── */
+.ops-fix {
+  margin-top: 8px;
+  display: flex; align-items: center; gap: 8px;
+  background: var(--sunk);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--r-ctl);
+  padding: 6px 9px;
+}
+.ops-fix-lbl {
+  font-family: var(--f-display); font-size: 9.5px; letter-spacing: .12em;
+  text-transform: uppercase; color: var(--act); flex: none;
+}
+.ops-fix code { font-size: 11px; color: var(--ink-2); word-break: break-all; }
+
+@media (max-width: 900px) {
+  .audit-item { grid-template-columns: 22px 1fr; }
+  .audit-meta { grid-column: 2; flex-direction: row; gap: 8px; align-items: baseline; }
+}

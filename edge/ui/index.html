@@ -588,7 +588,7 @@
         <div class="head">
           <div class="eyebrow">Immutable Governance Record</div>
           <h1>System Audit Log</h1>
-          <p>Cryptographically verifiable chronicle of all machine triage decisions, biometric assignments, and officer interventions.</p>
+          <p>Every automated decision and every human correction, in the order they happened. Entries can be added but never edited or deleted — the database refuses it.</p>
         </div>
 
         <div class="toolbar" style="gap:var(--s3);flex-wrap:wrap">
@@ -606,14 +606,24 @@
         </div>
 
         <div id="auditTimeline" class="audit-timeline"></div>
-        <div class="card" style="margin-top:var(--s4)"><table class="log" id="auditTable"></table></div>
+
+        <!-- The exact record, kept underneath the readable one. The timeline
+             above translates and groups events so a person can audit their
+             own reserve; this is the same entries unaltered, which is what
+             an investigation or an export actually needs. -->
+        <div class="card pad" style="margin-top:var(--s5)">
+          <h2 style="margin:0">Exact record</h2>
+          <p class="note" style="margin:4px 0 var(--s3)">The same entries, untranslated and ungrouped —
+            the system's own wording, one row per event. This is what Export CSV writes.</p>
+          <table class="log" id="auditTable"></table>
+        </div>
       </section>
 
       <!-- ── OPS ─────────────────────────────────────────────────────── -->
       <section class="view" id="v-ops" data-view="ops">
         <div class="head">
           <div class="eyebrow">Health</div>
-          <h1>Operations</h1>
+          <h1>System Health</h1>
           <p>A rising review rate or a falling match score is the earliest sign
              the models no longer fit the data — new camera hardware, a new
              season, a new reserve.</p>
@@ -675,7 +685,7 @@
       <section class="view" id="v-sync" data-view="sync">
         <div class="head">
           <div class="eyebrow">Between nodes</div>
-          <h1>Sync</h1>
+          <h1>Share Data</h1>
           <p>This node works alone, permanently, with no central server. Sync
              adds reach; it is never something this node waits on.</p>
         </div>
