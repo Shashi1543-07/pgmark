@@ -744,8 +744,11 @@ def quarantine_summary(run_id: str) -> dict:
 
 def quarantine_sample(run_id: str, limit: int = 24) -> list[dict]:
     return _rows(connect().execute(
+        # captured_at is here so the gallery can print the frame's real time.
+        # It previously had none, and the UI filled the gap by generating one
+        # -- "14:" plus two random numbers, rendered where EXIF would be.
         "SELECT q.q_id, q.image_id, q.conf, q.reason, q.orig_path, i.station_id,"
-        " i.is_night FROM quarantine q JOIN images i USING(image_id)"
+        " i.captured_at, i.is_night FROM quarantine q JOIN images i USING(image_id)"
         " WHERE q.run_id=? AND q.restored_at IS NULL"
         " ORDER BY q.conf ASC LIMIT ?", (run_id, limit)))
 

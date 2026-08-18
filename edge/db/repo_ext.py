@@ -920,6 +920,27 @@ def _data_mode_marker_path() -> Path:
     return _cfg.DATA_DIR / "backups" / ".data_mode"
 
 
+def quarantine_file(image_id: str) -> dict | None:
+    """Where a quarantined frame's pixels actually live.
+
+    Quarantine MOVES the file (routes_scale.py: "quarantine physically
+    moves files, it does not delete them"), so images.orig_path no longer
+    points at anything once a frame has been quarantined. The only route
+    that served frames read orig_path, which meant a quarantined frame
+    could never be displayed -- the one screen whose entire job is letting
+    an officer check what the machine threw away had no way to show it.
+
+    Returns the quarantine path plus the status the serving route needs to
+    apply the same person-frame refusal as /api/images/{id}/file.
+    """
+    return _one(connect().execute(
+        "SELECT q.image_id, q.quarantine_path, q.orig_path, q.reason, q.conf,"
+        "       q.restored_at, im.status, im.captured_at, im.station_id"
+        "  FROM quarantine q"
+        "  LEFT JOIN images im ON im.image_id = q.image_id"
+        " WHERE q.image_id = ?", (image_id,)))
+
+
 def image_for_serving(image_id: str) -> dict | None:
     """The row the image-file route needs, INCLUDING status.
 

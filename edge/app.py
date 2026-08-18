@@ -705,6 +705,48 @@ def get_individual_source(ind_id: str, user: dict = Depends(current_user)):
     return RedirectResponse(f"/api/images/{image_id}/file", status_code=307)
 
 
+@app.get("/api/quarantine/{image_id}/image")
+def get_quarantined_frame(image_id: str, user: dict = Depends(current_user)) -> FileResponse:
+    """Serve a frame that triage moved into quarantine.
+
+    Blank Frames exists so a human can check what the machine discarded. It
+    could not show a single one of them: quarantine moves the file, and the
+    only frame-serving route reads images.orig_path, which by then points at
+    a file that is no longer there. Every preview 404'd.
+
+    The person-frame refusal from /api/images/{id}/file applies here too. A
+    frame classified as containing a person should not be reachable through a
+    second door just because it also happens to sit in quarantine.
+    """
+    row = repo_ext.quarantine_file(image_id)
+    if not row:
+        raise HTTPException(404, "not a quarantined frame")
+    if (row.get("status") or "").lower() == "person":
+        repo.audit("person_image.access_refused", actor=user["username"],
+                   entity_type="image", entity_id=image_id,
+                   after={"role": user["role"], "reason": "restricted person frame"})
+        raise HTTPException(403, "This frame was withheld because it contains a person.")
+
+    raw = row.get("quarantine_path")
+    if not raw:
+        raise HTTPException(404, "no quarantine path recorded for this frame")
+    path = Path(raw)
+    if not path.is_absolute():
+        # stored relative to the install root, e.g. "quarantine/<run>/<id>.JPG"
+        for base in (config.DATA_DIR, config.DATA_DIR.parent):
+            candidate = (base / raw).resolve()
+            if candidate.is_file():
+                path = candidate
+                break
+    if not path.is_file():
+        raise HTTPException(
+            404, "the quarantined file is not on this machine -- the database row "
+                 "exists but the image was never written here (seeded data), or the "
+                 "quarantine folder has been moved")
+    media = "image/jpeg" if path.suffix.lower() in (".jpg", ".jpeg") else "image/png"
+    return FileResponse(path, media_type=media)
+
+
 @app.get("/api/images/{image_id}/file")
 def get_image_file(image_id: str, user: dict = Depends(current_user)) -> FileResponse:
     """Serve an original captured frame.

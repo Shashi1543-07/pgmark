@@ -1599,6 +1599,28 @@ def _run(c: TestClient) -> int:
     # The audit log is append-only, enforced by SQL triggers -- a real and
     # defensible property. It is NOT cryptographically verifiable: there is
     # no hash chain in the schema. The History screen claimed there was.
+    # Blank Frames exists so a human can check what the machine discarded.
+    # It could not show a single frame: quarantine MOVES the file, and the
+    # only frame-serving route reads images.orig_path, which by then points
+    # at nothing. Every preview 404'd -- and the gap was filled by an SVG
+    # landscape drawn from a hash of the image id, with a hand-drawn tiger on
+    # low-confidence cards, on a screen listing frames classified as EMPTY.
+    check("a quarantined frame can be served from where it actually lives",
+          "/api/quarantine/{image_id}/image" in [r.path for r in app.routes],
+          "quarantine moves the file; orig_path no longer resolves")
+    check("the quarantine gallery no longer draws a tiger on frames it "
+          "classified as empty",
+          "Tiger Body" not in js and "cam-trap-svg" not in js,
+          "an illustrated animal on a blank-frame screen is worse than no image")
+    check("the gallery no longer fabricates a capture time",
+          "14:${String(Math.floor(rand" not in js
+          and "captured_at" in js,
+          "the timestamp was generated, in the position and typeface of EXIF")
+    check("the quarantine sample carries the frame's real capture time",
+          "i.captured_at" in Path(
+              Path(__file__).resolve().parents[2] / "edge/db/repo.py").read_text(encoding="utf-8"),
+          "the UI had no real time to print, so it invented one")
+
     check("the History screen does not claim cryptographic verification it "
           "does not implement",
           "Cryptographically verifiable" not in page,

@@ -1203,8 +1203,17 @@ RENDER.triage = async () => {
   $('#triageStats').innerHTML = [
     ['Frames Quarantined', nf(s.quarantined), 'Safely isolated in storage'],
     ['Disk Space Saved', `${nf(s.mb)} MB`, '100% recoverable'],
-    ['Biologist Time Saved', `${nf(s.person_hours_saved)} h`,
-      `at ${s.seconds_per_review_assumed}s review time per frame`],
+    ['Reviewing Time Saved', (() => {
+      /* 54 frames at 3s is 0.045 hours, which nf() rounds to "0" -- a real
+         saving displayed as nothing. Hours are the wrong unit for a single
+         card; the number only becomes hours across a full cycle. Show the
+         unit that makes the figure legible at the size it actually is. */
+      const secs = (s.quarantined || 0) * (s.seconds_per_review_assumed || 3);
+      if (secs >= 3600) return `${(secs / 3600).toFixed(1)} h`;
+      if (secs >= 60) return `${Math.round(secs / 60)} min`;
+      return `${Math.round(secs)} sec`;
+    })(),
+      `at ${s.seconds_per_review_assumed}s per frame, not spent looking at empty grass`],
     ['Motion Pre-Filter', nf(stageA),
       `${stageB ? Math.round((stageA / (stageA + stageB)) * 100) : 0}% caught before detector`],
   ].map(([k, v, sub], i) => `<div class="card stat${i === 0 ? ' lead' : ''}">
@@ -1227,72 +1236,52 @@ RENDER.triage = async () => {
   renderQuarGallery(d.sample);
 };
 
+/* The frame itself, or an honest statement that it is not here.
+
+   What this replaced: an SVG landscape drawn from a hash of the image id,
+   including -- on low-confidence frames -- a hand-drawn tiger pacing through
+   grass. On the one screen whose entire purpose is letting an officer check
+   what the machine threw away as EMPTY, it drew an animal. It also invented
+   the timestamp in the corner: `14:${rand()}:${rand()}`, rendered in the
+   position and typeface of camera-trap EXIF, with no indication anywhere that
+   it was fabricated.
+
+   The real frame was already being requested underneath the drawing, from
+   /api/images/{id}/file -- which cannot work, because quarantine MOVES the
+   file and that route reads images.orig_path. Every preview 404'd and the
+   drawing was what remained. The frames are now served from their actual
+   quarantine location, and when the file genuinely is not on this machine
+   the card says so instead of illustrating one. */
 function cameraTrapThumb(q) {
-  const confPct = Math.round((q.conf || 0.85) * 100);
+  const confPct = Math.round((q.conf || 0) * 100);
   const isBorderline = (q.conf || 1.0) < 0.80;
-  const station = q.station_id || 'PN-01';
-  const reason = q.reason || 'foliage motion';
-  
-  let h = 0;
-  for (const ch of String(q.image_id || q.orig_path || station)) {
-    h = ((h << 5) - h) + ch.charCodeAt(0);
-    h |= 0;
-  }
-  const rand = (n) => (Math.abs(Math.sin(h++ * 9999)) * n);
-
-  // Soothing daylight nature palette matching the rest of the application
-  const bgGradient = isBorderline
-    ? 'linear-gradient(145deg, #fef7ec 0%, #f9edd7 50%, #f1dcbe 100%)'
-    : 'linear-gradient(145deg, #f2f7ef 0%, #e5ede0 50%, #d8e5d2 100%)';
-
-  const themeColor = isBorderline ? '#c26510' : '#2b5a44';
-  const reticleColor = isBorderline ? '#df8b3d' : '#4a7a58';
-  const timeStr = `14:${String(Math.floor(rand(50)) + 10).padStart(2, '0')}:${String(Math.floor(rand(50)) + 10).padStart(2, '0')}`;
+  const station = q.station_id || 'unknown camera';
+  const reason = q.reason || 'no reason recorded';
+  // The real capture time, or an explicit absence -- never a generated one.
+  const when = q.captured_at
+    ? String(q.captured_at).slice(11, 19) || String(q.captured_at).slice(0, 16).replace('T', ' ')
+    : 'time not recorded';
 
   return `
-    <div class="cam-trap-canvas" style="background:${bgGradient};border-bottom:1px solid rgba(0,0,0,0.06);position:relative;overflow:hidden">
-      ${q.image_id ? `<img src="/api/images/${encodeURIComponent(q.image_id)}/file" style="position:absolute;top:0;left:0;width:100%;height:100%;object-fit:cover;z-index:1" loading="lazy" onerror="this.remove()">` : ''}
-      <div class="cam-trap-hud top" style="color:${themeColor};z-index:2;position:relative;background:rgba(255,255,255,0.7);backdrop-filter:blur(2px);padding:2px 6px;border-radius:4px;margin:3px">
-        <span class="hud-rec"><span class="hud-dot" style="background:${reticleColor}"></span>REC</span>
-        <span class="hud-station" style="color:${themeColor}">${esc(station)}</span>
-        <span class="hud-time" style="color:${themeColor};opacity:0.75">${timeStr}</span>
+    <div class="cam-trap-canvas${isBorderline ? ' is-borderline' : ''}">
+      ${q.image_id ? `
+        <img class="quar-frame" src="/api/quarantine/${encodeURIComponent(q.image_id)}/image"
+             alt="Quarantined frame from ${esc(station)}" loading="lazy"
+             onload="this.classList.add('loaded');
+                     this.parentNode.querySelector('.quar-nopreview').hidden = true"
+             onerror="this.style.display='none'">` : ''}
+      <div class="quar-nopreview">
+        <span class="quar-nopreview-mark">no preview</span>
+        <span class="quar-nopreview-why">the file is not on this machine</span>
       </div>
 
-      <div class="cam-trap-center">
-        <svg viewBox="0 0 160 100" class="cam-trap-svg" preserveAspectRatio="none">
-          <!-- Natural Canopy / Grassland Landscape in Soft Greens & Ambers -->
-          <path d="M0,86 Q35,60 70,80 T130,66 T160,84 L160,100 L0,100 Z" fill="${isBorderline ? 'rgba(217,119,6,0.18)' : 'rgba(74,122,88,0.18)'}"/>
-          <path d="M0,92 Q45,74 90,88 T160,80 L160,100 L0,100 Z" fill="${isBorderline ? 'rgba(180,83,9,0.25)' : 'rgba(43,90,68,0.25)'}"/>
-          
-          ${isBorderline ? `
-            <!-- Warm tiger silhouette pacing through the grassland for borderline review -->
-            <g opacity="0.9" transform="translate(58, 38) scale(0.72)">
-              <!-- Tiger Body -->
-              <ellipse cx="28" cy="22" rx="24" ry="13" fill="#df8b3d"/>
-              <!-- Head & Ears -->
-              <circle cx="50" cy="15" r="9" fill="#df8b3d"/>
-              <path d="M48,8 L49,4 L53,8 Z M43,9 L41,5 L46,8 Z" fill="#b45309"/>
-              <!-- Flank Stripes -->
-              <path d="M18,12 L19,30 M24,11 L25,32 M30,12 L31,31 M36,13 L37,29 M42,14 L43,26" stroke="#2b1810" stroke-width="2" stroke-linecap="round"/>
-              <!-- Legs & Tail -->
-              <path d="M12,22 L6,38 M20,24 L16,40 M36,24 L38,40 M46,23 L50,38" stroke="#df8b3d" stroke-width="3.5" stroke-linecap="round"/>
-              <path d="M6,20 Q0,8 8,2" stroke="#df8b3d" stroke-width="3" fill="none" stroke-linecap="round"/>
-            </g>
-          ` : `
-            <!-- Graceful grass blades -->
-            <path d="M18,95 Q24,64 30,52 M25,95 Q32,58 40,46 M115,95 Q122,62 128,50 M124,95 Q136,66 145,54 M70,95 Q74,72 80,62" stroke="rgba(43,90,68,0.3)" stroke-width="1.8" stroke-linecap="round" fill="none"/>
-          `}
-
-          <!-- Viewfinder Target Reticle -->
-          <circle cx="80" cy="50" r="16" stroke="${reticleColor}" stroke-dasharray="3 3" stroke-width="1.2" fill="none" opacity="0.65"/>
-          <line x1="80" y1="30" x2="80" y2="70" stroke="${reticleColor}" stroke-width="1" opacity="0.4"/>
-          <line x1="60" y1="50" x2="100" y2="50" stroke="${reticleColor}" stroke-width="1" opacity="0.4"/>
-        </svg>
+      <div class="cam-trap-hud top">
+        <span class="hud-station">${esc(station)}</span>
+        <span class="hud-time">${esc(when)}</span>
       </div>
-
       <div class="cam-trap-hud bottom">
-        <span class="hud-reason" style="background:${isBorderline ? 'rgba(194,101,16,0.15)' : 'rgba(43,90,68,0.12)'};color:${themeColor};border:1px solid ${isBorderline ? 'rgba(194,101,16,0.25)' : 'rgba(43,90,68,0.2)'}" title="${esc(reason)}">${esc(reason)}</span>
-        <span class="hud-conf" style="color:${themeColor};font-weight:700">${confPct}% BLANK</span>
+        <span class="hud-reason" title="${esc(reason)}">${esc(reason)}</span>
+        <span class="hud-conf">${confPct}% blank</span>
       </div>
     </div>
   `;

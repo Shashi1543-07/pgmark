@@ -6569,3 +6569,65 @@ body.viewer-open { overflow: hidden; }
   .audit-item { grid-template-columns: 22px 1fr; }
   .audit-meta { grid-column: 2; flex-direction: row; gap: 8px; align-items: baseline; }
 }
+
+/* ═══════════════════════════════════════════════════════════════════════
+   BLANK FRAMES · show the frame, or say you cannot
+   ───────────────────────────────────────────────────────────────────────
+   This gallery used to draw its thumbnails: an SVG landscape seeded from a
+   hash of the image id, with a hand-drawn tiger on low-confidence cards --
+   on the one screen whose whole purpose is checking what the machine threw
+   away as EMPTY. The timestamp in the corner was generated too.
+
+   The real frames could not be shown because quarantine MOVES the file and
+   the only frame route read images.orig_path. With a route that reads the
+   quarantine location, the card shows the actual pixels; when the file is
+   genuinely absent it says so, in words, instead of illustrating one.
+   ═══════════════════════════════════════════════════════════════════════ */
+
+.cam-trap-canvas {
+  position: relative;
+  aspect-ratio: 4 / 3;
+  overflow: hidden;
+  background: var(--sunk);
+  border-bottom: 1px solid var(--line-soft);
+}
+.cam-trap-canvas .quar-frame {
+  position: absolute; inset: 0;
+  width: 100%; height: 100%;
+  object-fit: cover;
+  z-index: 1;
+}
+
+/* the honest default: visible until a real frame decodes over it */
+.quar-nopreview {
+  position: absolute; inset: 0; z-index: 0;
+  display: grid; place-content: center; gap: 4px;
+  text-align: center; padding: 8px;
+}
+.quar-nopreview[hidden] { display: none; }
+.quar-nopreview-mark {
+  font-family: var(--f-display);
+  font-size: 10px; letter-spacing: .16em; text-transform: uppercase;
+  color: var(--muted);
+}
+.quar-nopreview-why { font-size: 10px; color: var(--muted); opacity: .75; }
+
+.cam-trap-hud {
+  position: absolute; left: 0; right: 0; z-index: 2;
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 6px; padding: 5px 7px;
+  font-family: var(--f-data); font-size: 9.5px;
+  color: #f4fff9;
+  background: linear-gradient(to bottom, rgba(3,10,6,.72), transparent);
+  text-shadow: 0 1px 3px rgba(0,0,0,.8);
+}
+.cam-trap-hud.top { top: 0; }
+.cam-trap-hud.bottom {
+  bottom: 0; top: auto;
+  background: linear-gradient(to top, rgba(3,10,6,.78), transparent);
+}
+.cam-trap-hud .hud-reason {
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 62%;
+}
+.cam-trap-hud .hud-conf { font-weight: 700; flex: none; }
+.cam-trap-canvas.is-borderline .cam-trap-hud .hud-conf { color: var(--watch); }
