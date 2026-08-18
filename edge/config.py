@@ -226,9 +226,41 @@ class Triage:
 
     stage_a_separate_night: bool = True
 
-    detector_conf_threshold: float = 0.20
-    """Deliberately low. Recall on contains-subject matters far more than
-    precision — see the asymmetry above."""
+    detector_conf_threshold: float = 0.50
+    """Was 0.20, chosen on the asymmetry argument above -- recall on
+    contains-subject matters more than precision, so let weak detections
+    through and quarantine nothing you are unsure about.
+
+    That reasoning is right and the number was still wrong, because it sat
+    UNDER MegaDetector's own false-positive floor. Measured on a real
+    46-frame import whose blank frames were labelled as such by the source
+    (run_7dd9a8340228):
+
+        top detection confidence, blank frames  0.206 - 0.379  (median 0.222)
+        top detection confidence, real frames   0.812 - 0.970  (median 0.930)
+
+    Every blank frame carried a spurious detection above 0.20 -- typically an
+    "animal" box covering 96% of the frame, which is the detector failing to
+    localise anything rather than finding something, plus a fixed "person"
+    box on 18% of the frame repeated identically across frames. So NOTHING
+    was ever quarantined: the blank-frame screen showed zero, the motion
+    saving read 0%, and the feature looked broken because in practice it was.
+
+    Sweeping the threshold against that import:
+
+        0.20  ->   0 of 11 blanks caught,  0 of 35 real frames lost
+        0.40  ->  11 of 11 blanks caught,  0 of 35 real frames lost
+        0.70  ->  11 of 11 blanks caught,  0 of 35 real frames lost
+        0.85  ->  11 of 11 blanks caught,  1 of 35 real frames lost
+
+    0.50 sits in the middle of the band that is perfect on both counts, and
+    is a conventional operating point for MegaDetector when the decision is
+    automated rather than reviewed. The asymmetry above still holds and still
+    matters -- it is why 0.50 rather than 0.80, and why quarantine stays
+    reversible and is sorted least-confident-first for human review.
+
+    This is one import from one reserve. Re-measure it on a full season of
+    Pench frames before treating it as settled."""
 
     batch_size: int = 200
     """Frames per checkpointed batch. A crash loses at most one batch."""

@@ -1599,6 +1599,23 @@ def _run(c: TestClient) -> int:
     # The audit log is append-only, enforced by SQL triggers -- a real and
     # defensible property. It is NOT cryptographically verifiable: there is
     # no hash chain in the schema. The History screen claimed there was.
+    # A real import of 46 frames quarantined nothing at all: every blank frame
+    # carried a spurious MegaDetector box just above the 0.20 threshold --
+    # usually an "animal" covering 96% of the frame, which is the detector
+    # failing to localise rather than finding anything. Blanks topped out at
+    # 0.379 confidence and real frames started at 0.812, so the threshold sat
+    # underneath the false-positive floor and Stage B kept every frame.
+    check("the detector threshold clears MegaDetector's false-positive floor "
+          "on blank frames",
+          config.CONFIG.triage.detector_conf_threshold >= 0.40,
+          f"threshold is {config.CONFIG.triage.detector_conf_threshold}; measured "
+          "blanks reach 0.379")
+    # ...without eating real detections. Real frames in that import began at
+    # 0.812, and 0.85 already cost one of them.
+    check("...without rising so far that real detections are quarantined",
+          config.CONFIG.triage.detector_conf_threshold <= 0.75,
+          "0.85 wrongly quarantined a real frame in the measured sweep")
+
     # Blank Frames exists so a human can check what the machine discarded.
     # It could not show a single frame: quarantine MOVES the file, and the
     # only frame-serving route reads images.orig_path, which by then points
