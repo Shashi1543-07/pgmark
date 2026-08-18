@@ -1807,6 +1807,22 @@ def _run(c: TestClient) -> int:
     check("the blank option genuinely empties the catalogue, not just returns ok",
           after_blank == [], f"{len(after_blank)} individuals left")
 
+    # "Clear all data (permanent)" left data/backups/live_data_snapshot.db in
+    # place, so "Show my live data" stayed enabled and put every cleared tiger
+    # back. Reported from use as "I clicked clear but the data is still
+    # there": the clear had worked, and the restore silently undid it. A
+    # button that says permanent has to be permanent.
+    check("clearing all data also deletes the saved copy, so nothing can "
+          "restore it", blanked.get("saved_copy_deleted") is not None,
+          "the route must report what it did with the snapshot")
+    check("...and no live snapshot survives a clear",
+          not repo_ext._live_backup_path().is_file(),
+          str(repo_ext._live_backup_path()))
+    mode_after = c.get("/api/dev/data-mode").json()
+    check("so the restore button has nothing to offer after a clear",
+          mode_after.get("live_backup_available") is False,
+          str(mode_after))
+
     reseeded = c.post("/api/dev/seed", json={"which": "demo"}).json()
     check("the demo option runs and reports success", reseeded.get("ok") is True,
           str(reseeded))

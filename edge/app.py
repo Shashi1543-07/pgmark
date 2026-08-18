@@ -439,10 +439,27 @@ def dev_seed(payload: dict = Body(...), user: dict = Depends(require_role(*confi
     if result.returncode != 0:
         raise HTTPException(500, f"seed failed:\n{result.stderr[-3000:]}")
     repo_ext.set_data_mode("seeded" if which in ("bulk", "demo") else "live")
+
+    # "Clear all data (permanent)" has to actually be permanent. It emptied
+    # the working database and left data/backups/live_data_snapshot.db
+    # untouched -- so "Show my live data" stayed enabled and brought every
+    # cleared tiger straight back. An operator who had just confirmed
+    # "there is no saved copy to restore afterward" was one click away from
+    # undoing it, which is exactly what happened in use: cleared, then
+    # restored, then reported that clearing had not worked.
+    snapshot_removed = False
+    if which == "blank":
+        snap = repo_ext._live_backup_path()
+        if snap.is_file():
+            snap.unlink()
+            snapshot_removed = True
+
     repo.audit("dev.seed", actor=user["username"],
-               after={"which": which, "live_data_backed_up": backed_up})
+               after={"which": which, "live_data_backed_up": backed_up,
+                      "saved_copy_deleted": snapshot_removed})
     return {"ok": True, "which": which, "output": result.stdout.strip(),
-            "live_data_backed_up": backed_up}
+            "live_data_backed_up": backed_up,
+            "saved_copy_deleted": snapshot_removed}
 
 
 @app.post("/api/dev/restore-live")

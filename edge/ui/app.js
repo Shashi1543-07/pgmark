@@ -3508,8 +3508,9 @@ RENDER.ops = async () => {
 async function devSeed(which, label) {
   const permanent = which === 'blank';
   const warning = permanent
-    ? `This permanently clears every reserve, run, tiger and alert on this machine. `
-      + `There is no saved copy to restore afterward. Continue?`
+    ? `This clears every reserve, run, tiger and alert on this machine, AND deletes the `
+      + `saved copy of your own data. "Show my live data" will have nothing left to bring `
+      + `back. There is no undo. Continue?`
     : `This will show ${label} instead of your current data. Whatever's currently active gets `
       + `saved automatically first, and "Show my live data" brings it back. Continue?`;
   if (!confirm(warning)) return;
